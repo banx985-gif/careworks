@@ -24,6 +24,7 @@ import { drawButton, hitRect, setPressPoint, clearPress } from '../../../core/ui
 import { ASSETS } from '../data/assets.js';
 import { SAVE } from '../data/save.js';
 import { createCampaigns } from './app/campaigns.js';
+import { paletteById } from '../data/setup.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
 import { createSlotsScreen } from './screens/SlotsScreen.js';
 import { createSetupScreen } from './screens/SetupScreen.js';
@@ -44,9 +45,9 @@ const layout = new UiLayout(renderer);
 bus.on('renderer:resize', () => layout.refresh());
 const input = new Input(renderer, bus);
 const assets = new AssetManager({ bus });
-const router = new ScreenRouter(bus, { roots: ['menu', 'test'] });
+const router = new ScreenRouter(bus, { roots: ['menu', 'test', 'home'] });
 const dialog = new Dialog({ layout, assets }); // confirm boxes (delete / replace a slot)
-const sheet = new BottomSheet({ layout, assets });
+const sheet = new BottomSheet({ layout, assets, onClose: () => homeScreen.selection.clear() }); // the home's ring goes with its sheet
 const textPrompt = new TextPrompt({ renderer });
 bus.on('screen:change', () => textPrompt.close());
 bus.on('screen:change', () => sheet.close());
@@ -57,6 +58,7 @@ assets.setPixelScale(renderer.pixelScale);
 bus.on('renderer:resize', () => {
   assets.setPixelScale(renderer.pixelScale);
   debug.top = debugTop();
+  if (router.currentName === 'home') homeScreen.resize();
 });
 
 // Pressed button look: any button under a finger that is down.
@@ -170,6 +172,24 @@ async function prepareSaves() {
 }
 const cards = () => campaigns?.cards ?? [];
 
+// Reload mid-game (Milestone 1): this browser tab remembers which slot's home is open, so a reload comes straight back
+// to it (the people start their loops again). A fresh launch of the app still opens the Main Menu.
+const HOME_KEY = 'careworks:home';
+function rememberHome(n) {
+  try {
+    if (n) sessionStorage.setItem(HOME_KEY, String(n));
+    else sessionStorage.removeItem(HOME_KEY);
+  } catch {}
+}
+function homeToResume() {
+  try {
+    const n = Number(sessionStorage.getItem(HOME_KEY));
+    return n && campaigns?.card(n)?.summary ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 async function playSlot(n) {
   let data = null;
   try {
@@ -185,6 +205,7 @@ async function playSlot(n) {
   }
   open = { n, data };
   debug.log(`slot ${n} opened: ${data.facility.name}`);
+  rememberHome(n);
   router.go('home');
 }
 
@@ -196,6 +217,7 @@ async function startFacility(n, setup) {
     const data = await campaigns.start(n, setup);
     open = { n, data };
     debug.log(`new facility in slot ${n}: ${setup.facility}, founder ${setup.founder}`);
+    rememberHome(n);
     router.go('home');
   };
   if (old && !old.empty) {
@@ -270,7 +292,28 @@ function leaveSetup() {
   router.go(to?.name ?? 'menu', to?.params ?? {});
 }
 const setupScreen = createSetupScreen({ layout, assets, textPrompt, onBack: () => leaveSetup(), onStart: (n, setup) => startFacility(n, setup) });
-const homeScreen = createHomeScreen({ layout, assets, campaign: () => open, onMenu: () => router.go('menu') });
+// The home (Milestone 1). Tapping Arthur, the worker or a place opens its sheet — header only for now: picture, name,
+// one line, and what a person is doing right now (the sheet is rebuilt every frame, so that stays live).
+const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), debug });
+function openHomeSheet(id) {
+  sheet.open(() => {
+    const w = homeScreen.world;
+    const it = w?.byId(id);
+    if (!it) return { title: '', sections: [] };
+    const accent = paletteById(open?.data.facility.palette).hex;
+    if (it.kind === 'resident' || it.kind === 'staff') {
+      return { title: it.name, subtitle: it.line, art: it.art, accent, sections: [{ lines: [w.stateOf(it)] }] };
+    }
+    const here = w.people.filter((p) => p.agent.state !== 'walking' && p.loop[p.stop].at.startsWith(`${it.id}.`)).map((p) => p.name.split(' ')[0]);
+    const sub = it.kind === 'room' ? `Arthur Lane's room · ${it.def.text.toLowerCase()}` : it.def.text;
+    return { title: it.def.name, subtitle: sub, art: it.def.art, accent, sections: [{ lines: [here.length ? `Here now: ${here.join(' and ')}` : 'Nobody here right now'] }] };
+  });
+}
+// Leaving the home for the Main Menu: a reload after this opens the menu again.
+function leaveHome() {
+  rememberHome(null);
+  router.go('menu');
+}
 
 // ---------------------------------------------------------------------------
 // Boot screen: shows while the images and the saves load, then the Main Menu (or the test screen).
@@ -281,7 +324,11 @@ const bootScreen = {
     Promise.all([
       assets.loadImages(ASSETS, (done, total) => (this.progress = done / total)).then((r) => debug.log(`assets: ${r.loaded} loaded, ${r.missing.length} missing`)),
       prepareSaves().catch((err) => console.error('[CAREWORKS] saves unavailable', err)),
-    ]).then(() => router.go(START_SCREEN));
+    ]).then(() => {
+      const n = START_SCREEN === 'menu' ? homeToResume() : null;
+      if (n) playSlot(n);
+      else router.go(START_SCREEN);
+    });
   },
   render(ctx) {
     const H = renderer.height;
