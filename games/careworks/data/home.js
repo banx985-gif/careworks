@@ -45,7 +45,7 @@ export const PLACED = [
   {
     id: 'F05', kind: 'station', name: 'Activity Lounge', art: 'facility_f05', fp: { col: 3, row: 11, w: 3, h: 3 },
     text: 'Group activities and a comfortable place to relax',
-    spots: { resident: { col: 4, row: 14 }, staff: { col: 6, row: 13 } },
+    spots: { resident: { col: 4, row: 14 }, staff: { col: 6, row: 13 }, dining: { col: 8, row: 12 } }, // dining: until the Dining Room exists
   },
   {
     id: 'RM01', kind: 'room', name: 'Standard Room', art: 'room_rm01', fp: { col: 0, row: 0, w: 4, h: 4 },
@@ -62,14 +62,10 @@ export const ART_DRAW = { station: { width: 1.05, drop: 0.25 }, room: { width: 1
 // People: drawn height in logical px at zoom 1 (tested against the room and station art at phone scale).
 export const PERSON = { height: 190, speed: 150, tagSize: 28 };
 
-// The one resident (bible §7, RES01) and their loop: rest in the room → the lounge → back. rest = seconds at each stop.
-export const RESIDENT = {
-  id: 'RES01', name: 'Arthur Lane', age: 68, support: 'Light Support', art: 'resident_res01', room: 'RM01',
-  loop: [
-    { at: 'RM01.inside', rest: 7, walking: 'Walking to his room', here: 'Resting in his room' },
-    { at: 'F05.resident', rest: 9, walking: 'Walking to the lounge', here: 'Relaxing in the lounge' },
-  ],
-};
+// The home's one resident (Milestone 2: his profile is data/residents.js, his day data/routine.js) and the room he is
+// assigned. speed: plan units per game-second at 1× — a little brisker than staff, so a room → lounge walk (~16 tiles)
+// takes about 2 game hours of his day.
+export const RESIDENT = { id: 'RES01', room: 'RM01', speed: 200 };
 
 // The worker: the run's Founder (from the slot's setup). Loop: nurse station → Arthur's doorway → lounge → back.
 export const WORKER_LOOP = [

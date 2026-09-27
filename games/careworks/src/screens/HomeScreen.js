@@ -4,9 +4,12 @@
 // tapping Arthur, the worker, the Nurse Station, the Lounge or Arthur's room opens its bottom sheet; the one temporary
 // bottom button opens the Nurse Station's sheet too (the five-button bar is Milestone 5). A long press on empty floor
 // enters a placeholder Build Mode (banner + Done). ‹ Menu (or Back) returns to the Main Menu.
+// Milestone 2: the game clock's day, month, year, band and time as plain code text under the top row, with Pause / 1×
+// (2× / 4× shown locked until Milestone 5 — not the real top bar yet); Arthur now lives his daily routine
+// (src/systems/homeWorld.js); the home dims a little at night.
 // Plan space lives in the world; only drawing and tapping go through the IsoProjection here.
-//   createHomeScreen({ renderer, layout, assets, bus, sheet, campaign, openSheet(kind, id), onMenu, debug })
-//   enter() builds the world for the open campaign (campaign() → { n, data })
+//   createHomeScreen({ renderer, layout, assets, bus, sheet, campaign, world, openSheet(kind, id), onMenu, debug })
+//   campaign() → { n, data } of the open slot · world() → its home world (main makes one per opened campaign)
 import { THEME, font } from '../../../../core/Theme.js';
 import { IsoProjection } from '../../../../core/IsoProjection.js';
 import { Camera } from '../../../../core/Camera.js';
@@ -18,13 +21,25 @@ import { drawButton, hitRect } from '../../../../core/ui/Button.js';
 import { text } from '../../../../core/ui/Kit.js';
 import { HOME, FLOORS, ART_DRAW, PERSON, HOME_LOOK as L, WALLS } from '../../data/home.js';
 import { paletteById } from '../../data/setup.js';
-import { createHomeWorld, wallTiles } from '../systems/homeWorld.js';
+import { wallTiles } from '../systems/homeWorld.js';
+import { bandAt, clockText } from '../systems/residentNeeds.js';
 
 const C = THEME.color;
 const S = THEME.size;
 const WALL_T = 0.24; // inside-wall thickness, in tiles
+// Sprite detail steps: the smallest step at or above the camera zoom. Drawn about 1:1 at any zoom (so frames stay cheap
+// on big screens — caching at full zoom and shrinking every frame cost ~20 ms a frame on a tablet) with only a few
+// cached sizes per picture, remade once when a pinch crosses a step.
+const DETAIL_STEPS = [0.5, 0.7, 1.0, 1.4];
+const detailFor = (zoom) => DETAIL_STEPS.find((d) => d >= zoom - 1e-3) ?? DETAIL_STEPS[DETAIL_STEPS.length - 1];
+const SPEEDS = [
+  { id: 'pause', label: 'II', speed: 0 },
+  { id: '1x', label: '1×', speed: 1 },
+  { id: '2x', label: '2×', speed: 2 },
+  { id: '4x', label: '4×', speed: 4 },
+];
 
-export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaign, openSheet, onMenu, debug = null }) {
+export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaign, world: getWorld, openSheet, onMenu, debug = null }) {
   const W = renderer.width;
   const { cols, rows, cellSize: CELL, wallH, innerWallH, margin } = HOME;
   const { halfW: HW, halfH: HH } = HOME.view;
@@ -94,12 +109,25 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     const b = bannerRect();
     return { x: b.x + b.w - 250, y: b.y + (b.h - 120) / 2, w: 226, h: 120 };
   };
-  const onUi = (p) => (buildMode ? hitRect(p, bannerRect()) : hitRect(p, menuRect()) || hitRect(p, shortcutRect()));
+  // The clock row under the top row: the date and band on the left, the speed buttons on the right.
+  const clockRowRect = () => {
+    const m = menuRect();
+    const sr = layout.safeRect;
+    return { x: sr.x + 24, y: m.y + m.h + 14, w: sr.w - 48, h: 100 };
+  };
+  const speedRect = (i) => {
+    const r = clockRowRect();
+    const w = 108;
+    const gap = 10;
+    return { x: r.x + r.w - (SPEEDS.length - i) * (w + gap) + gap, y: r.y, w, h: r.h };
+  };
+  const onUi = (p) =>
+    buildMode ? hitRect(p, bannerRect()) : hitRect(p, menuRect()) || hitRect(p, shortcutRect()) || hitRect(p, clockRowRect());
   const overSheet = (p) => sheet.active && p.y >= sheet.rect().y;
 
-  // The camera sees the space between the top button row and the bottom button, so every edge stays reachable.
+  // The camera sees the space between the top rows and the bottom button, so every edge stays reachable.
   function fitView() {
-    const top = menuRect();
+    const top = clockRowRect();
     const bottom = shortcutRect();
     camera.viewX = 0;
     camera.viewY = top.y + top.h + 8;
@@ -147,7 +175,9 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       return slotN;
     },
     rectOf(id) {
-      return { menu: menuRect(), shortcut: shortcutRect(), done: doneRect(), banner: bannerRect() }[id] ?? null;
+      const s = SPEEDS.findIndex((x) => x.id === id);
+      if (s >= 0) return speedRect(s);
+      return { menu: menuRect(), shortcut: shortcutRect(), done: doneRect(), banner: bannerRect(), clock: clockRowRect() }[id] ?? null;
     },
     // Screen point on a person's body or a place's art (tests): the visible middle of what a finger would tap.
     screenPointOf(id) {
@@ -176,13 +206,14 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       active = true;
       const c = campaign();
       if (!c) return;
-      const founderId = c.data.facility.founder?.id;
-      if (!world || slotN !== c.n || world.founder.id !== founderId) {
-        world = createHomeWorld({ founderId });
+      const w = getWorld();
+      if (w && w !== world) {
+        const sameSlot = slotN === c.n;
+        world = w;
         for (const it of [...selection.items]) selection.remove(it);
         for (const it of [...world.placed, ...world.people]) selection.add(it);
         slotN = c.n;
-        screen.viewSet = false;
+        if (!sameSlot) screen.viewSet = false; // the same slot reopened keeps its view
       }
       const was = palette;
       palette = paletteById(c.data.facility.palette);
@@ -243,6 +274,14 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
         return;
       }
       if (hitRect(p, menuRect())) return void onMenu();
+      for (let i = 0; i < SPEEDS.length; i++) {
+        if (!hitRect(p, speedRect(i))) continue;
+        const s = SPEEDS[i].speed;
+        if (s === 0) world.clock.pause();
+        else world.clock.setSpeed(s); // a locked speed is refused by the clock
+        taps.push({ x: p.x, y: p.y, picked: `speed:${SPEEDS[i].id}` });
+        return;
+      }
       if (hitRect(p, shortcutRect())) {
         open(world.byId('F01'));
         taps.push({ x: p.x, y: p.y, picked: 'shortcut' });
@@ -268,7 +307,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       ctx.fillRect(0, 0, W, renderer.height);
       camera.apply(ctx);
       floorLayer.render(ctx, 0, 0);
-      assets.detail = HOME.zoom.max; // sprites cached at full-zoom size, so they stay sharp when zoomed in
+      assets.detail = detailFor(camera.zoom); // sprites cached near the size they are drawn: sharp, and a plain copy each frame
       for (const it of world.placed) if (it.kind === 'room') assets.draw(ctx, it.def.art, ...rectArgs(artRect(it)));
       if (buildMode) drawBuildFloor(ctx);
       drawSelectionMark(ctx);
@@ -280,18 +319,57 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       }
       assets.detail = 1;
       camera.restore(ctx);
+      drawNight(ctx);
       // Name tags in screen space: always the small text size (28), whatever the zoom.
       for (const p of world.people) drawTag(ctx, p);
       if (buildMode) drawBanner(ctx);
       else {
         drawButton(ctx, menuRect(), '‹ Menu', { accent: C.progress });
         drawFacilityName(ctx);
+        drawClockRow(ctx);
         drawButton(ctx, shortcutRect(), 'Nurse Station', { accent: C.action });
       }
     },
   };
 
   const rectArgs = (r) => [r.x, r.y, r.w, r.h];
+
+  // The clock row (Milestone 2): plain code text — "Day 3 · Month 1 · Year 1" over "Morning peak · 08:20" — and the
+  // speed buttons: Pause and 1× work, 2× / 4× are drawn locked.
+  function drawClockRow(ctx) {
+    const clock = world.clock;
+    const r = clockRowRect();
+    const tw = speedRect(0).x - 16 - r.x;
+    ctx.save();
+    ctx.fillStyle = 'rgba(255, 250, 240, 0.92)';
+    ctx.strokeStyle = C.line;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.roundRect(r.x, r.y, tw, r.h, 22);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    const band = bandAt(world.hour);
+    text(ctx, `Day ${clock.day} · Month ${clock.month} · Year ${clock.year}`, r.x + 24, r.y + 30, { size: S.body, bold: true, baseline: 'middle', maxWidth: tw - 40 });
+    const sub = clock.paused ? `Paused · ${band.name} · ${clockText(world.hour)}` : `${band.name} · ${clockText(world.hour)}`;
+    text(ctx, sub, r.x + 24, r.y + 74, { size: S.small, bold: clock.paused, color: clock.paused ? C.actionDark : C.textMuted, baseline: 'middle', maxWidth: tw - 40 });
+    SPEEDS.forEach((s, i) => {
+      const on = s.speed === 0 ? clock.paused : !clock.paused && clock.speed === s.speed;
+      const locked = s.speed > 0 && !clock.canUseSpeed(s.speed);
+      drawButton(ctx, speedRect(i), s.label, { accent: C.progress, selected: on, disabled: locked, font: font(S.button, true) });
+    });
+  }
+  // Night: the home dims a little (a soft blue veil over the world, not the buttons).
+  function drawNight(ctx) {
+    const h = world.hour;
+    const dark = h >= 21 || h < 5 ? 1 : h >= 19.5 ? (h - 19.5) / 1.5 : h < 6.5 ? 1 - (h - 5) / 1.5 : 0;
+    if (dark <= 0) return;
+    ctx.save();
+    ctx.globalAlpha = dark * 0.22;
+    ctx.fillStyle = '#23305A';
+    ctx.fillRect(0, camera.viewY, W, camera.viewH);
+    ctx.restore();
+  }
 
   // --- drawing ---------------------------------------------------------------------------------------------------
   function patch(g, pts, fill, stroke = null, lw = 2) {

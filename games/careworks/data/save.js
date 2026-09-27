@@ -8,5 +8,5 @@ export const SAVE = {
   count: 4,
   prefix: 'campaign_',
   accountKey: 'account',
-  version: 1,
+  version: 2, // 2 = Milestone 2 (the clock and the residents' state); src/systems/facility.js SAVE_MIGRATIONS moves older saves
 };

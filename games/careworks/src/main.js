@@ -1,4 +1,5 @@
-// CAREWORKS — boot (Milestone 0: project shell + campaign slots + Facility Setup).
+// CAREWORKS — boot (Milestone 0: project shell + campaign slots + Facility Setup; Milestone 2: the open campaign's
+// world — the game clock and Arthur's day — saved by the series Autosave, plus a save at every band change).
 // Starts the shared series engine from core/ (renderer, safe areas, fixed-step loop, input, router, assets, debug
 // overlay, saves) and opens the Main Menu: Continue (the last-used slot) · Campaign Slots · New Game · Settings.
 // New Game / an empty slot → Facility Setup → START FACILITY writes the slot's summary record and an empty campaign
@@ -17,6 +18,7 @@ import { FixedStepLoop } from '../../../core/FixedStepLoop.js';
 import { DebugOverlay } from '../../../core/DebugOverlay.js';
 import { SystemBack } from '../../../core/SystemBack.js';
 import { createStorageAdapter } from '../../../core/StorageAdapter.js';
+import { Autosave } from '../../../core/Autosave.js';
 import { TextPrompt } from '../../../core/ui/TextPrompt.js';
 import { BottomSheet } from '../../../core/ui/BottomSheet.js';
 import { Dialog } from '../../../core/ui/Modal.js';
@@ -25,6 +27,10 @@ import { ASSETS } from '../data/assets.js';
 import { SAVE } from '../data/save.js';
 import { createCampaigns } from './app/campaigns.js';
 import { paletteById } from '../data/setup.js';
+import { NEEDS, OUTCOMES, RESIDENTS, validateResidents } from '../data/residents.js';
+import { DataValidator } from '../../../core/DataValidator.js';
+import { ROUTINE, LOG_SHOWN } from '../data/routine.js';
+import { createHomeWorld, makeClock } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
 import { createSlotsScreen } from './screens/SlotsScreen.js';
 import { createSetupScreen } from './screens/SetupScreen.js';
@@ -71,7 +77,9 @@ const loop = new FixedStepLoop({
   stepHz: 60,
   bus,
   update: (dt) => {
-    router.update(dt);
+    router.update(dt); // on the home: the clock and everyone in it move
+    if (open && router.currentName === 'home') open.data.playSec = (open.data.playSec ?? 0) + dt;
+    autosave.tick(dt);
     dialog.update(dt);
     sheet.update(dt);
   },
@@ -162,13 +170,48 @@ bus.on('input:up', () => systemBack.rearm()); // re-arm after any tap, in case a
 // ---------------------------------------------------------------------------
 // Campaign slots (bible §3.5.9): four slots, each its own save + summary record; the account store is separate.
 let campaigns = null;
-let open = null; // { n, data } — the campaign on screen
+let open = null; // { n, data, world } — the campaign on screen and its home world
+
+// A campaign's world (Milestone 2): its clock and Arthur's saved state, the worker from its Founder.
+function openRun(n, data) {
+  const clock = makeClock(bus);
+  if (data.clock) clock.load(data.clock);
+  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, resident: data.residents?.[0], seed: data.seed, bus });
+  if (debug.enabled && PARAMS.get('paused') === '1') clock.speed = 0; // ?debug=1&paused=1: open exactly as saved (tests)
+  open = { n, data, world };
+}
+// The run save: the page's campaign data with the world's clock and residents written in (and the slot's summary).
+function saveRun() {
+  const o = open;
+  if (!o) return Promise.resolve();
+  const c = o.world.clock;
+  o.data = { ...o.data, ...o.world.serialize(), date: { year: c.year, month: c.month, day: c.day } };
+  return campaigns.save(o.n, o.data);
+}
+// Autosave (core/Autosave): the series cadence (every game day, a rolling save, and when the app goes to the
+// background) plus every band change, each routine step and a pause.
+const autosave = new Autosave({
+  bus,
+  triggers: ['clock:day', 'care:band', 'care:step', 'clock:speed'],
+  save: () => saveRun(),
+  stamp: () => (open ? JSON.stringify(open.world.serialize()) : null),
+  running: () => !!open && router.currentName === 'home' && !open.world.clock.paused,
+  enabled: () => !!open,
+});
+autosave.installBackground();
+bus.on('autosave:failed', ({ error }) => debug.log(`save failed: ${error?.message ?? error}`));
+bus.on('care:band', ({ band }) => debug.log(`band: ${band}`));
 
 async function prepareSaves() {
   const adapter = await createStorageAdapter({ dbName: SAVE.dbName, prefix: SAVE.localPrefix });
   campaigns = createCampaigns({ adapter, save: SAVE, bus });
   if (debug.enabled && PARAMS.get('reset') === '1') for (const n of campaigns.slots.numbers()) await campaigns.slots.remove(n);
   await campaigns.refresh();
+  if (debug.enabled) {
+    const r = validateResidents(new DataValidator(), RESIDENTS, ROUTINE.map((x) => x.id)).report();
+    debug.log(r.ok ? `residents: ${RESIDENTS.length} checked` : `resident data: ${r.errors.join('; ')}`);
+    if (!r.ok) console.error('[CAREWORKS] resident data', r.errors);
+  }
 }
 const cards = () => campaigns?.cards ?? [];
 
@@ -203,7 +246,7 @@ async function playSlot(n) {
     router.go('slots', { mode: 'browse' });
     return;
   }
-  open = { n, data };
+  openRun(n, data);
   debug.log(`slot ${n} opened: ${data.facility.name}`);
   rememberHome(n);
   router.go('home');
@@ -215,7 +258,7 @@ async function startFacility(n, setup) {
   const old = campaigns.card(n);
   const write = async () => {
     const data = await campaigns.start(n, setup);
-    open = { n, data };
+    openRun(n, data);
     debug.log(`new facility in slot ${n}: ${setup.facility}, founder ${setup.founder}`);
     rememberHome(n);
     router.go('home');
@@ -292,27 +335,51 @@ function leaveSetup() {
   router.go(to?.name ?? 'menu', to?.params ?? {});
 }
 const setupScreen = createSetupScreen({ layout, assets, textPrompt, onBack: () => leaveSetup(), onStart: (n, setup) => startFacility(n, setup) });
-// The home (Milestone 1). Tapping Arthur, the worker or a place opens its sheet — header only for now: picture, name,
-// one line, and what a person is doing right now (the sheet is rebuilt every frame, so that stays live).
-const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), debug });
+// The home (Milestones 1–2). Tapping Arthur, the worker or a place opens its sheet (rebuilt every frame, so it stays
+// live). Arthur's card (Milestone 2): what he is doing now, his six needs and five outcomes as bars, today's log and
+// his likes and dislikes. The room card names its resident.
+const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), debug });
+const stepName = (id) => ROUTINE.find((s) => s.id === id)?.name ?? id;
+function residentSections(w, it) {
+  const st = it.state;
+  const step = st.step ? stepName(st.step.id) : null;
+  const log = st.log.slice(-LOG_SHOWN).map((e) => `${e.t}  ${e.text}`);
+  const pick = (p) => ROUTINE.filter((s) => (st.prefs[s.id] ?? 'accept') === p).map((s) => (s.activity ? s.name : s.name.toLowerCase()));
+  const likes = [pick('prefer').length && `Enjoys: ${pick('prefer').join(', ')}`, pick('dislike').length && `Would rather not: ${pick('dislike').join(', ')}`, pick('refuse').length && `Says no to: ${pick('refuse').join(', ')}`].filter(Boolean);
+  return [
+    { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }] },
+    { title: 'Needs', lines: [{ text: 'How much support he needs right now', color: COL.textMuted }], bars: NEEDS.map((n) => ({ label: n.name, value: st.needs[n.id], color: COL.progress })) },
+    { title: 'Outcomes', bars: OUTCOMES.map((o) => ({ label: o.name, value: st.outcomes[o.id], color: COL.good })) },
+    { title: 'Today', lines: log.length ? log : ['Nothing yet today'] },
+    { title: 'Likes and dislikes', lines: likes },
+  ];
+}
 function openHomeSheet(id) {
   sheet.open(() => {
-    const w = homeScreen.world;
+    const w = open?.world;
     const it = w?.byId(id);
     if (!it) return { title: '', sections: [] };
-    const accent = paletteById(open?.data.facility.palette).hex;
-    if (it.kind === 'resident' || it.kind === 'staff') {
-      return { title: it.name, subtitle: it.line, art: it.art, accent, sections: [{ lines: [w.stateOf(it)] }] };
+    const accent = paletteById(open.data.facility.palette).hex;
+    if (it.kind === 'resident') return { title: it.name, subtitle: it.line, art: it.art, accent, sections: residentSections(w, it) };
+    if (it.kind === 'staff') return { title: it.name, subtitle: it.line, art: it.art, accent, sections: [{ lines: [w.stateOf(it)] }] };
+    const here = w.people.filter((p) => w.whereIs(p) === it.id).map((p) => p.name.split(' ')[0]);
+    const lines = [here.length ? `Here now: ${here.join(' and ')}` : 'Nobody here right now'];
+    let sub = it.def.text;
+    if (it.kind === 'room') {
+      const who = it.residentId ? w.byId(it.residentId) : null;
+      sub = who ? `${who.name}'s room · ${it.def.text.toLowerCase()}` : `Empty · ${it.def.text.toLowerCase()}`;
+      lines.unshift(who ? `Resident: ${who.name} (${who.def.support})` : 'No resident yet');
     }
-    const here = w.people.filter((p) => p.agent.state !== 'walking' && p.loop[p.stop].at.startsWith(`${it.id}.`)).map((p) => p.name.split(' ')[0]);
-    const sub = it.kind === 'room' ? `Arthur Lane's room · ${it.def.text.toLowerCase()}` : it.def.text;
-    return { title: it.def.name, subtitle: sub, art: it.def.art, accent, sections: [{ lines: [here.length ? `Here now: ${here.join(' and ')}` : 'Nobody here right now'] }] };
+    return { title: it.def.name, subtitle: sub, art: it.def.art, accent, sections: [{ lines }] };
   });
 }
-// Leaving the home for the Main Menu: a reload after this opens the menu again.
-function leaveHome() {
+// Leaving the home for the Main Menu: save the run first; a reload after this opens the menu again.
+async function leaveHome() {
   rememberHome(null);
   router.go('menu');
+  await autosave.flush();
+  await campaigns.refresh();
+  open = null;
 }
 
 // ---------------------------------------------------------------------------
@@ -370,7 +437,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, playSlot, startFacility, deleteSlot, newGame, taps: [], get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');
