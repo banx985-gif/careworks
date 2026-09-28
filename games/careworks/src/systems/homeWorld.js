@@ -1,21 +1,28 @@
-// The small home's world (Milestones 1–2): the hidden grid with its inside walls, the placed station / lounge / room,
-// the game clock (core/Clock on data/routine.js DAY), Arthur living his daily routine, and the worker walking her M1
-// loop (no tasks until Milestone 4). People walk on core/Agent (A* on core/Grid), so they only pass through doorways.
-// No drawing here — the home screen draws it — so the Node tests run it as it is.
-//   createHomeWorld({ founderId, clock, resident, seed, bus })
-//     clock    a core/Clock (made here when missing)       resident  Arthur's saved state (or none: a fresh one)
-//     seed     the run's seed (his daily yes / no answers)   bus      optional: 'care:band' and 'care:step' events
+// The small home's world (Milestones 1–3): the hidden grid with its inside walls, the placed station / lounge / room,
+// the game clock (core/Clock on data/routine.js DAY), Arthur living his daily routine, and (Milestone 3) the opening
+// team on the Morning shift: they stand their posts, stand down in the lounge off shift, and help Arthur with the
+// routine steps their role fits (a step with a helper happens when both are there). People walk on core/Agent (A* on
+// core/Grid), so they only pass through doorways. No drawing here — the home screen draws it — so the Node tests run
+// it as it is.
+//   createHomeWorld({ founderId, clock, resident, staff, seed, bus })
+//     clock     a core/Clock (made here when missing)       resident  Arthur's saved state (or none: a fresh one)
+//     staff     the run's staff state (src/systems/staffTeam.js; none: a team is built from the Founder)
+//     seed      the run's seed (his daily yes / no answers)  bus       optional: 'care:band', 'care:step', 'staff:*'
 //   world.update(realDt)   the clock and everyone move at the clock's speed; nothing moves while paused
-//   world.hour · world.band · world.people · world.placed · world.resident (Arthur) · world.stateOf(person)
-//   world.serialize() → { clock, residents }   (the run save; the page keeps the rest)
+//   world.hour · world.band · world.people · world.staff · world.placed · world.resident (Arthur) · world.stateOf(person)
+//   world.assign(stepId, staffId | null) → { ok, reason }   the resident card's "who helps" picker (null = automatic)
+//   world.helperFor(stepId) → the staff id who would help now (chosen or automatic), or null
+//   world.serialize() → { clock, residents, staff }   (the run save; the page keeps the rest)
 import { Grid } from '../../../../core/Grid.js';
 import { Agent } from '../../../../core/Agent.js';
 import { Clock } from '../../../../core/Clock.js';
-import { HOME, WALLS, PLACED, PERSON, RESIDENT, WORKER_LOOP } from '../../data/home.js';
-import { founderById, ROLES } from '../../data/setup.js';
+import { HOME, WALLS, PLACED, RESIDENT, SPOTS } from '../../data/home.js';
 import { residentById } from '../../data/residents.js';
 import { DAY, PLACES, ROUTINE } from '../../data/routine.js';
 import { ensureResidentState, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep } from './residentNeeds.js';
+import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkPct } from './staffTeam.js';
+import { createRoster } from './roster.js';
+import { createCrew } from './staffCrew.js';
 
 // Every wall tile (doorways left out).
 export function wallTiles() {
@@ -29,8 +36,9 @@ export function wallTiles() {
   return out;
 }
 
-// 'F05.resident' → the tile.
+// 'F05.resident' or 'hall.cwPost' → the tile.
 export function spotTile(ref) {
+  if (SPOTS[ref]) return SPOTS[ref];
   const [id, name] = ref.split('.');
   const t = PLACED.find((p) => p.id === id)?.spots?.[name];
   if (!t) throw new Error(`No spot ${ref}`);
@@ -44,7 +52,10 @@ export function makeClock(bus = null) {
   return clock;
 }
 
-export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, seed = 'careworks', bus = null } = {}) {
+const routineStep = (id) => ROUTINE.find((s) => s.id === id) ?? null;
+const first = (name) => name.split(' ')[0];
+
+export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, staff = null, seed = 'careworks', bus = null } = {}) {
   clock ??= makeClock();
   const grid = new Grid({ cols: HOME.cols, rows: HOME.rows, tileSize: HOME.cellSize });
   for (const t of wallTiles()) grid.setBlocked(t.col, t.row, true);
@@ -53,6 +64,15 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (p.def.walkIn) for (const b of p.def.blockedInside ?? []) grid.blockRect(b.col, b.row, b.w, b.h, true);
     else grid.blockRect(p.fp.col, p.fp.row, p.fp.w, p.fp.h, true);
   }
+  const hourNow = () => clock.dayProgress * 24;
+  let band = bandAt(hourNow());
+
+  // --- the staff (Milestone 3) -------------------------------------------------------------------------------
+  const staffState = ensureStaffState(staff, founderId);
+  const sys = makeStaffSystem(staffState);
+  const perks = makeFounderPerks(staffState);
+  const roster = createRoster(staffState);
+  const crew = createCrew({ grid, state: staffState, sys, perks, roster, spotTile, hourNow, bandNow: () => bandAt(hourNow()), bus });
 
   // --- Arthur: his profile, his state, his room --------------------------------------------------------------
   const def = residentById(RESIDENT.id);
@@ -70,66 +90,101 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     arthur.agent.placeAtTile(grid, t.col, t.row);
   }
 
-  // --- the worker (the run's Founder): the M1 loop -------------------------------------------------------------
-  const founder = founderById(founderId) ?? founderById('RN01');
-  const worker = { kind: 'staff', id: founder.id, name: founder.name, art: founder.art, line: ROLES[founder.role].name, loop: WORKER_LOOP, stop: 0, rest: 1.5, visits: 0, log: [] };
-  worker.agent = new Agent({ id: founder.id, name: founder.name, speed: PERSON.speed, noPathTeleportSec: 2 });
-  const w0 = spotTile(WORKER_LOOP[0].at);
-  worker.agent.placeAtTile(grid, w0.col, w0.row);
-  function nextStop(p) {
-    p.stop = (p.stop + 1) % p.loop.length;
-    const t = spotTile(p.loop[p.stop].at);
-    p.agent.walkTo(grid, t.col, t.row, () => {
-      p.rest = p.loop[p.stop].rest;
-      p.visits++;
-      p.log.push(p.loop[p.stop].at);
-      if (p.log.length > 20) p.log.shift();
+  // --- the routine, with helpers -------------------------------------------------------------------------------
+  // st.step = { id, day, status: 'walking' | 'waiting' | 'doing' | 'refused', helper, arthurThere, helperThere }
+  const isCurrent = (step, day) => st.step?.id === step.id && st.step.day === day;
+  function complete(step, day, helper) {
+    const note = helper ? `with ${first(crew.byId(helper)?.name ?? helper)}` : null;
+    const dropped = completeStep(st, step, day, clockText(hourNow()), {
+      needMult: helper ? (need) => contribMult(perks, helper, need) : null,
+      activityMult: 1 + perkPct(perks, helper, 'activityWellbeingPct') / 100,
+      mealMult: 1 + perkPct(perks, helper, 'mealSatisfactionPct') / 100,
+      note,
     });
-  }
-
-  // --- the routine ---------------------------------------------------------------------------------------------
-  const hourNow = () => clock.dayProgress * 24;
-  const stepDef = (id) => routineStep(id);
-  function arrive(step, day) {
-    if (st.step?.id !== step.id || st.step.day !== day) return; // a newer step took over on the way
-    completeStep(st, step, day, clockText(hourNow()));
     st.step.status = 'doing';
-    bus?.emit('care:step', { resident: st.id, step: step.id, status: 'done' });
+    st.step.dropped = dropped;
+    if (helper) crew.finishHelp(helper);
+    bus?.emit('care:step', { resident: st.id, step: step.id, status: 'done', helper });
   }
-  function walkTo(step, day, place) {
-    const t = placeTile(place);
+  function tryComplete(step, day) {
+    if (!isCurrent(step, day) || st.step.status === 'doing') return;
+    if (!st.step.arthurThere) return;
+    if (st.step.helper && !st.step.helperThere) {
+      st.step.status = 'waiting';
+      return;
+    }
+    complete(step, day, st.step.helper);
+  }
+  function arthurArrived(step, day) {
+    if (!isCurrent(step, day)) return;
+    st.step.arthurThere = true;
+    tryComplete(step, day);
+  }
+  function helperArrived(step, day) {
+    if (!isCurrent(step, day)) return;
+    st.step.helperThere = true;
+    tryComplete(step, day);
+  }
+  function walkArthur(step, day) {
+    const t = placeTile(step.place);
     const here = grid.worldToTile(arthur.agent.x, arthur.agent.y);
-    if (here && here.col === t.col && here.row === t.row && arthur.agent.state !== 'walking') return true;
-    arthur.agent.walkTo(grid, t.col, t.row, () => arrive(step, day));
-    return false;
+    if (here && here.col === t.col && here.row === t.row && arthur.agent.state !== 'walking') return arthurArrived(step, day);
+    arthur.agent.walkTo(grid, t.col, t.row, () => arthurArrived(step, day));
+  }
+  // The step before is over: if he was there waiting for help that never came, it happens on his own.
+  function closePrevious() {
+    const s = st.step;
+    if (!s || s.status === 'doing' || s.status === 'refused') return;
+    const step = routineStep(s.id);
+    if (s.helper) crew.releaseHelp(s.helper);
+    if (s.arthurThere && step) {
+      s.helper = null;
+      completeStep(st, step, s.day, clockText(hourNow()), { note: 'on his own' });
+      s.status = 'doing';
+      bus?.emit('care:step', { resident: st.id, step: step.id, status: 'done', helper: null });
+    }
   }
   function startStep(step, day) {
+    closePrevious();
     const answer = decide(st, step, day, seed);
-    st.step = { id: step.id, day, status: answer === 'refuse' ? 'refused' : 'walking' };
     if (answer === 'refuse') {
+      st.step = { id: step.id, day, status: 'refused', helper: null };
       refuseStep(st, step, day, clockText(hourNow()));
       const t = placeTile('room'); // he stays in (or goes back to) his room
       arthur.agent.walkTo(grid, t.col, t.row);
       bus?.emit('care:step', { resident: st.id, step: step.id, status: 'refused' });
       return;
     }
-    bus?.emit('care:step', { resident: st.id, step: step.id, status: 'started' });
-    if (walkTo(step, day, step.place)) arrive(step, day);
+    const helper = crew.pickHelper(step, staffState.assignments[step.id] ?? null);
+    st.step = { id: step.id, day, status: 'walking', helper, arthurThere: false, helperThere: !helper };
+    bus?.emit('care:step', { resident: st.id, step: step.id, status: 'started', helper });
+    if (helper) crew.startHelp(helper, step, step.place, () => helperArrived(step, day));
+    walkArthur(step, day);
   }
-  // After a load: walking on to where he was going.
-  if (st.step?.status === 'walking') {
-    const step = stepDef(st.step.id);
-    if (step) walkTo(step, st.step.day, step.place);
+  // After a load: carry on with the step he was in the middle of.
+  if (st.step && (st.step.status === 'walking' || st.step.status === 'waiting')) {
+    const step = routineStep(st.step.id);
+    const day = st.step.day;
+    if (step) {
+      if (st.step.helper) crew.resumeHelp(st.step.helper, step, step.place, st.step.helperThere, () => helperArrived(step, day));
+      if (!st.step.arthurThere) walkArthur(step, day);
+    }
   }
 
-  let band = bandAt(hourNow());
+  let lastDay = clock.totalDays;
   const world = {
     grid,
     placed,
-    people: [arthur, worker],
+    people: [arthur, ...crew.people],
+    staff: crew.people,
     resident: arthur,
-    worker,
-    founder,
+    worker: crew.people[0], // the Founder (Milestones 1–2 had one worker)
+    founder: { id: staffState.founder.id, name: crew.byId(staffState.founder.id)?.name },
+    staffState,
+    staffSystem: sys,
+    perks,
+    roster,
+    crew,
     clock,
     get hour() {
       return hourNow();
@@ -145,45 +200,70 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const g = dt * clock.speed; // game-seconds at 1×
       clock.update(dt);
       const hours = (g / clock.secondsPerDay) * 24;
+      if (clock.totalDays !== lastDay) {
+        staffState.founder.history.daysEmployed += clock.totalDays - lastDay;
+        lastDay = clock.totalDays;
+      }
       riseNeeds(st, hours, world.asleep);
       driftOutcomes(st, hours);
-      const now = routineAt(hourNow(), clock.totalDays);
-      if (!st.step || st.step.id !== now.step.id || st.step.day !== now.day) startStep(now.step, now.day);
       const b = bandAt(hourNow());
       if (b !== band) {
         band = b;
         bus?.emit('care:band', { band: b.id });
       }
+      crew.update(g, hours);
+      const now = routineAt(hourNow(), clock.totalDays);
+      if (!st.step || st.step.id !== now.step.id || st.step.day !== now.day) startStep(now.step, now.day);
       arthur.agent.update(g, grid);
-      if (worker.agent.state === 'walking') worker.agent.update(g, grid);
-      else if ((worker.rest -= g) <= 0) nextStop(worker);
     },
-    // What they are doing, for their card: "Walking to breakfast", "Asleep in his room" …
-    stateOf(p) {
-      if (p.kind === 'staff') {
-        const stop = p.loop[p.stop];
-        return p.agent.state === 'walking' ? stop.walking : stop.here;
+    // Resident card's picker: choose who helps with a step (null = automatic). A role that doesn't fit is refused.
+    assign(stepId, staffId) {
+      const step = routineStep(stepId);
+      if (!step) return { ok: false, reason: 'No such step.' };
+      if (staffId == null) {
+        delete staffState.assignments[stepId];
+        return { ok: true, reason: null };
       }
-      const step = st.step && stepDef(st.step.id);
+      const r = crew.canHelp(staffId, step);
+      if (r.ok) staffState.assignments[stepId] = staffId;
+      return r;
+    },
+    chosenFor: (stepId) => staffState.assignments[stepId] ?? null,
+    helperFor(stepId) {
+      const step = routineStep(stepId);
+      return step ? crew.pickHelper(step, staffState.assignments[stepId] ?? null) : null;
+    },
+    // What they are doing, for their card.
+    stateOf(p) {
+      if (p.kind === 'staff') return crew.stateOf(p);
+      const step = st.step && routineStep(st.step.id);
       if (!step) return 'In his room';
       if (st.step.status === 'refused') return `Chose to stay in his room (said no to ${step.activity ? step.name : step.name.toLowerCase()})`;
-      return st.step.status === 'walking' ? step.going : step.doing;
+      const helper = st.step.helper ? first(crew.byId(st.step.helper)?.name ?? '') : null;
+      if (st.step.status === 'waiting') return `Waiting for ${helper} (${step.name.toLowerCase()})`;
+      if (st.step.status === 'walking') return helper ? `${step.going} · ${helper} is coming` : step.going;
+      return helper ? `${step.doing} · with ${helper}` : step.doing;
     },
     // Which place a person is at right now (its id), or null while walking.
     whereIs(p) {
       if (p.agent.state === 'walking') return null;
-      if (p.kind === 'staff') return p.loop[p.stop].at.split('.')[0];
-      const step = st.step && stepDef(st.step.id);
+      const t = grid.worldToTile(p.agent.x, p.agent.y);
+      if (p.kind === 'staff') {
+        const hit = placed.find((s) => Object.values(s.def.spots ?? {}).some((x) => x.col === t?.col && x.row === t?.row));
+        if (hit) return hit.id;
+        return t && t.row >= 11 ? 'F05' : null; // anywhere in the lounge (resting, the Cards table)
+      }
+      const step = st.step && routineStep(st.step.id);
       if (!step || st.step.status === 'refused' || step.place === 'room') return st.room;
       return PLACES[step.place].spot.split('.')[0];
     },
-    byId: (id) => [arthur, worker].find((p) => p.id === id) ?? placed.find((s) => s.id === id) ?? null,
+    byId: (id) => world.people.find((p) => p.id === id) ?? placed.find((s) => s.id === id) ?? null,
     serialize() {
       st.pos = { x: arthur.agent.x, y: arthur.agent.y };
-      return { clock: clock.serialize(), residents: [JSON.parse(JSON.stringify(st))] };
+      staffState.staff = sys.serialize();
+      staffState.pos = crew.positions();
+      return { clock: clock.serialize(), residents: [JSON.parse(JSON.stringify(st))], staff: JSON.parse(JSON.stringify(staffState)) };
     },
   };
   return world;
 }
-
-const routineStep = (id) => ROUTINE.find((s) => s.id === id) ?? null;

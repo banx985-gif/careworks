@@ -10,7 +10,7 @@ export const DAY = {
   monthsPerYear: 12,
   speeds: [1, 2, 4], // only 1× (and Pause) usable until Milestone 5
   unlockedSpeeds: [1],
-  startHour: 5.9, // a new facility opens just before Arthur wakes
+  startHour: 5.9, // a new facility opens just before the Morning shift starts
 };
 
 // The four simulation bands (bible §3), by hour of the day. Night wraps past midnight.
@@ -28,17 +28,19 @@ export const PLACES = {
   lounge: { spot: 'F05.resident', name: 'the Activity Lounge' },
 };
 
-// One fixed daily routine, in order, by the hour each step starts. A step "happens" when he gets there (drops then
+// One fixed daily routine, in order, by the hour each step starts. Milestone 3: roles = who may help with it (bible
+// §11 roles; an on-shift helper walks to him and the step happens when both are there), task = what the helper does.
+// Wake-up moved to 07:00 so the Morning shift (from 06:00) is in place first. A step "happens" when he gets there (drops then
 // apply). optional: he may say no to it (bible §6: eligible routines, activities and meals — waking and settling for the
 // night always happen). drops: need points taken off; activity: the day's one activity (its refusal nudges Social Connection down).
 //   log: the word in today's log · doing: the card's line while there · going: while walking
 export const ROUTINE = [
-  { id: 'wake', name: 'Wake up', at: 6, place: 'room', log: 'Woke', doing: 'Up and dressed in his room', going: 'Heading back to his room', drops: { personal: 30 } },
-  { id: 'breakfast', name: 'Breakfast', at: 6.5, place: 'dining', optional: true, log: 'Breakfast', doing: 'Having breakfast', going: 'Walking to breakfast', drops: { nutrition: 40, social: 5 } },
-  { id: 'rest', name: 'Morning rest', at: 10, place: 'room', optional: true, log: 'Rested', doing: 'Resting in his room', going: 'Walking to his room for a rest', drops: { mobility: 20, clinical: 10 } },
-  { id: 'cards', name: 'Cards', at: 13, place: 'lounge', optional: true, activity: true, log: 'Played Cards', doing: 'Playing Cards in the lounge', going: 'Walking to the lounge for Cards', drops: { social: 30, memory: 20 } },
-  { id: 'dinner', name: 'Evening meal', at: 17.5, place: 'dining', optional: true, log: 'Evening meal', doing: 'Having his evening meal', going: 'Walking to the evening meal', drops: { nutrition: 40, social: 5 } },
-  { id: 'settle', name: 'Settle and sleep', at: 19.5, place: 'room', log: 'Settled for the night', doing: 'Asleep in his room', going: 'Walking to his room to settle', drops: { personal: 25, clinical: 20, mobility: 25 } },
+  { id: 'wake', name: 'Wake up', at: 7, place: 'room', roles: ['CW'], task: 'help him get up and dressed', log: 'Woke', doing: 'Up and dressed in his room', going: 'Heading back to his room', drops: { personal: 30 } },
+  { id: 'breakfast', name: 'Breakfast', at: 8.5, place: 'dining', optional: true, roles: ['CW', 'HN'], task: 'support him at breakfast', log: 'Breakfast', doing: 'Having breakfast', going: 'Walking to breakfast', drops: { nutrition: 40, social: 5 } },
+  { id: 'rest', name: 'Morning rest', at: 11, place: 'room', optional: true, roles: ['RN', 'AH'], task: 'a quiet health and mobility check', log: 'Rested', doing: 'Resting in his room', going: 'Walking to his room for a rest', drops: { mobility: 20, clinical: 10 } },
+  { id: 'cards', name: 'Cards', at: 13.5, place: 'lounge', optional: true, activity: true, roles: ['LC'], task: 'run the Cards game', log: 'Played Cards', doing: 'Playing Cards in the lounge', going: 'Walking to the lounge for Cards', drops: { social: 30, memory: 20 } },
+  { id: 'dinner', name: 'Evening meal', at: 17.5, place: 'dining', optional: true, roles: ['CW', 'HN'], task: 'support him at the evening meal', log: 'Evening meal', doing: 'Having his evening meal', going: 'Walking to the evening meal', drops: { nutrition: 40, social: 5 } },
+  { id: 'settle', name: 'Settle and sleep', at: 19.5, place: 'room', roles: ['CW', 'RN'], task: 'help him settle for the night', log: 'Settled for the night', doing: 'Asleep in his room', going: 'Walking to his room to settle', drops: { personal: 25, clinical: 20, mobility: 25 } },
 ];
 
 // Needs rise every game hour (points per hour), slower while asleep; each routine step's drops take them back down,

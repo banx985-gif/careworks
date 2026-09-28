@@ -60,19 +60,46 @@ export const PLACED = [
 // heights) its base sits below the footprint's front corner. Walk-in rooms fill their footprint a little more.
 export const ART_DRAW = { station: { width: 1.05, drop: 0.25 }, room: { width: 1.12, drop: 0.35 } };
 // People: drawn height in logical px at zoom 1 (tested against the room and station art at phone scale).
-export const PERSON = { height: 190, speed: 150, tagSize: 28 };
+export const PERSON = { height: 190, speed: 280, tagSize: 28 }; // speed: staff, plan units a game-second (Milestone 3: brisker, so
+// helpers reach Arthur within his routine)
 
 // The home's one resident (Milestone 2: his profile is data/residents.js, his day data/routine.js) and the room he is
 // assigned. speed: plan units per game-second at 1× — a little brisker than staff, so a room → lounge walk (~16 tiles)
-// takes about 2 game hours of his day.
-export const RESIDENT = { id: 'RES01', room: 'RM01', speed: 200 };
+// takes about 1.8 game hours of his day.
+export const RESIDENT = { id: 'RES01', room: 'RM01', speed: 240 };
 
-// The worker: the run's Founder (from the slot's setup). Loop: nurse station → Arthur's doorway → lounge → back.
-export const WORKER_LOOP = [
-  { at: 'F01.staff', rest: 5, walking: 'Walking to the nurse station', here: 'At the nurse station' },
-  { at: 'RM01.doorway', rest: 3, walking: "Going to check on Arthur", here: "Checking on Arthur" },
-  { at: 'F05.staff', rest: 5, walking: 'Walking to the lounge', here: 'Helping in the lounge' },
-];
+// Where staff stand (Milestone 3). Named tiles outside the placed things (spotTile() reads these as well as PLACED spots).
+export const SPOTS = {
+  'hall.rnRound': { col: 7, row: 4 },
+  'hall.cwPost': { col: 3, row: 7 },
+  'hall.cwRound': { col: 9, row: 3 },
+  'hall.ahPost': { col: 4, row: 8 },
+  'hall.ahRound': { col: 10, row: 5 },
+  'lounge.lcRound': { col: 9, row: 14 },
+  'lounge.hnPost': { col: 10, row: 13 },
+  'lounge.hnRound': { col: 7, row: 11 },
+  // helpers stand beside Arthur: in his room, at the dining spot, at the Cards table
+  'help.room': { col: 3, row: 4 },
+  'help.dining': { col: 9, row: 12 },
+  'help.lounge': { col: 5, row: 14 },
+  // off shift: standing down in the lounge (the Staff Room area until the Staff Room exists)
+  'rest.1': { col: 8, row: 15 },
+  'rest.2': { col: 10, row: 15 },
+  'rest.3': { col: 11, row: 12 },
+  'rest.4': { col: 7, row: 15 },
+  'rest.5': { col: 11, row: 14 },
+};
+// On shift and not helping, each role walks between its post and a second spot (so the home never looks frozen).
+// stay = game-seconds at each.
+export const POSTS = {
+  RN: { spots: ['F01.staff', 'hall.rnRound'], stay: [6, 3] },
+  CW: { spots: ['hall.cwPost', 'hall.cwRound'], stay: [6, 3] },
+  LC: { spots: ['F05.staff', 'lounge.lcRound'], stay: [6, 3] },
+  AH: { spots: ['hall.ahPost', 'hall.ahRound'], stay: [6, 3] },
+  HN: { spots: ['lounge.hnPost', 'lounge.hnRound'], stay: [6, 3] },
+};
+// Where a helper stands for each routine place.
+export const HELP_SPOTS = { room: 'help.room', dining: 'help.dining', lounge: 'help.lounge' };
 
 // Colours drawn by code: residential, not hospital — warm cream, sage and timber.
 export const HOME_LOOK = {

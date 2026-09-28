@@ -145,8 +145,19 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   let active = false;
   const gestures = new WorldGestures({ camera, bus, isActive: () => active });
   const taps = []; // recent taps and what they hit (tests / debug)
+  // People first; when several people overlap under the finger (a helper standing right beside Arthur), the one whose
+  // body is nearest the finger — not simply the one drawn in front — so each of them can still be tapped.
   const pickAt = (sx, sy) => {
     const w = camera.screenToWorld(sx, sy);
+    const hit = (r) => w.x >= r.x && w.x <= r.x + r.w && w.y >= r.y && w.y <= r.y + r.h;
+    const people = (world?.people ?? []).filter((p) => hit(tapRect(p)));
+    if (people.length > 1) {
+      const dist = (p) => {
+        const r = tapRect(p);
+        return Math.abs(w.x - (r.x + r.w / 2)) + Math.abs(w.y - (r.y + r.h / 2)) * 0.35;
+      };
+      return people.reduce((a, b) => (dist(b) < dist(a) ? b : a));
+    }
     return selection.pick(w.x, w.y);
   };
   const cellAt = (sx, sy) => {
@@ -232,7 +243,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     },
     resize() {
       camera.pixelScale = renderer.pixelScale;
-      floorLayer.setPixelScale(renderer.pixelScale * HOME.zoom.max); // sharp up to full zoom
+      floorLayer.setPixelScale(renderer.pixelScale * detailFor(camera.zoom)); // near the drawn size (see render)
       const cx = camera.x + camera.visibleW / 2;
       const cy = camera.y + camera.visibleH / 2;
       fitView();
@@ -306,7 +317,10 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       ctx.fillStyle = palette.light;
       ctx.fillRect(0, 0, W, renderer.height);
       camera.apply(ctx);
-      floorLayer.render(ctx, 0, 0);
+      // The floor picture is kept near the size it is drawn (remade once when a pinch crosses a detail step), and only its
+      // visible part is drawn: the whole picture every frame held a tablet to ~33 fps.
+      floorLayer.setPixelScale(renderer.pixelScale * detailFor(camera.zoom));
+      floorLayer.renderView(ctx, { x: camera.x, y: camera.y, w: camera.visibleW, h: camera.visibleH }); // only what is on screen
       assets.detail = detailFor(camera.zoom); // sprites cached near the size they are drawn: sharp, and a plain copy each frame
       for (const it of world.placed) if (it.kind === 'room') assets.draw(ctx, it.def.art, ...rectArgs(artRect(it)));
       if (buildMode) drawBuildFloor(ctx);

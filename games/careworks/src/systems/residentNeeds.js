@@ -99,12 +99,22 @@ function nudge(st, changes) {
   for (const [id, v] of Object.entries(changes)) st.outcomes[id] = clamp(st.outcomes[id] + v);
 }
 
-export function completeStep(st, step, day, t) {
-  for (const [id, v] of Object.entries(step.drops ?? {})) st.needs[id] = clamp(st.needs[id] - v);
+// opts (Milestone 3, a helper): needMult(need) → × on that need's drop (a Founder's +6% contribution); activityMult /
+// mealMult → × on the activity's Social Connection and a preferred meal's Mood (small secondary perks); note → added to
+// the log line ("with Ruby", "on his own"). Returns the need points actually taken off (tests).
+export function completeStep(st, step, day, t, { needMult = null, activityMult = 1, mealMult = 1, note = null } = {}) {
+  const dropped = {};
+  for (const [id, v] of Object.entries(step.drops ?? {})) {
+    const before = st.needs[id];
+    st.needs[id] = clamp(before - v * (needMult?.(id) ?? 1));
+    dropped[id] = before - st.needs[id];
+  }
   const mood = PREF_RULES[prefOf(st, step.id)].mood;
-  if (mood) nudge(st, { mood });
-  if (step.activity) nudge(st, ACTIVITY_DONE);
-  addLog(st, day, t, step.log);
+  const meal = step.place === 'dining';
+  if (mood) nudge(st, { mood: mood > 0 && meal ? mood * mealMult : mood });
+  if (step.activity) nudge(st, Object.fromEntries(Object.entries(ACTIVITY_DONE).map(([k, v]) => [k, v * activityMult])));
+  addLog(st, day, t, note ? `${step.log} (${note})` : step.log);
+  return dropped;
 }
 
 export function refuseStep(st, step, day, t) {

@@ -3,6 +3,8 @@
 import { PLACED } from './home.js';
 import { RESIDENTS } from './residents.js';
 import { FOUNDERS } from './setup.js';
+import { STAFF } from './staff.js';
+import { ROLES } from './roles.js';
 
 const art = (folder, key) => [key, `assets/images/${folder}/${key}.png`];
 
@@ -12,6 +14,9 @@ export const ASSETS = {
   ...Object.fromEntries(PLACED.map((p) => art(p.kind === 'room' ? 'rooms' : 'facilities', p.art))),
   ...Object.fromEntries(RESIDENTS.map((r) => art('residents', r.art))),
   ...Object.fromEntries(FOUNDERS.map((f) => art('staff', f.art))),
+  // Milestone 3: every staff portrait on the roster data and the five role badges (staff cards).
+  ...Object.fromEntries(STAFF.map((s) => art('staff', s.art))),
+  ...Object.fromEntries(Object.values(ROLES).map((r) => art('badges', r.badge))),
   // Milestone 0 loader test (?screen=test): the placeholder PWA icon as a real image, and one deliberately missing file.
   m0Real: 'assets/branding/pwa/icon-192.png',
   m0Missing: 'assets/m0-missing-test.png',

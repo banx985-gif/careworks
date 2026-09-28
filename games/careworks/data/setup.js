@@ -30,43 +30,48 @@ export const PALETTES = [
 ];
 export const paletteById = (id) => PALETTES.find((p) => p.id === id) ?? PALETTES[0];
 
-// The five roles (bible §11). colour = the code-drawn portrait placeholder's tunic until the portraits are wired in.
-export const ROLES = {
-  RN: { name: 'Registered Nurse', short: 'Nurse', colour: '#3E7CB1' },
-  CW: { name: 'Care Worker', short: 'Carer', colour: '#6FA86A' },
-  LC: { name: 'Lifestyle Coordinator', short: 'Lifestyle', colour: '#E0913F' },
-  AH: { name: 'Allied Health', short: 'Allied Health', colour: '#8A6CC0' },
-  HN: { name: 'Hospitality & Nutrition', short: 'Hospitality', colour: '#C8634E' },
-};
+// The five roles live in data/roles.js (Milestone 3); re-exported here for the setup screens.
+export { ROLES } from './roles.js';
 
-// Choose Founding Staff (bible §3.5.3): one per role. The perk is text / data now — no effect until Milestone 3.
-// team = the opening team (bible §3.5.4), founder first; used from Milestone 1.
-// art = the filed portrait key (not drawn in Milestone 0: the card asks for code-drawn placeholders).
+// Choose Founding Staff (bible §3.5.3): one per role. Milestone 3 applies the perk. perk.effects are numbers, read
+// through core/FounderPerks: contrib_<STAT> = +% on the need that stat eases when the Founder helps with a step
+// (e.g. contrib_PER 6: Personal Support drops 6% more); the rest are small secondary bonuses. live: false = its system is
+// not built yet (the number is stored for its milestone). The opening team is built by src/systems/staffTeam.js.
 export const FOUNDERS = [
   {
     id: 'RN01', name: 'Maya Finch', role: 'RN', trait: 'Calm Round', skin: '#E8B894', hair: '#5A3A28', art: 'staff_rn01',
-    perk: { name: 'Founder RN', text: '+6% Clinical contribution on eligible care tasks and −3% medication-round delay risk', stat: 'clinical', statPct: 6, medDelayPct: -3 },
-    team: ['RN01', 'CW01', 'LC01'],
+    perk: {
+      name: 'Founder RN', text: '+6% Clinical contribution on eligible care tasks and −3% medication-round delay risk',
+      effects: [{ key: 'contrib_CLN', value: 6 }, { key: 'medRoundDelayPct', value: -3, live: false }],
+    },
   },
   {
     id: 'CW01', name: 'Ruby Hale', role: 'CW', trait: 'Gentle Hands', skin: '#F0C7A4', hair: '#B5452F', art: 'staff_cw01',
-    perk: { name: 'Founder Carer', text: '+6% Personal Care contribution and +5% Familiar Care relationship gain', stat: 'personal', statPct: 6, familiarPct: 5 },
-    team: ['CW01', 'RN01', 'LC01'],
+    perk: {
+      name: 'Founder Carer', text: '+6% Personal Care contribution and +5% Familiar Care relationship gain',
+      effects: [{ key: 'contrib_PER', value: 6 }, { key: 'familiarCarePct', value: 5, live: false }],
+    },
   },
   {
     id: 'LC01', name: 'Zoe Quinn', role: 'LC', trait: 'Conversation Starter', skin: '#C98E66', hair: '#2E211A', art: 'staff_lc01',
-    perk: { name: 'Founder Lifestyle', text: '+6% Lifestyle contribution and +3% activity Wellbeing gain', stat: 'lifestyle', statPct: 6, wellbeingPct: 3 },
-    team: ['LC01', 'RN01', 'CW01'],
+    perk: {
+      name: 'Founder Lifestyle', text: '+6% Lifestyle contribution and +3% activity Wellbeing gain',
+      effects: [{ key: 'contrib_SOC', value: 6 }, { key: 'activityWellbeingPct', value: 3 }],
+    },
   },
   {
     id: 'AH01', name: 'Nia Foster', role: 'AH', trait: 'Steady Steps', skin: '#8D5A3B', hair: '#1F1612', art: 'staff_ah01',
-    perk: { name: 'Founder Allied Health', text: '+6% Mobility contribution and +5% rehabilitation progress', stat: 'mobility', statPct: 6, rehabPct: 5 },
-    team: ['AH01', 'RN01', 'CW01'],
+    perk: {
+      name: 'Founder Allied Health', text: '+6% Mobility contribution and +5% rehabilitation progress',
+      effects: [{ key: 'contrib_MOB', value: 6 }, { key: 'rehabProgressPct', value: 5, live: false }],
+    },
   },
   {
     id: 'HN01', name: 'Sam Kitchen', role: 'HN', trait: 'Warm Welcome', skin: '#E2AE88', hair: '#7A5A3A', art: 'staff_hn01',
-    perk: { name: 'Founder Hospitality', text: '+6% Nutrition/Hospitality contribution and +3% meal/hydration satisfaction', stat: 'nutrition', statPct: 6, mealPct: 3 },
-    team: ['HN01', 'RN01', 'CW01'],
+    perk: {
+      name: 'Founder Hospitality', text: '+6% Nutrition/Hospitality contribution and +3% meal/hydration satisfaction',
+      effects: [{ key: 'contrib_NUT', value: 6 }, { key: 'mealSatisfactionPct', value: 3 }],
+    },
   },
 ];
 export const founderById = (id) => FOUNDERS.find((f) => f.id === id) ?? null;

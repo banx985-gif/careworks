@@ -30,6 +30,12 @@ import { paletteById } from '../data/setup.js';
 import { NEEDS, OUTCOMES, RESIDENTS, validateResidents } from '../data/residents.js';
 import { DataValidator } from '../../../core/DataValidator.js';
 import { ROUTINE, LOG_SHOWN } from '../data/routine.js';
+import { ROLES, STATS, TIERS } from '../data/roles.js';
+import { TRAITS, STAFF, validateStaff } from '../data/staff.js';
+import { SHIFTS } from '../data/balance.js';
+import { FOUNDERS } from '../data/setup.js';
+import { clockText } from './systems/residentNeeds.js';
+import { yearsEmployed } from './systems/staffTeam.js';
 import { createHomeWorld, makeClock } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
 import { createSlotsScreen } from './screens/SlotsScreen.js';
@@ -176,7 +182,7 @@ let open = null; // { n, data, world } — the campaign on screen and its home w
 function openRun(n, data) {
   const clock = makeClock(bus);
   if (data.clock) clock.load(data.clock);
-  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, resident: data.residents?.[0], seed: data.seed, bus });
+  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, resident: data.residents?.[0], staff: data.staff, seed: data.seed, bus });
   if (debug.enabled && PARAMS.get('paused') === '1') clock.speed = 0; // ?debug=1&paused=1: open exactly as saved (tests)
   open = { n, data, world };
 }
@@ -192,7 +198,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'clock:speed'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'clock:speed', 'staff:onShift', 'staff:offShift'],
   save: () => saveRun(),
   stamp: () => (open ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && router.currentName === 'home' && !open.world.clock.paused,
@@ -211,6 +217,9 @@ async function prepareSaves() {
     const r = validateResidents(new DataValidator(), RESIDENTS, ROUTINE.map((x) => x.id)).report();
     debug.log(r.ok ? `residents: ${RESIDENTS.length} checked` : `resident data: ${r.errors.join('; ')}`);
     if (!r.ok) console.error('[CAREWORKS] resident data', r.errors);
+    const s = validateStaff(new DataValidator(), STAFF).report();
+    debug.log(s.ok ? `staff: ${STAFF.length} checked` : `staff data: ${s.errors.join('; ')}`);
+    if (!s.ok) console.error('[CAREWORKS] staff data', s.errors);
   }
 }
 const cards = () => campaigns?.cards ?? [];
@@ -335,9 +344,9 @@ function leaveSetup() {
   router.go(to?.name ?? 'menu', to?.params ?? {});
 }
 const setupScreen = createSetupScreen({ layout, assets, textPrompt, onBack: () => leaveSetup(), onStart: (n, setup) => startFacility(n, setup) });
-// The home (Milestones 1–2). Tapping Arthur, the worker or a place opens its sheet (rebuilt every frame, so it stays
+// The home (Milestones 1–3). Tapping Arthur, a staff member or a place opens its sheet (rebuilt every frame, so it stays
 // live). Arthur's card (Milestone 2): what he is doing now, his six needs and five outcomes as bars, today's log and
-// his likes and dislikes. The room card names its resident.
+// his likes and dislikes; Milestone 3 adds who helps with each step (a picker). The room card names its resident.
 const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), debug });
 const stepName = (id) => ROUTINE.find((s) => s.id === id)?.name ?? id;
 function residentSections(w, it) {
@@ -352,7 +361,89 @@ function residentSections(w, it) {
     { title: 'Outcomes', bars: OUTCOMES.map((o) => ({ label: o.name, value: st.outcomes[o.id], color: COL.good })) },
     { title: 'Today', lines: log.length ? log : ['Nothing yet today'] },
     { title: 'Likes and dislikes', lines: likes },
+    { title: 'Who helps', lines: [{ text: 'Tap a step to choose who helps (Auto: the first free person on shift whose role fits)', color: COL.textMuted }], buttons: helpButtons(w), columns: 2 },
   ];
+}
+// Milestone 3: one button per routine step — who will help with it.
+const onMorningShift = (step) => step.at >= SHIFTS.morning.from && step.at < SHIFTS.morning.to;
+function helpButtons(w) {
+  return ROUTINE.map((step) => {
+    const chosen = w.chosenFor(step.id);
+    const who = (id) => w.byId(id)?.name.split(' ')[0];
+    let sub;
+    if (!onMorningShift(step)) sub = chosen ? `${who(chosen)} · off shift then` : 'Off shift: on his own';
+    else if (chosen) sub = `${who(chosen)} (chosen)`;
+    else {
+      // Auto names who normally does it: the first team member whose role fits (busy right now or not).
+      const fit = w.staff.find((p) => step.roles.includes(p.role));
+      sub = fit ? `Auto · ${who(fit.id)}` : 'Auto · no one on the team fits';
+    }
+    return { id: `help:${step.id}`, label: step.name, sub, accent: chosen ? COL.action : COL.progress, onTap: () => openPicker(step.id) };
+  });
+}
+// "Who helps with breakfast?": Auto, or any team member. A role that doesn't fit is refused in plain words.
+function openPicker(stepId) {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    const step = ROUTINE.find((s) => s.id === stepId);
+    if (!w || !step) return { title: '', sections: [] };
+    const needs = step.roles.map((r) => ROLES[r].name).join(' or ');
+    const lines = [];
+    if (message) lines.push({ text: message, color: COL.bad });
+    if (!onMorningShift(step)) lines.push({ text: `No one is on shift at ${clockText(step.at)}: Arthur manages on his own until more shifts arrive.`, color: COL.textMuted });
+    const chosen = w.chosenFor(stepId);
+    const pick = (id) => {
+      const r = w.assign(stepId, id);
+      if (!r.ok) {
+        message = r.reason;
+        return;
+      }
+      autosave.request('assign');
+      openHomeSheet('RES01');
+    };
+    return {
+      title: `Who helps with ${step.activity ? step.name : step.name.toLowerCase()}?`,
+      subtitle: `Needs a ${needs} · ${step.task} · from ${clockText(step.at)}`,
+      art: 'resident_res01',
+      accent: paletteById(open.data.facility.palette).hex,
+      sections: [
+        { lines },
+        {
+          columns: 1,
+          buttons: [
+            { id: 'pick:auto', label: 'Auto', sub: 'The first free person on shift whose role fits', accent: chosen ? COL.progress : COL.good, onTap: () => pick(null) },
+            ...w.staff.map((p) => {
+              const fits = step.roles.includes(p.role);
+              return { id: `pick:${p.id}`, label: p.name, sub: `${ROLES[p.role].name}${fits ? '' : ' · role does not fit'}${chosen === p.id ? ' · chosen' : ''}`, icon: p.art, accent: !fits ? COL.textFaint : chosen === p.id ? COL.good : COL.progress, onTap: () => pick(p.id) };
+            }),
+            { id: 'pick:back', label: '‹ Back to Arthur', accent: COL.progress, onTap: () => openHomeSheet('RES01') },
+          ],
+        },
+      ],
+    };
+  });
+}
+// The staff card (Milestone 3): portrait with the role badge, FOUNDER tag, tier and level, five stat bars, Energy and
+// Morale, the trait, the shift and what they are doing now.
+function staffMenu(w, p, accent) {
+  const m = p.model;
+  const cap = TIERS[m.tier]?.statCap ?? 220;
+  const trait = TRAITS[m.traits[0]];
+  const isFounder = w.staffState.founder.id === p.id;
+  const h = w.staffState.founder.history;
+  const status = [m.status.tired && 'Tired', m.status.stressed && 'Stressed'].filter(Boolean);
+  const sections = [
+    { lines: [{ text: w.stateOf(p), color: COL.actionDark }, w.roster.label(p.id), `Tasks helped with: ${m.counters.tasks ?? 0} · Salary ${m.salary} Credits a month`] },
+    { title: 'Stats', bars: STATS.map((s) => ({ label: s.name, value: m.stats[s.id], max: cap, color: s.id === ROLES[m.role].primaryStat ? COL.action : COL.progress })) },
+    { title: status.length ? `Energy and Morale · ${status.join(', ')}` : 'Energy and Morale', bars: [{ label: 'Energy', value: m.energy, color: m.energy < 25 ? COL.bad : COL.good }, { label: 'Morale', value: m.morale, color: m.morale < 25 ? COL.bad : COL.gold }] },
+    { title: 'Trait', lines: [trait ? `${trait.name}: ${trait.text}` : 'None'] },
+  ];
+  if (isFounder) {
+    const f = FOUNDERS.find((x) => x.id === p.id);
+    sections.push({ title: 'Founding Staff', lines: [`${f.perk.name}: ${f.perk.text}`, `With you since Day 1 · ${h.daysEmployed} days (${yearsEmployed(h)} years) · ${h.careTasks} care tasks`] });
+  }
+  return { title: p.name, subtitle: `${ROLES[m.role].name} · ${TIERS[m.tier]?.name ?? m.tier} · Lv ${m.level}`, art: p.art, badge: ROLES[m.role].badge, tag: isFounder ? { text: 'FOUNDER' } : null, accent, sections };
 }
 function openHomeSheet(id) {
   sheet.open(() => {
@@ -361,7 +452,7 @@ function openHomeSheet(id) {
     if (!it) return { title: '', sections: [] };
     const accent = paletteById(open.data.facility.palette).hex;
     if (it.kind === 'resident') return { title: it.name, subtitle: it.line, art: it.art, accent, sections: residentSections(w, it) };
-    if (it.kind === 'staff') return { title: it.name, subtitle: it.line, art: it.art, accent, sections: [{ lines: [w.stateOf(it)] }] };
+    if (it.kind === 'staff') return staffMenu(w, it, accent);
     const here = w.people.filter((p) => w.whereIs(p) === it.id).map((p) => p.name.split(' ')[0]);
     const lines = [here.length ? `Here now: ${here.join(' and ')}` : 'Nobody here right now'];
     let sub = it.def.text;

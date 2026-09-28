@@ -3,12 +3,14 @@
 //   newCampaign(setup, now)   the run save START FACILITY writes: the facility, the clock (Milestone 2) and the
 //                             residents' state (Arthur only for now)
 //   slotSummary(data)         the small record the Campaign Slots screen reads without loading the campaign
-//   SAVE_MIGRATIONS           older saves → this version: v1 (Milestones 0–1) had no clock and no resident state
+//   SAVE_MIGRATIONS           older saves → this version: v1 (Milestones 0–1) had no clock and no resident state;
+//                             v2 (Milestone 2) had no staff — a team is built from its stored Founder (Maya if none)
 import { founderById, paletteById, ROLES, FOUNDER_FLAG } from '../../data/setup.js';
 import { residentById } from '../../data/residents.js';
 import { RESIDENT } from '../../data/home.js';
 import { makeClock } from './homeWorld.js';
 import { newResidentState } from './residentNeeds.js';
+import { newStaffState } from './staffTeam.js';
 
 const freshResidents = () => [newResidentState(residentById(RESIDENT.id), { room: RESIDENT.room })];
 const dateOf = (clock) => ({ year: clock.year, month: clock.month, day: clock.day });
@@ -30,6 +32,7 @@ export function newCampaign(setup, now = Date.now()) {
     clock,
     date: dateOf(clock),
     residents: freshResidents(),
+    staff: newStaffState(founder.id), // Milestone 3: the opening team, the Founder's flag / perk / history, the shift
     playSec: 0,
     ngPlus: 0,
   };
@@ -70,8 +73,13 @@ export function upgradeV1(data) {
     residents: Array.isArray(data.residents) ? data.residents : freshResidents(),
   };
 }
+// Version 2 → 3 (Milestone 3): the opening team from the stored Founder.
+export function upgradeV2(data) {
+  return { ...data, staff: data.staff?.staff ? data.staff : newStaffState(data.facility?.founder?.id ?? 'RN01') };
+}
 export const SAVE_MIGRATIONS = {
   1: (record) => ({ ...record, data: upgradeV1(record.data) }),
+  2: (record) => ({ ...record, data: upgradeV2(record.data) }),
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).
