@@ -10,8 +10,14 @@
 //   crew.startTask(id, task, spot) · crew.retarget(id, spot) · crew.resumeTask(id, task, spot, arrived)
 //   crew.finishTask(id) · crew.releaseTask(id)     done (task counted) / never mind (back to their post)
 //   crew.stateOf(person) → "On shift at the Nurse Station" …
+// Milestone 7: three shifts (src/systems/roster.js). Night costs Morale unless it is their preference; their preferred
+// shift lifts it a little (data/shifts.js SHIFT_MORALE). Agency workers join for one shift: crew.addPerson(model,
+// { agency: true, at }) walks them in from the front entrance, and when their shift ends they walk out again and are
+// marked gone (the home world then drops them).
 import { Agent } from '../../../../core/Agent.js';
-import { POSTS, HELP_SPOTS, PERSON } from '../../data/home.js';
+import { POSTS, HELP_SPOTS, PERSON, ENTRANCE } from '../../data/home.js';
+import { SHIFT_MORALE } from '../../data/shifts.js';
+import { staffById } from '../../data/staff.js';
 import { ROLES } from '../../data/roles.js';
 import { STAFF_BALANCE as B } from '../../data/balance.js';
 import { FOUNDER_FLAG } from '../../data/setup.js';
@@ -25,7 +31,7 @@ const joinRoles = (ids) => {
 const stepWord = (step) => (step.activity ? step.name : step.name.toLowerCase());
 
 export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow, bandNow, bus = null }) {
-  const people = sys.staff.map((model, i) => {
+  const makePerson = (model, i) => {
     const p = {
       kind: 'staff',
       id: model.id,
@@ -34,7 +40,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       role: model.role,
       line: ROLES[model.role].name,
       model,
-      restSpot: `rest.${i + 1}`,
+      restSpot: `rest.${(i % 5) + 1}`, // five rest spots in front of the Staff Room
       mode: 'post', // post · toHelp · helping · toRest · resting
       postIndex: 0,
       stay: 1 + i * 1.5, // game-seconds before the first move (so they don't all set off together)
@@ -51,9 +57,15 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       p.agent.placeAtTile(grid, t.col, t.row);
     }
     return p;
+  };
+  const agencyIds = new Set((state.roster.agency ?? []).map((a) => a.id));
+  const people = sys.staff.map((model, i) => {
+    const p = makePerson(model, i);
+    if (agencyIds.has(model.id)) p.agency = true;
+    return p;
   });
   const byId = (id) => people.find((p) => p.id === id) ?? null;
-  const onShift = (p) => roster.onShift(p.id, hourNow(), bandNow().id);
+  const onShift = (p) => roster.onShift(p.id);
   const walk = (p, ref, mode, then = null) => {
     const t = spotTile(ref);
     p.mode = mode;
@@ -67,7 +79,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
     });
   };
   // Off shift they are resting from the start (a new home opens before the shift): no walk-in needed.
-  for (const p of people) if (!onShift(p) && !state.pos?.[p.id]) {
+  for (const p of people) if (!p.agency && !onShift(p) && !state.pos?.[p.id]) {
     const t = spotTile(p.restSpot);
     p.agent.placeAtTile(grid, t.col, t.row);
     p.mode = 'resting';
@@ -79,7 +91,10 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
     if (!was || !state.pos?.[p.id]) continue;
     p.postIndex = was.postIndex ?? 0;
     p.stay = was.stay ?? p.stay;
-    if (was.mode === 'resting') p.mode = 'resting';
+    if (was.mode === 'leaving') {
+      p.mode = 'leaving';
+      p.agent.walkTo(grid, ENTRANCE.col, ENTRANCE.row, () => (p.gone = true));
+    } else if (was.mode === 'resting') p.mode = 'resting';
     else if (was.mode === 'toRest') walk(p, p.restSpot, 'toRest', () => (p.mode = 'resting'));
     else if (was.mode === 'toPost') toPost(p);
   }
@@ -94,7 +109,12 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       const step = Math.min(Math.abs(gap), B.morale.settlePerHour * hours);
       m.morale = clamp(m.morale + Math.sign(gap) * step);
     }
-    m.activity = onShift(p) ? 'working' : 'resting';
+    // Milestone 7: Night costs Morale unless it is their preference; their preferred shift lifts it a little.
+    const working = roster.workingShift(p.id);
+    const pref = staffById(p.id)?.shiftPref ?? null;
+    if (working === 'night' && pref !== 'night') m.morale = clamp(m.morale + SHIFT_MORALE.nightPerHour * hours);
+    else if (working && working === pref) m.morale = clamp(m.morale + SHIFT_MORALE.preferredPerHour * hours);
+    m.activity = working ? 'working' : 'resting';
     sys.refreshStatus(m);
   }
 
@@ -105,7 +125,10 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       for (const p of people) {
         tickNumbers(p, hours);
         const shift = onShift(p);
-        if (!shift && p.mode !== 'toRest' && p.mode !== 'resting') {
+        if (p.agency) {
+          // an agency worker's one shift is over: out through the front entrance
+          if (!shift && p.mode !== 'leaving') crew.leave(p);
+        } else if (!shift && p.mode !== 'toRest' && p.mode !== 'resting') {
           if (p.task) crew.releaseTask(p.id);
           walk(p, p.restSpot, 'toRest', () => (p.mode = 'resting'));
           bus?.emit('staff:offShift', { id: p.id });
@@ -186,6 +209,30 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       p.task = null;
       if (onShift(p)) toPost(p);
     },
+    // Milestone 7: an agency worker joins for their shift (from the front entrance, unless a reload puts them back).
+    addPerson(model, { agency = false, at = null } = {}) {
+      const p = makePerson(model, people.length);
+      p.agency = agency;
+      if (at) {
+        p.agent.x = at.x;
+        p.agent.y = at.y;
+      } else {
+        p.agent.placeAtTile(grid, ENTRANCE.col, ENTRANCE.row);
+        p.postIndex = 0;
+        toPost(p);
+      }
+      people.push(p);
+      return p;
+    },
+    leave(p) {
+      if (p.task) crew.releaseTask(p.id);
+      p.mode = 'leaving';
+      p.agent.walkTo(grid, ENTRANCE.col, ENTRANCE.row, () => (p.gone = true));
+    },
+    remove(id) {
+      const i = people.findIndex((p) => p.id === id);
+      if (i >= 0) people.splice(i, 1);
+    },
     newBand() {
       for (const p of people) p.bandDone = 0;
     },
@@ -194,6 +241,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       const who = t?.who ?? 'Arthur'; // Milestone 6: whichever resident the task is for
       if (t && p.mode === 'toHelp') return t.type === 'bell' ? `Answering ${who}'s call bell` : t.room ? `Going to ${who}'s room (${t.label})` : `Going to ${who} (${t.label})`;
       if (t && p.mode === 'helping') return t.type === 'bell' ? `At ${who}'s call bell` : t.room ? `In ${who}'s room: ${t.label}` : `With ${who}: ${t.label}`;
+      if (p.mode === 'leaving') return 'Agency shift over: leaving the home';
       if (p.mode === 'toRest') return 'Off shift: going to the Staff Room';
       if (p.mode === 'resting') return 'Off shift: resting in the Staff Room';
       if (p.mode === 'toPost') return 'On shift: walking the home';

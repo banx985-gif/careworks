@@ -9,6 +9,10 @@
 // Pause / 1× (2× and 4× locked), Inbox and Help on top; Care · Staff · Develop · Quality · Business below (Care opens the
 // resident list, Staff the team roster, the rest a sheet saying what will live there), a red dot on Care while a call
 // bell rings or a missed task hasn't been looked at. Care pops (core/VfxSystem) and the end-of-day beat.
+// Milestone 7: Staff opens the roster sheet — Morning / Afternoon / Night / Off columns (tap someone, then a column, to
+// move them), a Safe Coverage bar per shift, Float toggles, the Night on-call flag and the coverage log; a red badge on
+// Staff (and a banner in the home) while a shift is short or about to start short. The Ledger shows agency fees, care
+// recovery and the unsafe-shift counter.
 // Add ?debug=1 for the FPS/state overlay, ?screen=test for the scaling / tap / asset-loader test screen.
 import { THEME, font } from '../../../core/Theme.js';
 import { EventBus } from '../../../core/EventBus.js';
@@ -42,7 +46,8 @@ import { DataValidator } from '../../../core/DataValidator.js';
 import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
 import { ROLES, STATS, TIERS } from '../data/roles.js';
 import { TRAITS, STAFF, validateStaff } from '../data/staff.js';
-import { SHIFTS, FEES } from '../data/balance.js';
+import { SHIFTS, FEES, SHORT_STAFFING } from '../data/balance.js';
+import { SHIFT_IDS, OFF, WINGS } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
 import { ROOM_IDS } from '../data/home.js';
 import { FOUNDERS } from '../data/setup.js';
@@ -223,7 +228,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft'],
   save: () => saveRun(),
   stamp: () => (open ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && router.currentName === 'home' && !open.world.clock.paused,
@@ -429,18 +434,20 @@ function careBadge() {
   const n = open.world.bells.length + missedToday().filter((t) => !open.seenMissed.has(t.id)).length;
   return n || null;
 }
+// Staff's badge (Milestone 7): the shifts short now, or about to start short (from the band before).
+const staffBadge = () => (open ? open.world.coverage.warnings().length || null : null);
 const markMissedSeen = (residentId = null) => {
   for (const t of missedToday()) if (!residentId || t.resident === residentId) open?.seenMissed.add(t.id);
 };
 const bottomBar = createBottomBar({
   layout,
   assets,
-  items: BOTTOM_SLOTS.map((s) => ({ id: s.id, label: s.label, icon: s.icon, badge: s.id === 'care' ? careBadge : null })),
+  items: BOTTOM_SLOTS.map((s) => ({ id: s.id, label: s.label, icon: s.icon, badge: s.id === 'care' ? careBadge : s.id === 'staff' ? staffBadge : null })),
   open: (id) => openBottom(id),
 });
 const vfx = new VfxSystem({ assets, width: W, height: renderer.height, font: THEME.family, maxTexts: 4, maxEffects: 16 });
 const dayBeat = createDayBeat();
-const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug });
+const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster() });
 const carePops = createCarePops({ bus, world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused });
 // The end of each day: the medium beat ("Day 3 — all routine care done" / "2 tasks missed").
 bus.on('care:dayEnd', (summary) => {
@@ -498,25 +505,115 @@ function openResidents() {
     };
   });
 }
-// Staff: the team roster — portrait, role badge, Energy and Morale; each opens their staff card.
+// Staff (Milestone 7): the roster sheet. Three shift columns and Off, each with who is on it (portrait + role badge);
+// tap someone, then a column, to move them. A Safe Coverage bar per shift (green ≥ 100%, amber 80–99%, red below), the
+// warnings, a Float toggle and card per team member, the Night on-call flag and the coverage log.
+const shiftTime = (sid) => `${clockText(SHIFTS[sid].from)}–${clockText(SHIFTS[sid].to)}`;
+const COVER_COLOUR = { good: COL.good, amber: COL.gold, red: COL.bad };
+const PREF_WORD = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' };
+const PEAK_WORDS = { wake: 'wake-ups', meal: 'meals', meds: 'medicine rounds', personal: 'personal care', activity: 'activities', observation: 'health checks', settle: 'settling', bell: 'call bells', roomCheck: 'room checks' };
+let rosterPick = null; // the team member picked to move
 function openRoster() {
+  rosterPick = null;
+  let message = null;
   sheet.open(() => {
     const w = open?.world;
     if (!w) return { title: '', sections: [] };
+    const r = w.roster;
+    const cov = w.coverage;
+    const status = cov.status();
+    const warns = cov.warnings();
+    const t = w.clock.totalDays * 24 + w.hour;
+    const picked = rosterPick && w.byId(rosterPick);
+    const lines = [];
+    if (message) lines.push({ text: message, color: COL.bad });
+    for (const a of warns) lines.push({ text: `${SHIFTS[a.shift].name} ${a.running ? 'is running short' : `starts short at ${clockText(SHIFTS[a.shift].from)}`}: ${a.reasons.join(', ')}.`, color: COL.bad });
+    lines.push({ text: picked ? `Moving ${first(picked.name)}: tap Morning, Afternoon, Night or Off.` : 'Tap someone, then a shift (or Off), to move them. Off shift they rest in the Staff Room.', color: COL.textMuted });
+    // One card per person working (or rostered on) each shift; agency workers and float cover for the shift now / next.
+    const card = (p, sid) => {
+      const ag = r.agencyOf(p.id);
+      const cover = !ag && sid !== OFF && r.shiftOf(p.id)?.id !== sid;
+      const tag = ag ? 'AGENCY' : cover ? 'COVER' : r.isFloat(p.id) ? 'FLOAT' : null;
+      return {
+        id: `roster:${sid}:${p.id}`,
+        label: first(p.name),
+        sub: `${ROLES[p.role].short} · E ${Math.round(p.model.energy)}`,
+        icon: p.art,
+        iconCrop: PORTRAIT_CROP,
+        iconBadge: ROLES[p.role].badge,
+        tag,
+        selected: rosterPick === p.id,
+        accent: p.model.status.tired || p.model.status.stressed ? COL.action : COL.progress,
+        onTap: () => {
+          message = null;
+          if (ag || cover) message = ag ? 'Agency cover is booked for this shift only: they leave when it ends.' : `${first(p.name)} is covering this shift as a float; their own shift is ${r.shiftOf(p.id)?.name ?? 'Off'}.`;
+          else rosterPick = rosterPick === p.id ? null : p.id;
+        },
+      };
+    };
+    const lanes = [...SHIFT_IDS, OFF].map((sid) => {
+      const a = status.find((x) => x.shift === sid);
+      const ids = sid === OFF ? w.team.filter((p) => !r.shiftOf(p.id)).map((p) => p.id) : a.staff;
+      const people = ids.map((id) => w.byId(id)).filter(Boolean);
+      return {
+        id: `lane:${sid}`,
+        title: sid === OFF ? 'Off' : SHIFTS[sid].name,
+        sub: sid === OFF ? `${people.length} resting` : `${shiftTime(sid)} · ${a.pct}%`,
+        accent: sid === OFF ? COL.progress : COVER_COLOUR[a.safe ? 'good' : a.colour === 'good' ? 'red' : a.colour],
+        selected: !!picked && (sid === OFF ? !r.shiftOf(picked.id) : r.shiftOf(picked.id)?.id === sid),
+        empty: sid === OFF ? 'Nobody off' : 'Nobody on',
+        items: people.map((p) => card(p, sid)),
+        onTap: () => {
+          message = null;
+          if (!rosterPick) {
+            message = 'Tap someone first, then the shift to move them to.';
+            return;
+          }
+          const res = w.moveStaff(rosterPick, sid);
+          if (!res.ok) message = res.reason;
+          else autosave.request('roster');
+          rosterPick = null;
+        },
+      };
+    });
+    const bars = status.map((a) => ({ label: `${SHIFTS[a.shift].name} ${shiftTime(a.shift)}`, value: a.provided, max: Math.max(a.required, 0.1), color: COVER_COLOUR[a.colour], text: `${a.pct}%` }));
+    const detail = status.map((a) => {
+      const T = SHIFTS[a.shift];
+      const rn = a.rnOn ? 'RN on shift' : a.onCallUsed ? 'RN on call' : T.clinical?.rn ? 'no RN' : 'no RN needed';
+      return { text: `${T.name}: needs ${a.required.toFixed(1)} points, has ${a.provided.toFixed(1)} · ${rn} · busiest with ${T.peaks.map((k) => PEAK_WORDS[k] ?? k).join(', ')}`, color: a.safe ? COL.textMuted : COL.bad };
+    });
+    const teamRows = [];
+    for (const p of w.team) {
+      const m = p.model;
+      const pref = STAFF.find((d) => d.id === p.id)?.shiftPref;
+      const shift = r.shiftOf(p.id);
+      teamRows.push({ id: `staff:${p.id}`, label: p.name, sub: `${shift ? shift.name : 'Off'} · likes ${PREF_WORD[pref] ?? '—'} · E ${Math.round(m.energy)} · M ${Math.round(m.morale)}`, icon: p.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[m.role].badge, accent: m.status.tired || m.status.stressed ? COL.action : COL.progress, onTap: () => openFrom(p.id, 'roster') });
+      const float = r.isFloat(p.id);
+      teamRows.push({ id: `float:${p.id}`, label: `Float: ${float ? 'On' : 'Off'}`, sub: float ? 'Not tied to a wing · covers short shifts' : `${WINGS.find((x) => x.id === r.wingOf(p.id))?.name ?? 'No'} wing`, accent: float ? COL.good : COL.progress, onTap: () => {
+        w.setFloat(p.id, !float);
+        autosave.request('roster');
+      } });
+    }
+    const hist = [...cov.state.history].reverse().slice(0, 3).map((h) => ({ text: `Day ${w.clock.dateOf(h.day).day} ${SHIFTS[h.shift].name}: ${h.before}%${h.steps.length ? ` → ${h.steps.map((x) => ({ float: 'float', agency: 'agency', scaleBack: 'scaled back', unsafe: 'unsafe' })[x]).join(', ')} → ${h.after}%` : ''}`, color: h.safe ? COL.textMuted : COL.bad }));
+    const log = [...cov.state.log].reverse().slice(0, 6).map((l) => ({ text: `Day ${w.clock.dateOf(l.day).day} ${l.t} · ${l.text}`, color: /Warning|Unsafe|scaled|No agency/.test(l.text) ? COL.bad : COL.text }));
     return {
-      title: 'Your team',
-      subtitle: `${w.staff.length} staff · Morning shift 06:00–17:00 · tap someone for their card`,
+      title: 'Roster',
+      subtitle: `${w.team.length} staff · three shifts · Safe Coverage for each`,
       art: 'care_ui_02',
       accent: accentNow(),
       sections: [
+        { lines, lanes },
+        { title: 'Safe Coverage', bars, lines: detail },
+        { title: 'Team', columns: 2, buttons: teamRows },
         {
+          title: 'Night',
           columns: 1,
-          buttons: w.staff.map((p) => {
-            const m = p.model;
-            const founder = w.staffState.founder.id === p.id ? ' · Founder' : '';
-            return { id: `staff:${p.id}`, label: p.name, sub: `${ROLES[m.role].short}${founder} · Energy ${Math.round(m.energy)} · Morale ${Math.round(m.morale)}`, icon: p.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[m.role].badge, accent: m.status.tired || m.status.stressed ? COL.action : COL.progress, onTap: () => openFrom(p.id, 'roster') };
-          }),
+          buttons: [{ id: 'onCall', label: `RN on call at night: ${r.onCall ? 'On' : 'Off'}`, sub: r.onCall ? 'A Registered Nurse on the team answers the phone at night' : 'Night then needs an RN on shift', accent: r.onCall ? COL.good : COL.progress, onTap: () => {
+            w.setOnCall(!r.onCall);
+            autosave.request('roster');
+          } }],
         },
+        { title: 'Coverage log', lines: log.length ? [...hist, ...log] : [{ text: 'Nothing yet: every shift so far started safe.', color: COL.textMuted }] },
       ],
     };
   });
@@ -565,9 +662,20 @@ function openLedger() {
     const range = w.monthRange();
     const soFar = w.ledger.forecast({ ...range, day: c.totalDays, residents: w.payers(), staff: w.payroll() });
     const last = w.ledger.lastClose;
+    // Milestone 7: agency fees and care recovery post as they happen; the unsafe-shift counter
+    const live = w.ledger.economy.ledger.filter((l) => l.day >= range.fromDay && (l.category === 'agency' || l.category === 'careRecovery'));
+    const sum = (cat) => live.filter((l) => l.category === cat).reduce((t, l) => t + l.amount, 0);
+    const nAgency = live.filter((l) => l.category === 'agency').length;
+    const unsafe = w.staffState.coverage.unsafe;
+    const shortLines = [
+      { text: `Agency cover: ${nAgency} shift${nAgency === 1 ? '' : 's'} · ${nAgency ? '−' : ''}${credits(-sum('agency'))} (${SHORT_STAFFING.agencyFeePerShift} a shift)`, color: nAgency ? COL.bad : COL.textMuted },
+      { text: `Care recovery for missed essential tasks: ${sum('careRecovery') ? '−' : ''}${credits(-sum('careRecovery'))} (${SHORT_STAFFING.careRecoveryPerMissed} each)`, color: sum('careRecovery') ? COL.bad : COL.textMuted },
+      { text: `Unsafe shifts so far: ${unsafe} (run under minimum with no agency cover)`, color: unsafe ? COL.bad : COL.textMuted },
+    ];
     const sections = [
       { lines: [{ text: `Balance: ${credits(b)} Credits`, color: b < 0 ? COL.bad : COL.actionDark }, ...(b < 0 ? [{ text: 'Below zero. There is no debt system yet: the home carries on.', color: COL.bad }] : [])] },
       { title: `This month so far (Month ${c.month}, Year ${c.year})`, lines: [{ text: 'Paid at the month\'s close: fees and funding for each resident\'s days here, wages in full.', color: COL.textMuted }, ...ledgerLines(soFar)] },
+      { title: 'Short staffing this month (paid as it happens)', lines: shortLines },
       last ? { title: `Last close: ${last.month}`, lines: ledgerLines(last.lines) } : { title: 'Last close', lines: [{ text: 'No month has closed yet.', color: COL.textMuted }] },
       { columns: 1, buttons: [{ id: 'ledger:back', label: '‹ Back to Business', accent: COL.progress, onTap: () => openBusiness() }] },
     ];
@@ -710,7 +818,7 @@ function planButtons(it) {
   });
 }
 // "07:00  Wake up · done with Ruby"
-const TASK_WORDS = { open: 'to do', claimed: 'on the way', working: 'being helped', done: 'done', missed: 'missed', refused: 'said no', self: 'on their own', unstaffed: 'no one on shift' };
+const TASK_WORDS = { open: 'to do', claimed: 'on the way', working: 'being helped', done: 'done', missed: 'missed', refused: 'said no', self: 'on their own', unstaffed: 'no one on shift', scaled: 'scaled back (short-staffed)' };
 function taskLines(w, it) {
   if (!w.joined(it)) return [{ text: 'Settling in: care tasks start from the next band.', color: COL.textMuted }];
   const tasks = w.tasksToday(it.id).filter((t) => t.type !== 'bell');
@@ -737,7 +845,7 @@ function bellLines(w, it, they) {
 }
 function familiarLines(w, it) {
   const top = w.mostFamiliar(it.id);
-  const counts = w.staff.map((p) => `${first(p.name)} ${familiarityOf(w.care, it.id, p.id)}`).join(' · ');
+  const counts = w.team.map((p) => `${first(p.name)} ${familiarityOf(w.care, it.id, p.id)}`).join(' · ');
   return [{ text: top ? `Most familiar: ${w.byId(top).name}` : 'Most familiar: nobody yet', color: COL.actionDark }, { text: `Care together: ${counts}`, color: COL.textMuted }];
 }
 // "Mobility for Betty": the domain's options (two each until Milestone 8), the current one marked.
@@ -777,8 +885,14 @@ function openPlanPicker(domainId, residentId) {
     };
   });
 }
-// Milestone 3: one button per routine step — who will help with it.
-const onMorningShift = (step) => step.at >= SHIFTS.morning.from && step.at < SHIFTS.morning.to;
+// Milestone 3: one button per routine step — who will help with it. Milestone 7: someone is rostered then when their
+// shift's hours hold the step's time.
+const inShift = (sh, h) => (sh.from < sh.to ? h >= sh.from && h < sh.to : h >= sh.from || h < sh.to);
+const rosteredAt = (w, step) => w.team.filter((p) => {
+  const sh = w.roster.shiftOf(p.id);
+  return sh && inShift(sh, step.at);
+});
+const onMorningShift = (step) => !!open && rosteredAt(open.world, step).length > 0;
 function helpButtons(w, it) {
   return ROUTINE.map((step) => {
     const chosen = w.chosenFor(step.id, it.id);
@@ -788,7 +902,7 @@ function helpButtons(w, it) {
     else if (chosen) sub = `${who(chosen)} (chosen)`;
     else {
       // Auto names who normally does it: the first team member whose role fits (busy right now or not).
-      const fit = w.staff.find((p) => step.roles.includes(p.role));
+      const fit = rosteredAt(w, step).find((p) => step.roles.includes(p.role));
       sub = fit ? `Auto · ${who(fit.id)}` : 'Auto · no one on the team fits';
     }
     return { id: `help:${step.id}`, label: step.name, sub, accent: chosen ? COL.action : COL.progress, onTap: () => openPicker(step.id, it.id) };
@@ -805,7 +919,7 @@ function openPicker(stepId, residentId) {
     const needs = step.roles.map((r) => ROLES[r].name).join(' or ');
     const lines = [];
     if (message) lines.push({ text: message, color: COL.bad });
-    if (!onMorningShift(step)) lines.push({ text: `No one is on shift at ${clockText(step.at)}: ${first(it.name)} manages on their own until more shifts arrive.`, color: COL.textMuted });
+    if (!onMorningShift(step)) lines.push({ text: `No one is rostered at ${clockText(step.at)}: ${first(it.name)} manages on their own unless agency cover comes (Staff → Roster).`, color: COL.textMuted });
     const chosen = w.chosenFor(stepId, residentId);
     const pick = (id) => {
       const r = w.assign(stepId, id, residentId);
@@ -827,7 +941,7 @@ function openPicker(stepId, residentId) {
           columns: 1,
           buttons: [
             { id: 'pick:auto', label: 'Auto', sub: 'Staff pick it themselves by urgency, role, familiarity and distance', accent: chosen ? COL.progress : COL.good, onTap: () => pick(null) },
-            ...w.staff.map((p) => {
+            ...w.team.map((p) => {
               const fits = step.roles.includes(p.role);
               return { id: `pick:${p.id}`, label: p.name, sub: `${ROLES[p.role].name}${fits ? '' : ' · role does not fit'}${chosen === p.id ? ' · chosen' : ''}`, icon: p.art, accent: !fits ? COL.textFaint : chosen === p.id ? COL.good : COL.progress, onTap: () => pick(p.id) };
             }),
@@ -846,10 +960,16 @@ function staffMenu(w, p, accent) {
   const trait = TRAITS[m.traits[0]];
   const isFounder = w.staffState.founder.id === p.id;
   const h = w.staffState.founder.history;
+  const agency = w.roster.isAgency(p.id);
+  const pref = STAFF.find((d) => d.id === p.id)?.shiftPref;
+  const wing = w.roster.wingOf(p.id);
+  const shiftLines = agency
+    ? [w.roster.label(p.id), 'Agency worker: booked for this shift only; builds no Familiar Care and is never on records.']
+    : [w.roster.label(p.id), `Prefers ${PREF_WORD[pref] ?? '—'} shifts${pref !== 'night' ? ' · Night shifts cost a little Morale' : ''} · ${wing ? `${WINGS.find((x) => x.id === wing)?.name} wing` : w.roster.isFloat(p.id) ? 'float: tied to no wing' : 'no wing'}`];
   const status = [m.status.tired && 'Tired', m.status.stressed && 'Stressed'].filter(Boolean);
   const fam = w.residents.map((r) => `${first(r.name)} ${familiarityOf(w.care, r.id, p.id)}${w.mostFamiliar(r.id) === p.id ? ' (most familiar)' : ''}`).join(' · ');
   const sections = [
-    { lines: [{ text: w.stateOf(p), color: COL.actionDark }, w.roster.label(p.id), `Tasks helped with: ${m.counters.tasks ?? 0} · Salary ${m.salary} Credits a month`, `Familiar with: ${fam}`] },
+    { lines: [{ text: w.stateOf(p), color: COL.actionDark }, ...shiftLines, agency ? `Tasks helped with: ${m.counters.tasks ?? 0} · Fee ${SHORT_STAFFING.agencyFeePerShift} Credits a shift` : `Tasks helped with: ${m.counters.tasks ?? 0} · Salary ${m.salary} Credits a month`, ...(agency ? [] : [`Familiar with: ${fam}`])] },
     { title: 'Stats', bars: STATS.map((s) => ({ label: s.name, value: m.stats[s.id], max: cap, color: s.id === ROLES[m.role].primaryStat ? COL.action : COL.progress })) },
     { title: status.length ? `Energy and Morale · ${status.join(', ')}` : 'Energy and Morale', bars: [{ label: 'Energy', value: m.energy, color: m.energy < 25 ? COL.bad : COL.good }, { label: 'Morale', value: m.morale, color: m.morale < 25 ? COL.bad : COL.gold }] },
     { title: 'Trait', lines: [trait ? `${trait.name}: ${trait.text}` : 'None'] },
@@ -858,10 +978,10 @@ function staffMenu(w, p, accent) {
     const f = FOUNDERS.find((x) => x.id === p.id);
     sections.push({ title: 'Founding Staff', lines: [`${f.perk.name}: ${f.perk.text}`, `With you since Day 1 · ${h.daysEmployed} days (${yearsEmployed(h)} years) · ${h.careTasks} care tasks`] });
   }
-  return { title: p.name, subtitle: `${ROLES[m.role].name} · ${TIERS[m.tier]?.name ?? m.tier} · Lv ${m.level}`, art: p.art, badge: ROLES[m.role].badge, tag: isFounder ? { text: 'FOUNDER' } : null, accent, sections };
+  return { title: p.name, subtitle: `${ROLES[m.role].name} · ${agency ? 'Agency cover' : `${TIERS[m.tier]?.name ?? m.tier} · Lv ${m.level}`}`, art: p.art, badge: ROLES[m.role].badge, tag: isFounder ? { text: 'FOUNDER' } : agency ? { text: 'AGENCY' } : null, accent, sections };
 }
 // from: 'residents' / 'roster' when opened from a bottom-bar list (Milestone 5) — the card then has a way back to it.
-const BACK_TO = { residents: { label: '‹ Back to residents', open: () => openResidents() }, roster: { label: '‹ Back to the team', open: () => openRoster() } };
+const BACK_TO = { residents: { label: '‹ Back to residents', open: () => openResidents() }, roster: { label: '‹ Back to the roster', open: () => openRoster() } };
 function openHomeSheet(id, from = null) {
   if (open?.world.residentById(id)) markMissedSeen(id);
   const back = BACK_TO[from];

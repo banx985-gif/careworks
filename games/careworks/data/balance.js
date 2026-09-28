@@ -1,5 +1,6 @@
 // Staff numbers (Milestone 3). Placeholders, logged in docs/DECISIONS.md — tune here.
 //   Energy and Morale are 0–100. Hours are game hours (a game hour is 3.75 real seconds at 1×).
+import { SHIFT_TEMPLATES } from './shifts.js';
 export const STAFF_BALANCE = {
   startEnergy: 100,
   startMorale: 75,
@@ -19,10 +20,9 @@ export const STAFF_BALANCE = {
   tooTiredBelow: 8, // Energy below this: not picked automatically (still choosable)
 };
 
-// The one shift of Milestone 3 (bible §3: three shifts later — Afternoon / Night templates arrive in Milestone 7).
-export const SHIFTS = {
-  morning: { name: 'Morning', bands: ['morning', 'afternoon'], from: 6, to: 17 },
-};
+// The shifts (Milestone 3 had one Morning shift, 06:00–17:00). Milestone 7: the three templates live in data/shifts.js;
+// SHIFTS is the same object, kept under its Milestone 3 name.
+export const SHIFTS = SHIFT_TEMPLATES;
 
 // Milestone 5: the top bar's money; Milestone 6 puts it in a ledger (core/EconomySystem). A placeholder opening
 // balance, logged in docs/DECISIONS.md.
@@ -37,6 +37,23 @@ export const FEES = {
   careSupportFundingByLevel: { 1: 150, 2: 300, 3: 450, 4: 600, 5: 750 }, // Credits a month by Support Level
 };
 export const LEDGER = {
-  categories: { opening: 'Opening balance', fees: 'Accommodation fees', funding: 'Care Support Funding', wages: 'Wages' },
+  categories: { opening: 'Opening balance', fees: 'Accommodation fees', funding: 'Care Support Funding', wages: 'Wages', agency: 'Agency cover', careRecovery: 'Care recovery' },
   maxLines: 400, // older lines fold into one (core/EconomySystem)
+};
+
+// Milestone 7: short staffing costs money (bible §14 "understaffing does not become a cheap-profit strategy", §27 agency
+// cover is a cost line). Both post to the ledger as they happen: an agency fee when the worker is hired for a shift, and
+// care recovery at the end of each day for that day's missed essential tasks (a placeholder for the extra care, reviews
+// and family follow-up a missed wake-up, meal, medicine round or settle brings; Milestone 22 tunes it).
+//
+// The design rule, checked here and by tests/careworks/m7.test.mjs (a 28-day run with one shift short costs more than
+// the fully staffed run):
+//   leaving one shift empty saves at most one salary: 560 Credits a month (the dearest Standard staff member)
+//   an empty shift brings an agency worker every day: 28 × 120 = 3,360 Credits a month — six times the wage saved
+//   when the ledger can't pay agency, the unsafe shift's missed essential tasks cost 35 each: one or two a day is
+//   980–1,960 Credits a month, and the unsafe-shift counter goes up (quality scores read it in Milestone 26)
+// So the cheapest safe roster always beats running short.
+export const SHORT_STAFFING = {
+  agencyFeePerShift: 120, // Credits, each agency worker, each shift
+  careRecoveryPerMissed: 35, // Credits per missed essential task
 };

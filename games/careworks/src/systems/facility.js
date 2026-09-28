@@ -13,6 +13,8 @@
 //                             24 × 16 one (Arthur in his room or seat, staff at their post, task spot or rest spot);
 //                             three empty rooms; the board and the ledger start fresh (the ledger opens with the
 //                             saved Credits)
+//                             v6 (Milestone 6) had one Morning shift: everyone stays on Morning (now 05:00–12:00), on
+//                             the Home wing, no floats, an RN on call at night, no coverage history yet
 import { founderById, paletteById, ROLES, FOUNDER_FLAG } from '../../data/setup.js';
 import { residentById } from '../../data/residents.js';
 import { RESIDENT, HOME, HELP_SPOTS, HELP_SPOTS_2, SEATS, POSTS } from '../../data/home.js';
@@ -21,6 +23,8 @@ import { ECONOMY_START } from '../../data/balance.js';
 import { makeClock, buildGrid, spotTile } from './homeWorld.js';
 import { newResidentState } from './residentNeeds.js';
 import { newStaffState } from './staffTeam.js';
+import { ensureRosterState } from './roster.js';
+import { ensureCoverageState } from './coverage.js';
 import { newCareState } from './careTasks.js';
 import { ensurePlan } from '../../data/carePlans.js';
 
@@ -173,12 +177,20 @@ export function upgradeV5(data) {
   const care = data.care ? { ...data.care, tasks: data.care.tasks.map((t) => ((t.status === 'claimed' || t.status === 'working') && !t.arrived ? { ...t, spot: null } : { ...t })) } : data.care;
   return { ...data, residents, staff, care };
 }
+// Version 6 → 7 (Milestone 7): three shifts. The one Morning shift's people stay on Morning (the card's rule); wings,
+// floats, on-call and an empty coverage record are added.
+export function upgradeV6(data) {
+  if (!data.staff?.staff) return data;
+  const ids = data.staff.staff.map((m) => m.id);
+  return { ...data, staff: { ...data.staff, roster: ensureRosterState(data.staff.roster, ids), coverage: ensureCoverageState(data.staff.coverage) } };
+}
 export const SAVE_MIGRATIONS = {
   1: (record) => ({ ...record, data: upgradeV1(record.data) }),
   2: (record) => ({ ...record, data: upgradeV2(record.data) }),
   3: (record) => ({ ...record, data: upgradeV3(record.data) }),
   4: (record) => ({ ...record, data: upgradeV4(record.data) }),
   5: (record) => ({ ...record, data: upgradeV5(record.data) }),
+  6: (record) => ({ ...record, data: upgradeV6(record.data) }),
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

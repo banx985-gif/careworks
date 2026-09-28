@@ -10,7 +10,7 @@
 //   board.get(id) · board.defOf(app)
 //   board.prereq(app, ctx) → { ok, text, reason }   the hard prerequisites (ctx.roles = Set of roles on the team)
 //   board.canAdmit(app, ctx) → { ok, reason }       prerequisites, then a free room, then a pending assessment
-//                                                   (ctx = { roles, freeRooms: [room ids], day })
+//                                                   (ctx = { roles, freeRooms: [room ids], day, paused (Milestone 7: the reason admissions are paused, or null) })
 //   board.admit(id, ctx) → { ok, reason, applicant }   takes them off the board (the world gives them the room)
 //   board.waitlist(id, day) · board.decline(id, day) · board.requestAssessment(id, day) → { ok, reason }
 //   board.serialize()
@@ -130,6 +130,7 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
     // Why they can or can't come in now, in plain words.
     canAdmit(app, ctx) {
       if (!app) return { ok: false, reason: 'They are no longer applying.' };
+      if (ctx.paused) return { ok: false, reason: ctx.paused }; // Milestone 7: a shift is running short-staffed
       const p = prereqOf(defOf(app), ctx);
       if (!p.ok) return { ok: false, reason: p.reason };
       if (app.assessReady != null && ctx.day < app.assessReady) return { ok: false, reason: `Their assessment update is under way: ready on day ${app.assessReady + 1}.` };

@@ -10,15 +10,20 @@
 // lounge (their room's number) and their own helpers' spots; the applicant board (src/systems/admissions.js) ticks each
 // day; admit() gives a free room, walks them in from the entrance and they join the routine and the task planning from
 // the next band; the ledger (src/systems/ledger.js) closes each month (fees and funding in, wages out).
+// Milestone 7: three shifts (src/systems/roster.js) with floats, a wing and the Night on-call flag; Safe Coverage Points
+// and the four-step fallback (src/systems/coverage.js) tick before the staff move: a warning the band before a short
+// shift, float cover, agency workers (hired here: they walk in from the entrance for one shift and leave after), then
+// admissions pause and the Cards activity is skipped. Missed essential tasks cost care recovery at the end of each day.
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
-//   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits })
+//   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
 //     clock      a core/Clock (made here when missing)
 //     resident   Arthur's saved state (Milestones 2–5), or residents = every resident's saved state (Milestone 6)
 //     staff      the run's staff state (src/systems/staffTeam.js; none: a team is built from the Founder)
 //     care       the run's care state (tasks, bells, familiarity; none: a fresh one)
 //     seed       the run's seed (their daily yes / no answers, the applicants)
 //     admissions / ledger   their saved states (none: a fresh board / an opening balance of startCredits)
+//     shortStaffing  false: no warnings, float / agency cover, scale-back or care recovery (the older milestones' tests)
 //     bus        optional: 'care:band', 'care:step', 'care:task', 'care:bell', 'care:dayEnd', 'care:admit', 'care:joined',
 //                'staff:*', 'admissions:change', 'ledger:close'
 //   world.update(realDt)   the clock and everyone move at the clock's speed; nothing moves while paused
@@ -33,21 +38,26 @@
 //   world.rooms · world.freeRooms() · world.admissions · world.admitCtx() · world.admit(residentId) → { ok, reason }
 //   world.ledger · world.monthRange() → { fromDay, toDay } · world.payers() / world.payroll() (the ledger's lists)
 //   world.daySummary(day) → { day, done, missed }
+//   world.coverage (src/systems/coverage.js) · world.team (the staff without agency workers)
+//   world.moveStaff(id, shiftId | 'off') · world.setFloat(id, on) · world.setOnCall(on)
 //   world.serialize() → { clock, residents, staff, care, admissions, ledger }   (the run save; the page keeps the rest)
 import { Grid } from '../../../../core/Grid.js';
 import { Agent } from '../../../../core/Agent.js';
 import { Clock } from '../../../../core/Clock.js';
 import { findPath } from '../../../../core/Pathing.js';
 import { AssignmentSystem } from '../../../../core/AssignmentSystem.js';
+import { StaffModel } from '../../../../core/StaffModel.js';
 import { HOME, WALLS, PLACED, PROPS, RESIDENT, SPOTS, SEATS, HELP_POOLS, helpSpotsFor, ROOM_IDS, ENTRANCE } from '../../data/home.js';
 import { residentById, NEEDS, supportLevel } from '../../data/residents.js';
 import { DAY, ROUTINE } from '../../data/routine.js';
 import { BELL } from '../../data/tasks.js';
-import { ECONOMY_START } from '../../data/balance.js';
+import { ECONOMY_START, STAFF_BALANCE } from '../../data/balance.js';
+import { AGENCY } from '../../data/shifts.js';
 import { ensureResidentState, newResidentState, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog } from './residentNeeds.js';
 import { ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar } from './careTasks.js';
 import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkPct } from './staffTeam.js';
 import { createRoster } from './roster.js';
+import { createCoverage } from './coverage.js';
 import { createCrew } from './staffCrew.js';
 import { createAdmissions } from './admissions.js';
 import { createLedger } from './ledger.js';
@@ -102,7 +112,7 @@ const ARTHUR = RESIDENT.id;
 const FEMALE = new Set(['RES02', 'RES04', 'RES06', 'RES08', 'RES10', 'RES12']);
 export const theirOf = (id) => (FEMALE.has(id) ? 'her' : 'his');
 
-export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, residents: savedResidents = null, staff = null, care: careSaved = null, seed = 'careworks', bus = null, admissions: admissionsSaved = null, ledger: ledgerSaved = null, startCredits = ECONOMY_START.credits } = {}) {
+export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, residents: savedResidents = null, staff = null, care: careSaved = null, seed = 'careworks', bus = null, admissions: admissionsSaved = null, ledger: ledgerSaved = null, startCredits = ECONOMY_START.credits, shortStaffing = true } = {}) {
   clock ??= makeClock();
   const grid = buildGrid();
   const placed = PLACED.map((def) => ({ kind: def.kind, id: def.id, def, fp: def.fp, residentId: null }));
@@ -115,7 +125,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const staffState = ensureStaffState(staff, founderId);
   const sys = makeStaffSystem(staffState);
   const perks = makeFounderPerks(staffState);
-  const roster = createRoster(staffState);
+  const absTime = () => clock.totalDays * 24 + hourNow();
+  const roster = createRoster(staffState, { abs: absTime });
+  // Milestone 7: agency workers hired for a shift still under way come back with the save (their model is kept there)
+  for (const a of staffState.roster.agency) if (a.model && !sys.get(a.id)) sys.add(StaffModel.fromJSON(a.model));
+  staffState.roster.agency = staffState.roster.agency.filter((a) => sys.get(a.id));
   const crew = createCrew({ grid, state: staffState, sys, perks, roster, spotTile, hourNow, bandNow: () => bandAt(hourNow()), bus });
 
   // --- the residents ---------------------------------------------------------------------------------------------
@@ -171,7 +185,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const now = () => clockText(hourNow());
   const logDay = () => routineAt(hourNow(), clock.totalDays).day;
   const log = (p, text) => addLog(p.state, logDay(), now(), text);
-  const rolesOnShift = (bandId) => new Set(crew.people.filter((q) => roster.onShift(q.id, 0, bandId)).map((q) => q.role));
+  const rolesOnShift = (bandId) => new Set(crew.people.filter((q) => roster.coversBand(q.id, bandId)).map((q) => q.role));
   const stepIndex = (id) => ROUTINE.findIndex((s) => s.id === id);
   const joined = (p) => p.state.joinAt == null || absNow() >= p.state.joinAt;
   // The step has already run today (or is under way and past needing help).
@@ -219,7 +233,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const pinOf = (t) => {
     const id = t.source === 'routine' ? staffState.assignments[pinKey(t.resident, t.stepId)] : t.pinned;
     const q = id && crew.byId(id);
-    return q && roster.onShift(q.id, hourNow(), bandAt(hourNow()).id) ? q.id : null;
+    return q && roster.onShift(q.id) ? q.id : null;
   };
   const tilesBetween = (q, ref) => {
     const from = grid.worldToTile(q.agent.x, q.agent.y);
@@ -227,17 +241,23 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const path = from && findPath(grid, from, to);
     return path ? path.length : from ? Math.abs(from.col - to.col) + Math.abs(from.row - to.row) : 0;
   };
+  const assignedTo = (staffId, p) => {
+    const wing = roster.wingOf(staffId);
+    return care.keyWorkers[p.id] === staffId || (!!wing && wing === roster.wingOfRoom(p.state.room));
+  };
   function scoreFor(t, q) {
     if (!t.roles.includes(q.role)) return null; // (scorePair says so too; this skips the path search)
     const pin = pinOf(t);
     if (pin && pin !== q.id) return null;
     if (!pin && t.type !== 'bell' && crew.tooTired(q)) return null;
     const p = byResident(t.resident) ?? arthur;
+    // "Is this resident assigned to me" (bible §15): their key worker, or (Milestone 7) staff on the resident's wing
+    const assigned = assignedTo(q.id, p);
     return scorePair({
       task: { ...t, pinned: pin },
       person: { id: q.id, role: q.role, energy: q.model.energy },
       tiles: tilesBetween(q, helpPool(p, taskPlace(t))[0]),
-      keyWorker: care.keyWorkers[t.resident] ?? null,
+      keyWorker: assigned ? q.id : care.keyWorkers[t.resident] ?? null,
       mostFamiliar: mostFamiliar(care, t.resident, crew.people.map((x) => x.id)),
       doneThisBand: q.bandDone ?? 0,
     });
@@ -264,6 +284,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function finish(t, status) {
     unclaim(t);
     closeTask(care, t, status);
+    if (status === 'missed' && t.essential) coverage?.recordMissed(); // care recovery (Milestone 7)
     bus?.emit('care:task', { id: t.id, type: t.type, status, resident: t.resident });
   }
   const helperName = (id) => first(crew.byId(id)?.name ?? id);
@@ -286,7 +307,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     assignSys.unassign(t, helper);
     closeTask(care, t, 'done');
     t.slots = [helper];
-    addFamiliarity(care, t.resident, helper);
+    if (!q.agency) addFamiliarity(care, t.resident, helper); // agency workers build no Familiar Care (bible §14)
     crew.finishTask(helper);
     bus?.emit('care:task', { id: t.id, type: t.type, status: 'done', staff: helper, resident: t.resident });
   }
@@ -311,7 +332,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     bus?.emit('care:step', { resident: st.id, step: step.id, status: 'done', helper });
   }
   // Help can come if the step has a task that someone on shift now could take (or someone is already on it).
-  const helpCanCome = (t) => !!t && isOpen(t) && (t.status !== 'open' || crew.people.some((q) => t.roles.includes(q.role) && roster.onShift(q.id, hourNow(), bandAt(hourNow()).id)));
+  const helpCanCome = (t) => !!t && isOpen(t) && (t.status !== 'open' || crew.people.some((q) => t.roles.includes(q.role) && roster.onShift(q.id)));
   function arrived(p, step, day) {
     if (!isCurrent(p, step, day)) return;
     const st = p.state;
@@ -356,8 +377,18 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function startStep(p, step, day) {
     const st = p.state;
     closePrevious(p);
-    const answer = decide(st, step, day, seed);
     const t = routineTask(p, step.id, day);
+    // Milestone 7, fallback step 4: short-staffed, so the day's activity is scaled back (never held against them)
+    if (step.activity && coverage.skipsActivity(day)) {
+      st.step = { id: step.id, day, status: 'refused', scaled: true, helper: null };
+      if (t && isOpen(t)) finish(t, 'scaled');
+      addLog(st, day, now(), 'Activities scaled back — short-staffed');
+      const r = placeTile(p, 'room');
+      p.agent.walkTo(grid, r.col, r.row);
+      bus?.emit('care:step', { resident: st.id, step: step.id, status: 'scaled' });
+      return;
+    }
+    const answer = decide(st, step, day, seed);
     if (answer === 'refuse') {
       st.step = { id: step.id, day, status: 'refused', helper: null };
       if (t && isOpen(t)) finish(t, 'refused'); // a refused task ends here: logged, never retried this band
@@ -463,7 +494,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
     // free staff pick their next task (bible §15 order: src/systems/careTasks.js scorePair)
     const bandId = bandAt(hourNow()).id;
-    const shiftRoles = new Set(crew.people.filter((q) => roster.onShift(q.id, hourNow(), bandId)).map((q) => q.role));
+    const shiftRoles = new Set(crew.people.filter((q) => roster.onShift(q.id)).map((q) => q.role));
     const avail = care.tasks.filter((t) => t.status === 'open' && t.opens <= at && byResident(t.resident));
     for (const t of avail) if (t.roles.some((r) => shiftRoles.has(r))) t.staffable = true;
     const free = crew.people.filter((q) => crew.isFree(q));
@@ -476,15 +507,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const ledger = createLedger({ saved: ledgerSaved, bus, now: () => clock.totalDays, startCredits });
   const inHome = () => new Set(residents.map((p) => p.id));
   const freeRooms = () => rooms.filter((r) => !r.residentId);
-  const teamRoles = () => new Set(crew.people.map((q) => q.role));
-  const admitCtx = () => ({ roles: teamRoles(), freeRooms: freeRooms().map((r) => r.id), day: clock.totalDays, placeable: new Set(['RM01']) });
+  const team = () => crew.people.filter((q) => !q.agency);
+  const teamRoles = () => new Set(team().map((q) => q.role));
+  const admitCtx = () => ({ roles: teamRoles(), freeRooms: freeRooms().map((r) => r.id), day: clock.totalDays, placeable: new Set(['RM01']), paused: coverage.admissionsPaused() });
   const monthRange = (endDay = null) => {
     const len = clock.daysPerMonth;
     const toDay = endDay ?? (Math.floor(clock.totalDays / len) + 1) * len;
     return { fromDay: toDay - len, toDay };
   };
   const payers = () => residents.map((p) => ({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: p.state.admittedDay ?? 0 }));
-  const payroll = () => crew.people.map((q) => ({ id: q.id, name: q.name, salary: q.model.salary }));
+  const payroll = () => team().map((q) => ({ id: q.id, name: q.name, salary: q.model.salary })); // agency is paid per shift
   const tickAdmissions = (day) => {
     const r = admissions.tick(day, { inHome: inHome() });
     if (r.left.length || r.arrived.length) bus?.emit('admissions:change', { day, left: r.left.map((a) => a.id), arrived: r.arrived.map((a) => a.id) });
@@ -495,12 +527,51 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function newDay(day) {
     staffState.founder.history.daysEmployed += 1;
     bus?.emit('care:dayEnd', world.daySummary(day - 1));
+    if (shortStaffing) coverage.dayEnd(day - 1); // care recovery for yesterday's missed essential tasks (Milestone 7)
     tickAdmissions(day);
     if (day % clock.daysPerMonth === 0) {
       const d = clock.dateOf(day - 1);
       ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll() });
     }
   }
+
+  // --- rostering and Safe Coverage (Milestone 7) -----------------------------------------------------------------
+  // An agency worker for one shift instance: generic art, tagged AGENCY, walks in from the front entrance.
+  function hire(role, inst) {
+    const cs = staffState.coverage;
+    const def = AGENCY[role];
+    const id = `AGY${cs.nextAgency++}`;
+    const model = new StaffModel({ id, name: def.name, role, tier: 'standard', level: 1, stats: { ...def.stats }, salary: 0, art: def.art, energy: STAFF_BALANCE.startEnergy, morale: STAFF_BALANCE.startMorale, traits: [], counters: { tasks: 0, agency: true } });
+    sys.add(model);
+    staffState.roster.agency.push({ id, name: def.name, role, art: def.art, shift: inst.shift, key: inst.key, start: inst.start, end: inst.end, model: null });
+    const q = crew.addPerson(model, { agency: true });
+    world.people.push(q);
+    return q;
+  }
+  // They walked out: gone from the team, the roster and the home.
+  function dropGone() {
+    for (const q of crew.people.filter((x) => x.gone)) {
+      for (const t of care.tasks) if ((t.status === 'claimed' || t.status === 'working') && t.slots[0] === q.id) unclaim(t);
+      crew.remove(q.id);
+      sys.remove(q.id);
+      const i = world.people.indexOf(q);
+      if (i >= 0) world.people.splice(i, 1);
+      staffState.roster.agency = staffState.roster.agency.filter((a) => a.id !== q.id);
+      delete staffState.pos[q.id];
+      delete staffState.modes[q.id];
+      bus?.emit('staff:agencyLeft', { id: q.id });
+    }
+  }
+  const coverage = createCoverage({
+    state: staffState,
+    roster,
+    team: () => crew.people,
+    levels: () => residents.map((p) => supportLevel(p.def)),
+    ledger,
+    abs: absTime,
+    hire,
+    bus,
+  });
 
   let lastDay = clock.totalDays;
   const world = {
@@ -511,6 +582,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     residents,
     people: [...residents, ...crew.people],
     staff: crew.people,
+    get team() {
+      return team();
+    },
+    coverage,
     get resident() {
       return arthur;
     },
@@ -553,7 +628,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         crew.newBand();
         bus?.emit('care:band', { band: b.id });
       }
+      if (shortStaffing) coverage.tick(); // Milestone 7: warnings, float / agency cover, scale-back — before anyone moves
       crew.update(g, hours);
+      dropGone();
       for (const p of residents) {
         if (p.state.joinAt != null) {
           if (!joined(p)) continue;
@@ -643,6 +720,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (!joined(p)) return p.agent.state === 'walking' ? `Arriving: walking to ${who} room` : `Settling in to ${who} room`;
       const step = st.step && routineStep(st.step.id);
       if (!step) return `In ${who} room`;
+      if (st.step.scaled) return `In ${who} room: activities scaled back today (short-staffed)`;
       if (st.step.status === 'refused') return `Chose to stay in ${who} room (said no to ${step.activity ? step.name : step.name.toLowerCase()})`;
       if (st.step.status === 'missed') return `No help came for ${stepWord(step)}`;
       const helper = st.step.helper ? first(crew.byId(st.step.helper)?.name ?? '') : null;
@@ -679,6 +757,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const tasks = care.tasks.filter((t) => t.day === day && t.type !== 'bell');
       return { day, done: tasks.filter((t) => t.status === 'done').length, missed: tasks.filter((t) => t.status === 'missed').length };
     },
+    // --- Milestone 7 ------------------------------------------------------------------------------------------
+    // Move someone to a shift (or 'off'); a float toggle; the Night on-call flag. → { ok, reason }
+    moveStaff(id, shiftId) {
+      if (roster.isAgency(id)) return { ok: false, reason: 'Agency cover is booked for this shift only.' };
+      return roster.move(id, shiftId) ? { ok: true, reason: null } : { ok: false, reason: 'No such shift.' };
+    },
+    setFloat: (id, on) => ({ ok: roster.setFloat(id, on), reason: null }),
+    setOnCall: (on) => roster.setOnCall(on),
+    // The task AI's second rule: their key worker, or staff on the resident's wing (not floats, not agency).
+    assignedTo: (staffId, residentId) => !!byResident(residentId) && assignedTo(staffId, byResident(residentId)),
     // --- Milestone 6 ------------------------------------------------------------------------------------------
     freeRooms,
     admitCtx,
@@ -709,7 +797,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     serialize() {
       for (const p of residents) p.state.pos = { x: p.agent.x, y: p.agent.y };
-      staffState.staff = sys.serialize();
+      for (const a of staffState.roster.agency) a.model = sys.get(a.id)?.toJSON() ?? null;
+      const agencyIds = new Set(staffState.roster.agency.map((a) => a.id));
+      staffState.staff = sys.serialize().filter((m) => !agencyIds.has(m.id));
       staffState.pos = crew.positions();
       staffState.modes = crew.modes();
       staffState.bandDone = Object.fromEntries(crew.people.map((q) => [q.id, q.bandDone ?? 0]));

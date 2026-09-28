@@ -44,7 +44,7 @@ const DETAIL_STEPS = [0.5, 0.7, 1.0, 1.4];
 const detailFor = (zoom) => DETAIL_STEPS.find((d) => d >= zoom - 1e-3) ?? DETAIL_STEPS[DETAIL_STEPS.length - 1];
 const isPerson = (it) => it.kind === 'resident' || it.kind === 'staff';
 
-export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaign, world: getWorld, openSheet, onMenu, topBar, bottomBar, vfx = null, dayBeat = null, debug = null }) {
+export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaign, world: getWorld, openSheet, onMenu, topBar, bottomBar, vfx = null, dayBeat = null, debug = null, onStaffWarning = null }) {
   const W = renderer.width;
   const { cols, rows, cellSize: CELL, wallH, innerWallH, margin } = HOME;
   const { halfW: HW, halfH: HH } = HOME.view;
@@ -120,7 +120,13 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     const t = topBar.rect();
     return { x: t.x + 8, y: t.y + t.h + 10, w: t.w - 16, h: 64 };
   };
-  const onUi = (p) => (buildMode ? hitRect(p, bannerRect()) : topBar.contains(p) || bottomBar.contains(p));
+  // Milestone 7: the short-staffing banner under the time line (a shift short now, or about to start short); tap → roster.
+  const staffWarnings = () => world?.coverage?.warnings?.() ?? [];
+  const warnRect = () => {
+    const r = infoRect();
+    return { x: r.x + 40, y: r.y + r.h + 10, w: r.w - 80, h: 110 };
+  };
+  const onUi = (p) => (buildMode ? hitRect(p, bannerRect()) : topBar.contains(p) || bottomBar.contains(p) || (staffWarnings().length > 0 && hitRect(p, warnRect())));
   const overSheet = (p) => sheet.active && p.y >= sheet.rect().y;
 
   // The camera sees the space between the time line and the bottom bar: the bars never cover the home's edges.
@@ -236,7 +242,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       if (id === 'stats') return topBar.statsRect();
       const slot = bottomBar.buttonRect(id);
       if (slot) return slot;
-      return { done: doneRect(), banner: bannerRect(), info: infoRect() }[id] ?? null;
+      return { done: doneRect(), banner: bannerRect(), info: infoRect(), staffWarning: warnRect() }[id] ?? null;
     },
     // Screen point on a person's body or a place's art (tests): the visible middle of what a finger would tap.
     screenPointOf(id) {
@@ -359,6 +365,11 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
         taps.push({ x: p.x, y: p.y, picked: 'bottomBar' });
         return;
       }
+      if (onStaffWarning && staffWarnings().length && hitRect(p, warnRect())) {
+        onStaffWarning();
+        taps.push({ x: p.x, y: p.y, picked: 'staffWarning' });
+        return;
+      }
       const picked = pickAt(p.x, p.y);
       if (picked) open(picked);
       else selection.clear();
@@ -410,7 +421,9 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       if (buildMode) drawBanner(ctx);
       else {
         drawInfo(ctx);
-        dayBeat?.render(ctx, infoRect().x + 20, infoRect().y + infoRect().h + 14, infoRect().w - 40);
+        const warned = drawStaffWarning(ctx);
+        const beatY = warned ? warnRect().y + warnRect().h + 14 : infoRect().y + infoRect().h + 14;
+        dayBeat?.render(ctx, infoRect().x + 20, beatY, infoRect().w - 40);
         topBar.render(ctx);
         bottomBar.render(ctx);
       }
@@ -439,6 +452,28 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     text(ctx, left, r.x + 30, r.y + r.h / 2, { size: S.small, bold: true, color: clock.paused ? C.actionDark : C.text, baseline: 'middle', maxWidth: r.w * 0.6 });
     const f = campaign()?.data.facility;
     text(ctx, f?.name ?? '', r.x + r.w - 30, r.y + r.h / 2, { size: S.small, bold: true, color: palette.dark, align: 'right', baseline: 'middle', maxWidth: r.w * 0.36 });
+  }
+  // "Night shift starts short at 22:00 — tap to open the roster" (red), while any shift is short or about to be.
+  function drawStaffWarning(ctx) {
+    const warns = staffWarnings();
+    if (!warns.length) return false;
+    const a = warns[0];
+    const name = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' }[a.shift] ?? a.shift;
+    const r = warnRect();
+    ctx.save();
+    ctx.fillStyle = C.bad;
+    ctx.strokeStyle = C.outline;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.roundRect(r.x, r.y, r.w, r.h, 26);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    const head = a.running ? `${name} shift is running short-staffed` : `${name} shift starts short-staffed`;
+    const more = warns.length > 1 ? ` (+${warns.length - 1} more)` : '';
+    text(ctx, head + more, r.x + r.w / 2, r.y + 36, { size: S.small, bold: true, color: C.textOnDark, align: 'center', baseline: 'middle', maxWidth: r.w - 40 });
+    text(ctx, `${a.reasons.join(' · ')} — tap for the roster`, r.x + r.w / 2, r.y + 78, { size: S.small, color: C.textOnDark, align: 'center', baseline: 'middle', maxWidth: r.w - 40 });
+    return true;
   }
   // Night: the home dims a little (a soft blue veil over the world, not the bars).
   function drawNight(ctx) {

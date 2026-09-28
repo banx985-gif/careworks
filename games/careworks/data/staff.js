@@ -3,23 +3,25 @@
 // core/DataValidator (staffRoster). Stats are CLN / PER / MOB / SOC / NUT; salary is Credits a month (stored only —
 // nothing is paid until the economy, Milestone 22).
 //   eligibility: 'start' (Start staff) · 'candidate' (Start candidate) · later rows: 'rank', 'milestone', 'secret' …
+//   shiftPref (Milestone 7, bible §11): the shift they prefer — 'morning' · 'afternoon' · 'night' (Night costs Morale unless
+//   it is their preference; working the preferred shift lifts it a little: data/shifts.js SHIFT_MORALE)
 //   trait: an id in TRAITS
 import { ROLES, STAT_IDS, TIERS } from './roles.js';
 
 const stats = (s) => Object.fromEntries(s.split('/').map((v, i) => [STAT_IDS[i], Number(v)]));
-const row = (id, name, role, level, s, salary, trait, eligibility) => ({ id, name, role, tier: 'standard', level, stats: stats(s), salary, traits: [trait], eligibility, art: `staff_${id.toLowerCase()}` });
+const row = (id, name, role, level, s, salary, trait, eligibility, shiftPref) => ({ id, name, role, tier: 'standard', level, stats: stats(s), salary, traits: [trait], eligibility, shiftPref, art: `staff_${id.toLowerCase()}` });
 
 export const STAFF = [
-  row('RN01', 'Maya Finch', 'RN', 1, '105/57/64/71/78', 520, 'calmRound', 'start'),
-  row('RN02', 'Daniel Cross', 'RN', 2, '118/70/77/53/60', 560, 'carefulChart', 'candidate'),
-  row('CW01', 'Ruby Hale', 'CW', 1, '59/121/73/80/56', 520, 'gentleHands', 'start'),
-  row('CW02', 'Arun Moss', 'CW', 2, '72/134/55/62/69', 560, 'morningPerson', 'candidate'),
-  row('LC01', 'Zoe Quinn', 'LC', 1, '68/75/51/113/65', 520, 'conversationStarter', 'start'),
-  row('LC02', 'Oscar Bell', 'LC', 2, '50/57/64/126/78', 560, 'creativeClub', 'candidate'),
-  row('AH01', 'Nia Foster', 'AH', 1, '77/53/115/67/74', 520, 'steadySteps', 'start'),
-  row('AH02', 'Hugo Pike', 'AH', 2, '59/66/128/80/56', 560, 'safeTransfers', 'candidate'),
-  row('HN01', 'Sam Kitchen', 'HN', 1, '55/62/69/76/107', 520, 'warmWelcome', 'start'),
-  row('HN02', 'Noor Price', 'HN', 2, '68/75/51/58/120', 560, 'hydrationEye', 'candidate'),
+  row('RN01', 'Maya Finch', 'RN', 1, '105/57/64/71/78', 520, 'calmRound', 'start', 'morning'),
+  row('RN02', 'Daniel Cross', 'RN', 2, '118/70/77/53/60', 560, 'carefulChart', 'candidate', 'night'),
+  row('CW01', 'Ruby Hale', 'CW', 1, '59/121/73/80/56', 520, 'gentleHands', 'start', 'morning'),
+  row('CW02', 'Arun Moss', 'CW', 2, '72/134/55/62/69', 560, 'morningPerson', 'candidate', 'morning'),
+  row('LC01', 'Zoe Quinn', 'LC', 1, '68/75/51/113/65', 520, 'conversationStarter', 'start', 'afternoon'),
+  row('LC02', 'Oscar Bell', 'LC', 2, '50/57/64/126/78', 560, 'creativeClub', 'candidate', 'afternoon'),
+  row('AH01', 'Nia Foster', 'AH', 1, '77/53/115/67/74', 520, 'steadySteps', 'start', 'morning'),
+  row('AH02', 'Hugo Pike', 'AH', 2, '59/66/128/80/56', 560, 'safeTransfers', 'candidate', 'afternoon'),
+  row('HN01', 'Sam Kitchen', 'HN', 1, '55/62/69/76/107', 520, 'warmWelcome', 'start', 'morning'),
+  row('HN02', 'Noor Price', 'HN', 2, '68/75/51/58/120', 560, 'hydrationEye', 'candidate', 'night'),
 ];
 export const staffById = (id) => STAFF.find((s) => s.id === id) ?? null;
 
@@ -47,6 +49,7 @@ export function validateStaff(v, list = STAFF) {
     v.check(Number.isInteger(s.salary) && s.salary > 0, `${who}: salary`);
     v.check(['start', 'candidate'].includes(s.eligibility), `${who}: eligibility "${s.eligibility}"`);
     v.check(s.art === `staff_${s.id.toLowerCase()}`, `${who}: art key`);
+    v.check(['morning', 'afternoon', 'night'].includes(s.shiftPref), `${who}: shift preference "${s.shiftPref}"`);
     // the role's primary stat is their best
     const best = STAT_IDS.reduce((a, k) => (s.stats[k] > s.stats[a] ? k : a), STAT_IDS[0]);
     v.check(best === ROLES[s.role]?.primaryStat, `${who}: primary stat is not their highest`);

@@ -2,7 +2,7 @@
 // candidate pool rule, and the shared core/StaffSystem + core/FounderPerks set up with CAREWORKS data. Pure data in,
 // data out, so the Node tests use it as it is.
 //   openingTeam(founderId)       the §3.5.4 rule: Founder + Maya + Ruby; if the Founder is Maya or Ruby, + Zoe
-//   newStaffState(founderId)     the run save's staff part: { staff, founder, roster, assignments, noCandidates }
+//   newStaffState(founderId)     the run save's staff part: { staff, founder, roster, coverage, assignments, noCandidates }
 //   ensureStaffState(saved, founderId)   an older save (M1/M2 had none) gets a team built the same way
 //   candidatePool(state)         who could be offered as a candidate later (never the Founder, never someone employed)
 //   makeStaffSystem(state, rng) · makeFounderPerks(state)
@@ -16,6 +16,8 @@ import { STAFF, TRAITS, staffById } from '../../data/staff.js';
 import { ROLES, STATS, STAT_IDS, TIERS } from '../../data/roles.js';
 import { FOUNDERS, founderById, FOUNDER_FLAG } from '../../data/setup.js';
 import { STAFF_BALANCE, SHIFTS } from '../../data/balance.js';
+import { newRosterState, ensureRosterState } from './roster.js';
+import { newCoverageState, ensureCoverageState } from './coverage.js';
 
 const MAYA = 'RN01';
 const RUBY = 'CW01';
@@ -53,7 +55,8 @@ export function newStaffState(founderId) {
   return {
     staff,
     founder: { id: founder, [FOUNDER_FLAG]: true, perk: founderById(founder).perk.effects.map((e) => ({ ...e })), history: newHistory() },
-    roster: { shifts: Object.fromEntries(team.map((id) => [id, 'morning'])) }, // everyone on the one Morning shift
+    roster: newRosterState(staff), // Milestone 7: three shifts (data/shifts.js DEFAULT_ROSTER), wings, floats, on call
+    coverage: newCoverageState(), // Milestone 7: shift records, the coverage log, the unsafe-shift counter
     assignments: {}, // routine step id → staff id (none = automatic)
     noCandidates: [founder], // bible §3.5.4: the Founder never appears again as a candidate
     pos: {}, // staff id → { x, y } where they were (a reload puts them back)
@@ -69,7 +72,8 @@ export function ensureStaffState(saved, founderId) {
     ...fresh,
     ...saved,
     founder: { ...fresh.founder, ...(saved.founder ?? {}), history: { ...newHistory(), ...(saved.founder?.history ?? {}) } },
-    roster: { shifts: { ...fresh.roster.shifts, ...(saved.roster?.shifts ?? {}) } },
+    roster: ensureRosterState(saved.roster, saved.staff.map((m) => m.id)), // Milestones 3–6: everyone stays on Morning
+    coverage: ensureCoverageState(saved.coverage),
     assignments: { ...(saved.assignments ?? {}) },
     noCandidates: [...new Set([...(saved.noCandidates ?? []), fresh.founder.id])],
     pos: { ...(saved.pos ?? {}) },
