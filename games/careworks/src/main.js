@@ -5,6 +5,10 @@
 // New Game / an empty slot → Facility Setup → START FACILITY writes the slot's summary record and an empty campaign
 // save (core/CampaignSlots, keys campaign_1 … campaign_4) and opens the placeholder home. Starting into an occupied
 // slot asks first, naming that slot's facility and year.
+// Milestone 5: the home gets the shared series bars (core/ui TopBar and BottomBar): date, Credits, Care Tokens, Rank,
+// Pause / 1× (2× and 4× locked), Inbox and Help on top; Care · Staff · Develop · Quality · Business below (Care opens the
+// resident list, Staff the team roster, the rest a sheet saying what will live there), a red dot on Care while a call
+// bell rings or a missed task hasn't been looked at. Care pops (core/VfxSystem) and the end-of-day beat.
 // Add ?debug=1 for the FPS/state overlay, ?screen=test for the scaling / tap / asset-loader test screen.
 import { THEME, font } from '../../../core/Theme.js';
 import { EventBus } from '../../../core/EventBus.js';
@@ -23,6 +27,12 @@ import { TextPrompt } from '../../../core/ui/TextPrompt.js';
 import { BottomSheet } from '../../../core/ui/BottomSheet.js';
 import { Dialog } from '../../../core/ui/Modal.js';
 import { drawButton, hitRect, setPressPoint, clearPress } from '../../../core/ui/Button.js';
+import { createTopBar } from '../../../core/ui/TopBar.js';
+import { createBottomBar } from '../../../core/ui/BottomBar.js';
+import { VfxSystem } from '../../../core/VfxSystem.js';
+import { BOTTOM_SLOTS, bottomRoute, TOP_ICONS, RANK_NONE, CARE_ICONS, TOP_SHEETS, SPEED_LOCKED, PORTRAIT_CROP } from '../data/bars.js';
+import { ECONOMY_START } from '../data/balance.js';
+import { createCarePops, createDayBeat } from './ui/carePops.js';
 import { ASSETS } from '../data/assets.js';
 import { SAVE } from '../data/save.js';
 import { createCampaigns } from './app/campaigns.js';
@@ -88,6 +98,9 @@ const loop = new FixedStepLoop({
   update: (dt) => {
     router.update(dt); // on the home: the clock and everyone in it move
     if (open && router.currentName === 'home') open.data.playSec = (open.data.playSec ?? 0) + dt;
+    vfx.update(dt); // real seconds: pops keep their pace at any game speed
+    carePops.update(dt);
+    dayBeat.update(dt);
     autosave.tick(dt);
     dialog.update(dt);
     sheet.update(dt);
@@ -159,7 +172,8 @@ router.layers.push(
     get active() {
       return sheet.active;
     },
-    handleInput: (hook, p) => sheet.handleInput(hook, p),
+    // On the home a tap on the top bar still reaches it (Pause, Inbox and Help work with a sheet up).
+    handleInput: (hook, p) => (hook === 'onTap' && router.currentName === 'home' && !homeScreen.buildMode && topBar.contains(p) ? false : sheet.handleInput(hook, p)),
     onBack: () => sheet.onBack(),
   },
 );
@@ -187,7 +201,11 @@ function openRun(n, data) {
   if (data.clock) clock.load(data.clock);
   const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, resident: data.residents?.[0], staff: data.staff, care: data.care, seed: data.seed, bus });
   if (debug.enabled && PARAMS.get('paused') === '1') clock.speed = 0; // ?debug=1&paused=1: open exactly as saved (tests)
-  open = { n, data, world };
+  data.economy ??= { ...ECONOMY_START };
+  open = { n, data, world, seenMissed: new Set() };
+  vfx.clear();
+  carePops.clear();
+  dayBeat.current = null;
 }
 // The run save: the page's campaign data with the world's clock and residents written in (and the slot's summary).
 function saveRun() {
@@ -356,7 +374,149 @@ const setupScreen = createSetupScreen({ layout, assets, textPrompt, onBack: () =
 // his likes and dislikes; Milestone 3 adds who helps with each step (a picker, which since Milestone 4 pins that step's
 // task). Milestone 4: the Care Plan section (six rows, each opening its domain's options), today's care tasks, the call
 // bells (the last five and the average response) and Familiar Care. The room card names its resident.
-const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), debug });
+// Milestone 5: the shared bars. The top bar reads the open run's clock through this stand-in (there is no run on the
+// menus, and each campaign has its own clock).
+const runClock = () => open?.world.clock ?? null;
+const barClock = {
+  get paused() {
+    return runClock()?.paused ?? true;
+  },
+  get speed() {
+    return runClock()?.speed ?? 0;
+  },
+  get speeds() {
+    return runClock()?.speeds ?? [1, 2, 4];
+  },
+  get totalDays() {
+    return runClock()?.totalDays ?? 0;
+  },
+  canUseSpeed: (s) => runClock()?.canUseSpeed(s) ?? false,
+  togglePause: () => runClock()?.togglePause(),
+  setSpeed: (s) => runClock()?.setSpeed(s),
+  dateOf: (d) => runClock()?.dateOf(d) ?? { year: 1, month: 1, day: 1 },
+};
+const topBar = createTopBar({
+  layout,
+  assets,
+  clock: barClock,
+  home: true,
+  stats: () => {
+    const e = open?.data.economy ?? ECONOMY_START;
+    return [
+      { icon: TOP_ICONS.credits, text: e.credits.toLocaleString('en-GB'), gap: 18 },
+      { icon: TOP_ICONS.careTokens, text: String(e.careTokens), gap: 18 },
+      { text: `Rank ${RANK_NONE}` },
+    ];
+  },
+  onInbox: () => openTopSheet('inbox'),
+  onHelp: () => openTopSheet('help'),
+  onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_LOCKED, accent: COL.progress, sections: [] })),
+});
+// Care's red dot: a call bell ringing, or a missed task today the player hasn't looked at yet (opening the resident list
+// or Arthur's card counts as looking).
+const missedToday = () => (open?.world.tasksToday() ?? []).filter((t) => t.status === 'missed');
+function careBadge() {
+  if (!open) return null;
+  if (open.world.bell) return '!';
+  const n = missedToday().filter((t) => !open.seenMissed.has(t.id)).length;
+  return n || null;
+}
+const markMissedSeen = () => {
+  for (const t of missedToday()) open?.seenMissed.add(t.id);
+};
+const bottomBar = createBottomBar({
+  layout,
+  assets,
+  items: BOTTOM_SLOTS.map((s) => ({ id: s.id, label: s.label, icon: s.icon, badge: s.id === 'care' ? careBadge : null })),
+  open: (id) => openBottom(id),
+});
+const vfx = new VfxSystem({ assets, width: W, height: renderer.height, font: THEME.family, maxTexts: 4, maxEffects: 16 });
+const dayBeat = createDayBeat();
+const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug });
+const carePops = createCarePops({ bus, world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused });
+// The end of each day: the medium beat ("Day 3 — all routine care done" / "2 tasks missed").
+bus.on('care:dayEnd', (summary) => {
+  if (!open || router.currentName !== 'home') return;
+  const d = open.world.clock.dateOf(summary.day);
+  dayBeat.show(summary, `Day ${d.day}`);
+  debug.log(`day ${summary.day}: ${summary.done} done, ${summary.missed} missed`);
+});
+
+// Where each bottom-bar slot goes (data/bars.js).
+function openBottom(id) {
+  const r = bottomRoute(id);
+  if (!r || !open) return;
+  if (r.sheet === 'residents') openResidents();
+  else if (r.sheet === 'roster') openRoster();
+  else openPlaceholder(r.slot);
+  lastRoute = r.sheet;
+}
+let lastRoute = null;
+const accentNow = () => (open ? paletteById(open.data.facility.palette).hex : COL.progress);
+// Care: the resident list (one resident for now) and the Admissions row (Milestone 6).
+function openResidents() {
+  markMissedSeen();
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const a = w.resident;
+    const missed = missedToday().length;
+    const sub = w.bell ? `Call bell ringing · ${w.stateOf(a)}` : missed ? `${missed} missed today · ${w.stateOf(a)}` : w.stateOf(a);
+    return {
+      title: 'Residents',
+      subtitle: '1 resident · tap for his card and care plan',
+      art: 'care_ui_01',
+      accent: accentNow(),
+      sections: [
+        { columns: 1, buttons: [{ id: 'resident:RES01', label: a.name, sub, icon: a.art, iconCrop: PORTRAIT_CROP, iconBadge: w.bell ? CARE_ICONS.bell : null, accent: w.bell || missed ? COL.action : COL.progress, onTap: () => openFrom('RES01', 'residents') }] },
+        { title: 'Admissions', columns: 1, buttons: [{ id: 'admissions', label: 'Admissions', sub: 'New residents and the waiting list come later', icon: CARE_ICONS.admissions, locked: true }] },
+      ],
+    };
+  });
+}
+// Staff: the team roster — portrait, role badge, Energy and Morale; each opens their staff card.
+function openRoster() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    return {
+      title: 'Your team',
+      subtitle: `${w.staff.length} staff · Morning shift 06:00–17:00 · tap someone for their card`,
+      art: 'care_ui_02',
+      accent: accentNow(),
+      sections: [
+        {
+          columns: 1,
+          buttons: w.staff.map((p) => {
+            const m = p.model;
+            const founder = w.staffState.founder.id === p.id ? ' · Founder' : '';
+            return { id: `staff:${p.id}`, label: p.name, sub: `${ROLES[m.role].short}${founder} · Energy ${Math.round(m.energy)} · Morale ${Math.round(m.morale)}`, icon: p.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[m.role].badge, accent: m.status.tired || m.status.stressed ? COL.action : COL.progress, onTap: () => openFrom(p.id, 'roster') };
+          }),
+        },
+      ],
+    };
+  });
+}
+// Develop / Quality / Business: what will live there. Business also leaves for the Main Menu (the run is saved first).
+function openPlaceholder(slot) {
+  sheet.open(() => ({
+    title: slot.title,
+    subtitle: slot.text,
+    art: slot.icon,
+    accent: accentNow(),
+    sections: slot.id === 'business' ? [{ lines: ['Your home saves itself as you play.'], buttons: [{ id: 'mainMenu', label: 'Save and Main Menu', accent: COL.progress, onTap: () => leaveHome() }], columns: 1 }] : [],
+  }));
+}
+function openTopSheet(id) {
+  const t = TOP_SHEETS[id];
+  sheet.open(() => ({ title: t.title, subtitle: t.text, accent: COL.progress, sections: [] }));
+}
+// A card opened from a list gets a way back to that list, and the person's ring in the home.
+function openFrom(id, list) {
+  const it = open?.world.byId(id);
+  if (it) homeScreen.selection.select(it);
+  openHomeSheet(id, list);
+}
 const stepName = (id) => ROUTINE.find((s) => s.id === id)?.name ?? id;
 function residentSections(w, it) {
   const st = it.state;
@@ -534,14 +694,19 @@ function staffMenu(w, p, accent) {
   }
   return { title: p.name, subtitle: `${ROLES[m.role].name} · ${TIERS[m.tier]?.name ?? m.tier} · Lv ${m.level}`, art: p.art, badge: ROLES[m.role].badge, tag: isFounder ? { text: 'FOUNDER' } : null, accent, sections };
 }
-function openHomeSheet(id) {
+// from: 'residents' / 'roster' when opened from a bottom-bar list (Milestone 5) — the card then has a way back to it.
+const BACK_TO = { residents: { label: '‹ Back to residents', open: () => openResidents() }, roster: { label: '‹ Back to the team', open: () => openRoster() } };
+function openHomeSheet(id, from = null) {
+  if (id === 'RES01') markMissedSeen();
+  const back = BACK_TO[from];
+  const withBack = (menu) => (back ? { ...menu, sections: [{ columns: 1, buttons: [{ id: 'back', label: back.label, accent: COL.progress, onTap: back.open }] }, ...menu.sections] } : menu);
   sheet.open(() => {
     const w = open?.world;
     const it = w?.byId(id);
     if (!it) return { title: '', sections: [] };
     const accent = paletteById(open.data.facility.palette).hex;
-    if (it.kind === 'resident') return { title: it.name, subtitle: it.line, art: it.art, accent, sections: residentSections(w, it) };
-    if (it.kind === 'staff') return staffMenu(w, it, accent);
+    if (it.kind === 'resident') return withBack({ title: it.name, subtitle: it.line, art: it.art, accent, sections: residentSections(w, it) });
+    if (it.kind === 'staff') return withBack(staffMenu(w, it, accent));
     const here = w.people.filter((p) => w.whereIs(p) === it.id).map((p) => p.name.split(' ')[0]);
     const lines = [here.length ? `Here now: ${here.join(' and ')}` : 'Nobody here right now'];
     let sub = it.def.text;
@@ -617,7 +782,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

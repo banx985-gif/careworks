@@ -3,7 +3,9 @@
 // team on the Morning shift: they stand their posts and stand down in the lounge off shift. Milestone 4: each band his
 // care plan, routine and needs make care tasks (src/systems/careTasks.js); free staff on shift pick their next task
 // themselves by the bible §15 score, walk to him (or his room), spend the task's minutes there and finish it; a need
-// over the bell line rings his call bell. A routine step with a helper happens when the help is done. People walk on
+// over the bell line rings his call bell. A routine step with a helper happens when the help is done. Milestone 5: the
+// Dining Room (his meals) and the Staff Room (off-shift rest) join the home, the five early props block their tiles, and
+// each midnight 'care:dayEnd' says how the day went ({ day, done, missed }). People walk on
 // core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen draws it — so the
 // Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, staff, care, seed, bus })
@@ -19,13 +21,14 @@
 //   world.changePlan(domain, optionId) → { ok, reason?, text? }   the Care Plan picker (logged on his card)
 //   world.care · world.tasksToday() · world.taskOf(person) · world.bell (the ringing bell or null) · world.bellSummary()
 //   world.mostFamiliar() → staff id | null · world.setKeyWorker(staffId | null)
+//   world.props (Milestone 5: decoration, not tappable) · world.daySummary(day) → { day, done, missed }
 //   world.serialize() → { clock, residents, staff, care }   (the run save; the page keeps the rest)
 import { Grid } from '../../../../core/Grid.js';
 import { Agent } from '../../../../core/Agent.js';
 import { Clock } from '../../../../core/Clock.js';
 import { findPath } from '../../../../core/Pathing.js';
 import { AssignmentSystem } from '../../../../core/AssignmentSystem.js';
-import { HOME, WALLS, PLACED, RESIDENT, SPOTS, HELP_SPOTS, HELP_SPOTS_2 } from '../../data/home.js';
+import { HOME, WALLS, PLACED, PROPS, RESIDENT, SPOTS, HELP_SPOTS, HELP_SPOTS_2 } from '../../data/home.js';
 import { residentById, NEEDS } from '../../data/residents.js';
 import { DAY, PLACES, ROUTINE } from '../../data/routine.js';
 import { BELL } from '../../data/tasks.js';
@@ -45,6 +48,18 @@ export function wallTiles() {
     }
   }
   return out;
+}
+
+// The home's grid: inside walls, placed things (a walk-in room only where its furniture stands) and the props.
+export function buildGrid() {
+  const grid = new Grid({ cols: HOME.cols, rows: HOME.rows, tileSize: HOME.cellSize });
+  for (const t of wallTiles()) grid.setBlocked(t.col, t.row, true);
+  for (const def of PLACED) {
+    if (def.walkIn) for (const b of def.blockedInside ?? []) grid.blockRect(b.col, b.row, b.w, b.h, true);
+    else grid.blockRect(def.fp.col, def.fp.row, def.fp.w, def.fp.h, true);
+  }
+  for (const p of PROPS) grid.setBlocked(p.col, p.row, true);
+  return grid;
 }
 
 // 'F05.resident' or 'hall.cwPost' → the tile.
@@ -71,13 +86,9 @@ const needName = (id) => NEEDS.find((n) => n.id === id)?.name ?? id;
 
 export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, staff = null, care: careSaved = null, seed = 'careworks', bus = null } = {}) {
   clock ??= makeClock();
-  const grid = new Grid({ cols: HOME.cols, rows: HOME.rows, tileSize: HOME.cellSize });
-  for (const t of wallTiles()) grid.setBlocked(t.col, t.row, true);
+  const grid = buildGrid();
   const placed = PLACED.map((def) => ({ kind: def.kind, id: def.id, def, fp: def.fp, residentId: null }));
-  for (const p of placed) {
-    if (p.def.walkIn) for (const b of p.def.blockedInside ?? []) grid.blockRect(b.col, b.row, b.w, b.h, true);
-    else grid.blockRect(p.fp.col, p.fp.row, p.fp.w, p.fp.h, true);
-  }
+  const props = PROPS.map((def) => ({ kind: 'prop', id: def.id, def, fp: { col: def.col, row: def.row, w: 1, h: 1 } }));
   const hourNow = () => clock.dayProgress * 24;
   let band = bandAt(hourNow());
 
@@ -374,6 +385,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const world = {
     grid,
     placed,
+    props,
     people: [arthur, ...crew.people],
     staff: crew.people,
     resident: arthur,
@@ -401,6 +413,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const hours = (g / clock.secondsPerDay) * 24;
       if (clock.totalDays !== lastDay) {
         staffState.founder.history.daysEmployed += clock.totalDays - lastDay;
+        bus?.emit('care:dayEnd', world.daySummary(lastDay));
         lastDay = clock.totalDays;
       }
       riseNeeds(st, hours, world.asleep);
@@ -494,13 +507,21 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (p.kind === 'staff') {
         const hit = placed.find((s) => Object.values(s.def.spots ?? {}).some((x) => x.col === t?.col && x.row === t?.row));
         if (hit) return hit.id;
-        return t && t.row >= 11 ? 'F05' : null; // anywhere in the lounge (resting, the Cards table)
+        if (p.mode === 'resting') return 'F08'; // the Staff Room's rest spots
+        if (t && t.row <= 3 && t.col >= 9) return 'F03'; // at the Dining Room table
+        return t && t.row >= 11 ? 'F05' : null; // anywhere in the lounge (the Cards table)
       }
       const step = st.step && routineStep(st.step.id);
       if (!step || st.step.status === 'refused' || step.place === 'room') return st.room;
       return PLACES[step.place].spot.split('.')[0];
     },
     byId: (id) => world.people.find((p) => p.id === id) ?? placed.find((s) => s.id === id) ?? null,
+    // How a day went (Milestone 5's end-of-day beat): care tasks done and missed that day (bells not counted; a task
+    // no one on shift could do is not a miss).
+    daySummary(day) {
+      const tasks = care.tasks.filter((t) => t.day === day && t.type !== 'bell');
+      return { day, done: tasks.filter((t) => t.status === 'done').length, missed: tasks.filter((t) => t.status === 'missed').length };
+    },
     serialize() {
       st.pos = { x: arthur.agent.x, y: arthur.agent.y };
       staffState.staff = sys.serialize();

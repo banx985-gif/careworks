@@ -24,7 +24,7 @@ export const BANDS = [
 // Where things happen: spots on the home grid (data/home.js). 'room' = the resident's own room (its inside spot).
 export const PLACES = {
   room: { spot: null, name: 'his room' }, // filled from the resident's room
-  dining: { spot: 'F05.dining', name: 'the lounge dining table' },
+  dining: { spot: 'F03.dining', name: 'the Dining Room' }, // Milestone 5 (the lounge's dining table before)
   lounge: { spot: 'F05.resident', name: 'the Activity Lounge' },
 };
 

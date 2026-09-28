@@ -6,10 +6,15 @@
 //   SAVE_MIGRATIONS           older saves → this version: v1 (Milestones 0–1) had no clock and no resident state;
 //                             v2 (Milestone 2) had no staff — a team is built from its stored Founder (Maya if none);
 //                             v3 (Milestone 3) had no care plan or tasks — the plan from data, an empty task board
+//                             v4 (Milestone 4) had no Dining Room / Staff Room / props: anyone saved on a tile they
+//                             now stand on moves to the nearest free tile, a meal under way moves to the Dining Room,
+//                             staff resting in the lounge walk to the Staff Room; Credits / Care Tokens start
 import { founderById, paletteById, ROLES, FOUNDER_FLAG } from '../../data/setup.js';
 import { residentById } from '../../data/residents.js';
-import { RESIDENT } from '../../data/home.js';
-import { makeClock } from './homeWorld.js';
+import { RESIDENT, HOME, HELP_SPOTS, HELP_SPOTS_2 } from '../../data/home.js';
+import { ROUTINE } from '../../data/routine.js';
+import { ECONOMY_START } from '../../data/balance.js';
+import { makeClock, buildGrid, spotTile } from './homeWorld.js';
 import { newResidentState } from './residentNeeds.js';
 import { newStaffState } from './staffTeam.js';
 import { newCareState } from './careTasks.js';
@@ -37,6 +42,7 @@ export function newCampaign(setup, now = Date.now()) {
     residents: freshResidents(),
     staff: newStaffState(founder.id), // Milestone 3: the opening team, the Founder's flag / perk / history, the shift
     care: newCareState(), // Milestone 4: the day's care tasks, call-bell records, Familiar Care (the plan is on each resident)
+    economy: { ...ECONOMY_START }, // Milestone 5: shown in the top bar (the economy is Milestone 22)
     playSec: 0,
     ngPlus: 0,
   };
@@ -87,10 +93,60 @@ export function upgradeV3(data) {
   const residents = (data.residents ?? []).map((r) => ({ ...r, plan: ensurePlan(r.plan, residentById(r.id)?.plan) }));
   return { ...data, residents, care: data.care ?? newCareState() };
 }
+// Version 4 → 5 (Milestone 5): the Dining Room, the Staff Room and the props now stand on tiles that were open floor.
+// The layout is data (the same for every save), so the upgrade only has to make the people fit round it.
+const CELL = HOME.cellSize;
+const centre = (t) => ({ x: (t.col + 0.5) * CELL, y: (t.row + 0.5) * CELL });
+// The nearest open tile to a saved position (itself when it is open): breadth-first over the grid.
+export function nearestOpen(grid, pos) {
+  const start = { col: Math.min(grid.cols - 1, Math.max(0, Math.floor(pos.x / CELL))), row: Math.min(grid.rows - 1, Math.max(0, Math.floor(pos.y / CELL))) };
+  if (!grid.isBlocked(start.col, start.row)) return pos;
+  const key = (t) => `${t.col},${t.row}`;
+  const seen = new Set([key(start)]);
+  const queue = [start];
+  while (queue.length) {
+    const t = queue.shift();
+    for (const [dc, dr] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+      const n = { col: t.col + dc, row: t.row + dr };
+      const k = key(n);
+      if (!grid.inBounds(n.col, n.row) || seen.has(k)) continue;
+      if (!grid.isBlocked(n.col, n.row)) return centre(n);
+      seen.add(k);
+      queue.push(n);
+    }
+  }
+  return pos;
+}
+const DINING_SPOTS = new Set([HELP_SPOTS.dining, HELP_SPOTS_2.dining]);
+export function upgradeV4(data) {
+  const grid = buildGrid();
+  const residents = (data.residents ?? []).map((r) => {
+    const out = { ...r };
+    const step = r.step && ROUTINE.find((s) => s.id === r.step.id);
+    const atMeal = step?.place === 'dining' && (r.step.status === 'waiting' || r.step.status === 'doing') && r.step.arthurThere;
+    if (atMeal) out.pos = centre(spotTile('F03.dining')); // the meal carries on at the Dining Room table
+    if (out.pos) out.pos = nearestOpen(grid, out.pos);
+    return out;
+  });
+  const staff = data.staff ? { ...data.staff, pos: { ...(data.staff.pos ?? {}) }, modes: { ...(data.staff.modes ?? {}) } } : data.staff;
+  const care = data.care ? { ...data.care, tasks: (data.care.tasks ?? []).map((t) => ({ ...t })) } : data.care;
+  if (staff) {
+    // a helper already at the old dining spot is now at the new one
+    for (const t of care?.tasks ?? []) {
+      const id = t.slots?.[0];
+      if ((t.status === 'claimed' || t.status === 'working') && t.arrived && DINING_SPOTS.has(t.spot) && id && staff.pos[id]) staff.pos[id] = centre(spotTile(t.spot));
+    }
+    // resting in the lounge → walk to the Staff Room
+    for (const [id, m] of Object.entries(staff.modes)) if (m?.mode === 'resting') staff.modes[id] = { ...m, mode: 'toRest' };
+    for (const [id, pos] of Object.entries(staff.pos)) staff.pos[id] = nearestOpen(grid, pos);
+  }
+  return { ...data, residents, staff, care, economy: data.economy ?? { ...ECONOMY_START } };
+}
 export const SAVE_MIGRATIONS = {
   1: (record) => ({ ...record, data: upgradeV1(record.data) }),
   2: (record) => ({ ...record, data: upgradeV2(record.data) }),
   3: (record) => ({ ...record, data: upgradeV3(record.data) }),
+  4: (record) => ({ ...record, data: upgradeV4(record.data) }),
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

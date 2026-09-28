@@ -7,7 +7,7 @@ export const STAFF_BALANCE = {
     workPerHour: -3.5, // on shift (at a post, walking, helping)
     perTask: -3, // each routine step they help with
     restPerHour: 3.5, // off shift
-    restSpotBonus: 1.2, // × while standing down at their rest spot (the Staff Room area — the lounge for now)
+    restSpotBonus: 1.2, // × while standing down at their rest spot (the Staff Room, Milestone 5)
   },
   morale: {
     lowEnergyBelow: 35, // below this Energy, Morale drifts down…
@@ -23,3 +23,7 @@ export const STAFF_BALANCE = {
 export const SHIFTS = {
   morning: { name: 'Morning', bands: ['morning', 'afternoon'], from: 6, to: 17 },
 };
+
+// Milestone 5: the top bar's money. Numbers only — nothing earns or spends them until the economy (Milestone 22).
+// A placeholder opening balance, logged in docs/DECISIONS.md.
+export const ECONOMY_START = { credits: 100000, careTokens: 0 };

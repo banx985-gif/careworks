@@ -3,7 +3,7 @@
 //
 // A menu is plain data the game builds when it opens (and again every frame while open, so numbers stay live):
 //   { title, subtitle, art (image key), accent,
-//     sections: [ { title?, lines?: [text], buttons?: [{ id, label, sub?, icon?, disabled?, locked?, badge?, accent?, onTap }],
+//     sections: [ { title?, lines?: [text], buttons?: [{ id, label, sub?, icon?, iconCrop?, disabled?, locked?, badge?, accent?, onTap }],
 //                   columns? (buttons per row, default 2) } ],
 //     tabs?: [{ id, label, badge?, sections }] }   locked (Milestone DEVWORKS-3): greyed like disabled, faded icon and a
 //                                                  padlock on the right; not tappable   tabs inside the sheet (Milestone 21): a row of tabs under the header,
@@ -12,6 +12,8 @@
 //     bars: [{ label, value, max = 100, color?, text? }]   one row each: label · a filled bar · text (default the value)
 //   Header extras (CAREWORKS Milestone 3; optional): badge (image key) — a small round badge on the picture's corner
 //   (e.g. a role badge); tag: { text, color? } — a chip beside the title (e.g. FOUNDER)
+//   Button extra (CAREWORKS Milestone 5; optional): iconBadge (image key) — a small round badge on the button's icon
+//   corner (e.g. a role badge on a roster portrait)
 // A MenuRegistry maps what was tapped (a station type, 'worker', 'floor'…) to the function that builds its menu.
 //   sheet.open(builder) — builder() → menu        sheet.close()        sheet.active
 //   sheet.handleInput(hook, p) → true when the sheet used it (tap a button, tap above it to close, drag to scroll)
@@ -436,7 +438,23 @@ export class BottomSheet {
     let x = rect.x + 20;
     if (bt.icon) {
       if (bt.locked) ctx.globalAlpha = 0.4;
-      this.assets.drawContained(ctx, bt.icon, { x, y: rect.y + (rect.h - 8 - iconS) / 2, w: iconS, h: iconS });
+      const ir = { x, y: rect.y + (rect.h - 8 - iconS) / 2, w: iconS, h: iconS };
+      // iconCrop (DEVWORKS Milestone 14, optional): { x, y, w, h } fractions of the picture, e.g. a portrait's head.
+      if (bt.iconCrop && this.assets.drawCrop) this.assets.drawCrop(ctx, bt.icon, bt.iconCrop, ir);
+      else this.assets.drawContained(ctx, bt.icon, ir);
+      if (bt.iconBadge) {
+        const bs = Math.round(iconS * 0.5);
+        const bx = ir.x + ir.w - bs + 8;
+        const by = ir.y + ir.h - bs + 6;
+        ctx.fillStyle = '#FFFFFF';
+        ctx.strokeStyle = C.outline;
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(bx + bs / 2, by + bs / 2, bs / 2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+        this.assets.drawContained(ctx, bt.iconBadge, { x: bx + 4, y: by + 4, w: bs - 8, h: bs - 8 });
+      }
       ctx.globalAlpha = 1;
       x += iconS + 16;
     }

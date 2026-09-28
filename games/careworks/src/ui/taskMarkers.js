@@ -6,7 +6,7 @@
 const INK = '#3B342C';
 const COLOURS = {
   bell: '#F2B530', pill: '#E0645A', sun: '#F2B530', moon: '#5E6FB8', bowl: '#C8834E', drop: '#3E9BD6', cross: '#E0645A',
-  steps: '#8A6CC0', cup: '#3E9BD6', star: '#E0913F', heart: '#E0645A', house: '#6FA86A',
+  steps: '#8A6CC0', cup: '#3E9BD6', star: '#E0913F', heart: '#E0645A', house: '#6FA86A', rest: '#5E6FB8', tired: '#D98A00',
 };
 
 export function drawTaskMarker(ctx, x, y, r, icon, { ring = INK } = {}) {
@@ -170,6 +170,31 @@ function drawIcon(ctx, icon, s) {
       ctx.lineTo(-s * 0.85, -s * 0.05);
       ctx.closePath();
       fillStroke();
+      break;
+    // Milestone 5 status icons (not tasks): resting off shift (two small Zs) and tired (a low battery)
+    case 'rest':
+      ctx.lineWidth = Math.max(3, s * 0.2);
+      ctx.strokeStyle = COLOURS.rest;
+      for (const [x, y, z] of [[-0.35, 0.1, 0.55], [0.35, -0.45, 0.4]]) {
+        ctx.moveTo((x - z / 2) * s, (y - z / 2) * s);
+        ctx.lineTo((x + z / 2) * s, (y - z / 2) * s);
+        ctx.lineTo((x - z / 2) * s, (y + z / 2) * s);
+        ctx.lineTo((x + z / 2) * s, (y + z / 2) * s);
+      }
+      ctx.stroke();
+      break;
+    case 'tired':
+      ctx.fillStyle = '#FFFFFF';
+      ctx.roundRect(-s * 0.85, -s * 0.45, s * 1.5, s * 0.9, s * 0.15);
+      fillStroke();
+      ctx.beginPath();
+      ctx.rect(s * 0.65, -s * 0.2, s * 0.2, s * 0.4);
+      ctx.fillStyle = INK;
+      ctx.fill();
+      ctx.beginPath();
+      ctx.rect(-s * 0.7, -s * 0.3, s * 0.35, s * 0.6);
+      ctx.fillStyle = COLOURS.tired;
+      ctx.fill();
       break;
     default:
       ctx.arc(0, 0, s * 0.5, 0, Math.PI * 2);

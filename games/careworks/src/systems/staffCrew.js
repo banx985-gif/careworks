@@ -193,8 +193,8 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       const t = p.task;
       if (t && p.mode === 'toHelp') return t.type === 'bell' ? "Answering Arthur's call bell" : t.room ? `Going to Arthur's room (${t.label})` : `Going to Arthur (${t.label})`;
       if (t && p.mode === 'helping') return t.type === 'bell' ? "At Arthur's call bell" : t.room ? `In Arthur's room: ${t.label}` : `With Arthur: ${t.label}`;
-      if (p.mode === 'toRest') return 'Off shift: going to rest in the lounge';
-      if (p.mode === 'resting') return 'Off shift: resting in the lounge';
+      if (p.mode === 'toRest') return 'Off shift: going to the Staff Room';
+      if (p.mode === 'resting') return 'Off shift: resting in the Staff Room';
       if (p.mode === 'toPost') return 'On shift: walking the home';
       return `On shift ${PLACE_WORDS[POSTS[p.role].spots[p.postIndex]] ?? 'in the hall'}`;
     },
