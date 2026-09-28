@@ -8,8 +8,8 @@
 // pops of the same kind in real seconds (so a faster speed never floods the home). A pop that can't show now is skipped.
 //   createCarePops({ bus, world(), vfx, screen, isVisible() }) → { update(dt), clear(), log, live() }   clear(): a new run
 //   opened (or the home left) — no spot or gap carried over
-//   createDayBeat() → { show(summary, dayLabel), update(dt), render(ctx, x, y, w), current }   the medium beat:
-//     "Day 3 — all routine care done" / "Day 3 — 2 tasks missed"
+//   createDayBeat() → { show(summary, dayLabel), showText(text, good), update(dt), render(ctx, x, y, w), current }
+//     the medium beat: "Day 3 — all routine care done" / "Day 3 — 2 tasks missed"; Milestone 6: "Welcome, Betty Finch"
 import { THEME, font } from '../../../../core/Theme.js';
 import { CARE_POPS, POPS_MAX_LIVE, DAY_BEAT } from '../../data/pops.js';
 import { ROUTINE } from '../../data/routine.js';
@@ -47,11 +47,12 @@ export function createCarePops({ bus, world: getWorld, vfx, screen, isVisible })
     return true;
   }
 
-  // Between the helper and Arthur when they are together; over the helper otherwise (e.g. a room check while he is out).
-  function pairPoint(staffId) {
+  // Between the helper and the resident when they are together; over the helper otherwise (e.g. a room check while the
+  // resident is out).
+  function pairPoint(staffId, residentId) {
     const w = getWorld();
     const p = w?.byId(staffId);
-    const a = w?.resident;
+    const a = (residentId && w?.residentById?.(residentId)) || w?.resident;
     if (!p || !a) return null;
     const d = Math.hypot(p.agent.x - a.agent.x, p.agent.y - a.agent.y);
     return d < HOME.cellSize * 2.5 ? { x: (p.agent.x + a.agent.x) / 2, y: (p.agent.y + a.agent.y) / 2 } : { x: p.agent.x, y: p.agent.y };
@@ -63,13 +64,13 @@ export function createCarePops({ bus, world: getWorld, vfx, screen, isVisible })
     if (kind === 'meal') pop('meal', 'dining', placeCentre('F03'));
     else if (kind === 'activity') pop('activity', 'lounge', placeCentre('F05'));
   });
-  bus.on('care:task', ({ id, type, status, staff }) => {
+  bus.on('care:task', ({ id, type, status, staff, resident }) => {
     if (status !== 'done') return;
     const t = getWorld()?.care.tasks.find((x) => x.id === id);
     if (t?.source === 'routine' && popKindOfStep(stepOf(t.stepId))) return; // the step's own pop (above)
     if (type === 'activity') pop('activity', 'lounge', placeCentre('F05'));
     else if (type === 'meal') pop('meal', 'dining', placeCentre('F03'));
-    else pop('connection', `pair:${staff}`, pairPoint(staff), LIFT.pair);
+    else pop('connection', `pair:${staff}`, pairPoint(staff, resident), LIFT.pair);
   });
 
   return {
@@ -101,6 +102,9 @@ export function createDayBeat() {
     current: null, // { text, good, age }
     show(summary, dayLabel) {
       beat.current = { text: beatText(summary, dayLabel), good: !summary.missed, age: 0 };
+    },
+    showText(text, good = true) {
+      beat.current = { text, good, age: 0 };
     },
     update(dt) {
       if (beat.current && (beat.current.age += dt) >= DAY_BEAT.life) beat.current = null;

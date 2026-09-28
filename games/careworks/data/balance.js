@@ -24,6 +24,19 @@ export const SHIFTS = {
   morning: { name: 'Morning', bands: ['morning', 'afternoon'], from: 6, to: 17 },
 };
 
-// Milestone 5: the top bar's money. Numbers only — nothing earns or spends them until the economy (Milestone 22).
-// A placeholder opening balance, logged in docs/DECISIONS.md.
+// Milestone 5: the top bar's money; Milestone 6 puts it in a ledger (core/EconomySystem). A placeholder opening
+// balance, logged in docs/DECISIONS.md.
 export const ECONOMY_START = { credits: 100000, careTokens: 0 };
+
+// Milestone 6: the first pass of income and costs (bible §27 income lines; deliberately simple, tuned in Milestone 22).
+// At each month's close every resident pays the accommodation fee and brings Care Support Funding by their Support
+// Level (1–5, data/residents.js), both for the days they lived here that month; every team member's salary (data/staff.js)
+// goes out in full. The balance may go below zero: no debt system yet, just a red number.
+export const FEES = {
+  accommodationPerMonth: 900, // Credits a resident a month
+  careSupportFundingByLevel: { 1: 150, 2: 300, 3: 450, 4: 600, 5: 750 }, // Credits a month by Support Level
+};
+export const LEDGER = {
+  categories: { opening: 'Opening balance', fees: 'Accommodation fees', funding: 'Care Support Funding', wages: 'Wages' },
+  maxLines: 400, // older lines fold into one (core/EconomySystem)
+};

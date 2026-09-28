@@ -27,7 +27,7 @@ import { drawIsoRoom, isoPath, wallPatch } from '../../../../core/IsoRoom.js';
 import { characterPose, drawCharacter } from '../../../../core/CharacterMotion.js';
 import { drawButton, hitRect } from '../../../../core/ui/Button.js';
 import { text } from '../../../../core/ui/Kit.js';
-import { HOME, FLOORS, ART_DRAW, PERSON, MOTION, WINDOWS, HOME_LOOK as L, WALLS } from '../../data/home.js';
+import { HOME, FLOORS, ART_DRAW, PERSON, MOTION, WINDOWS, ENTRANCE, HOME_LOOK as L, WALLS } from '../../data/home.js';
 import { paletteById } from '../../data/setup.js';
 import { wallTiles } from '../systems/homeWorld.js';
 import { bandAt, clockText } from '../systems/residentNeeds.js';
@@ -52,6 +52,10 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   const worldW = (cols + rows) * HW + margin * 2;
   const worldH = (cols + rows) * HH + wallH + margin * 2;
   const floorLayer = new CachedLayer({ width: worldW, height: worldH, draw: drawFloor });
+  // Milestone 6: the home is bigger, so the cached floor picture is capped in size (a very big one costs ~20 ms a frame);
+  // near the cap the floor is a touch softer at full zoom on a tablet — the people and art stay sharp.
+  const floorCap = Math.sqrt(HOME.floorMaxPixels / (worldW * worldH));
+  const floorScale = () => Math.min(renderer.pixelScale * detailFor(camera.zoom), floorCap);
   const camera = new Camera({ viewW: W, viewH: renderer.height, worldW, worldH });
   camera.minZoom = HOME.zoom.min;
   camera.maxZoom = HOME.zoom.max;
@@ -130,8 +134,8 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   function resetView() {
     fitView();
     camera.zoom = HOME.zoom.start;
-    // Start on the middle of the home: the hall between Arthur's door, the Nurse Station and the Dining Room.
-    const c = iso.cellCenter(7, 5);
+    // Start on the corridor in front of the first rooms, with the lounge below (Milestone 6: the bigger home).
+    const c = iso.cellCenter(6, 7);
     camera.centerOn(c.x, c.y);
   }
 
@@ -176,6 +180,11 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   // --- gestures ------------------------------------------------------------------------------------------------------
   let active = false;
   const gestures = new WorldGestures({ camera, bus, isActive: () => active });
+  // Milestone 6: a new resident can be tapped as soon as they walk in.
+  bus.on('care:admit', ({ resident }) => {
+    const p = world?.byId(resident);
+    if (p && !selection.items.includes(p)) selection.add(p);
+  });
   const taps = []; // recent taps and what they hit (tests / debug)
   // People first; when several people overlap under the finger (a helper standing right beside Arthur), the one whose
   // body is nearest the finger — not simply the one drawn in front — so each of them can still be tapped.
@@ -300,7 +309,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     },
     resize() {
       camera.pixelScale = renderer.pixelScale;
-      floorLayer.setPixelScale(renderer.pixelScale * detailFor(camera.zoom)); // near the drawn size (see render)
+      floorLayer.setPixelScale(floorScale()); // near the drawn size (see render)
       const cx = camera.x + camera.visibleW / 2;
       const cy = camera.y + camera.visibleH / 2;
       fitView();
@@ -371,7 +380,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       camera.apply(ctx);
       // The floor picture is kept near the size it is drawn (remade once when a pinch crosses a detail step), and only its
       // visible part is drawn: the whole picture every frame held a tablet to ~33 fps.
-      floorLayer.setPixelScale(renderer.pixelScale * detailFor(camera.zoom));
+      floorLayer.setPixelScale(floorScale());
       floorLayer.renderView(ctx, { x: camera.x, y: camera.y, w: camera.visibleW, h: camera.visibleH }); // only what is on screen
       assets.detail = detailFor(camera.zoom); // sprites cached near the size they are drawn: sharp, and a plain copy each frame
       for (const it of world.placed) if (it.kind === 'room') assets.draw(ctx, it.def.art, ...rectArgs(artRect(it)));
@@ -482,7 +491,8 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       grad.addColorStop(1, 'rgba(255, 246, 214, 0)');
       patch(g, [iso.corner(0.05, w.from), iso.corner(0.05, w.to), iso.corner(2.6, w.to + 0.9), iso.corner(2.6, w.from + 0.9)], grad);
     }
-    // A doormat in every doorway.
+    // A doormat in every doorway, and at the front entrance (Milestone 6: new residents come in there).
+    patch(g, iso.outline(ENTRANCE.col + 0.1, ENTRANCE.row + 0.1, 0.8, 0.8), palette.hex, L.wallCap, 2);
     for (const w of WALLS) {
       for (const i of w.gaps) {
         const c = w.dir === 'row' ? w.col + i : w.col;
@@ -661,8 +671,9 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       const m = markerAt(p);
       if (onScreen(m)) drawTaskMarker(ctx, m.x, m.y, MARK_R, st.icon, { ring: st.ring });
     }
-    if (world.bell) {
-      const m = markerAt(world.resident);
+    for (const r of world.residents) {
+      if (!world.bellFor(r.id)) continue;
+      const m = markerAt(r);
       if (onScreen(m)) drawBellMarker(ctx, m.x, m.y, MARK_R * 1.15, markT);
     }
   }

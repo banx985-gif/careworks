@@ -9,9 +9,13 @@
 //                             v4 (Milestone 4) had no Dining Room / Staff Room / props: anyone saved on a tile they
 //                             now stand on moves to the nearest free tile, a meal under way moves to the Dining Room,
 //                             staff resting in the lounge walk to the Staff Room; Credits / Care Tokens start
+//                             v5 (Milestone 5) had the 12 × 16 home: everyone is put back where they belong in the
+//                             24 × 16 one (Arthur in his room or seat, staff at their post, task spot or rest spot);
+//                             three empty rooms; the board and the ledger start fresh (the ledger opens with the
+//                             saved Credits)
 import { founderById, paletteById, ROLES, FOUNDER_FLAG } from '../../data/setup.js';
 import { residentById } from '../../data/residents.js';
-import { RESIDENT, HOME, HELP_SPOTS, HELP_SPOTS_2 } from '../../data/home.js';
+import { RESIDENT, HOME, HELP_SPOTS, HELP_SPOTS_2, SEATS, POSTS } from '../../data/home.js';
 import { ROUTINE } from '../../data/routine.js';
 import { ECONOMY_START } from '../../data/balance.js';
 import { makeClock, buildGrid, spotTile } from './homeWorld.js';
@@ -64,6 +68,7 @@ export function slotSummary(data) {
     year: when.year,
     month: when.month,
     ngPlus: data.ngPlus ?? 0,
+    residents: Array.isArray(data.residents) ? data.residents.length : 1, // Milestone 6
     playSec: data.playSec ?? 0,
   };
 }
@@ -142,11 +147,38 @@ export function upgradeV4(data) {
   }
   return { ...data, residents, staff, care, economy: data.economy ?? { ...ECONOMY_START } };
 }
+// Version 5 → 6 (Milestone 6): the home grew to 24 × 16 and its rooms moved, so saved positions mean nothing now —
+// everyone is put back where they belong. Resident rooms, applicants and the ledger need nothing here (the home world
+// fills three empty rooms, a fresh board and a ledger opening with data.economy.credits).
+export function upgradeV5(data) {
+  const at = (ref) => centre(spotTile(ref));
+  const residents = (data.residents ?? []).map((r, i) => {
+    const step = r.step && ROUTINE.find((x) => x.id === r.step.id);
+    const there = step && step.place !== 'room' && r.step.arthurThere && (r.step.status === 'waiting' || r.step.status === 'doing');
+    return { ...r, pos: there ? at(SEATS[step.place][i] ?? SEATS[step.place][0]) : at(`${r.room ?? RESIDENT.room}.inside`) };
+  });
+  if (!data.staff?.staff) return { ...data, residents };
+  const staff = { ...data.staff, pos: { ...(data.staff.pos ?? {}) }, modes: { ...(data.staff.modes ?? {}) } };
+  const onTask = new Map((data.care?.tasks ?? []).filter((t) => (t.status === 'claimed' || t.status === 'working') && t.slots?.[0]).map((t) => [t.slots[0], t]));
+  staff.staff.forEach((m, i) => {
+    const mode = staff.modes[m.id]?.mode;
+    const t = onTask.get(m.id);
+    if (mode === 'resting' || mode === 'toRest') {
+      staff.pos[m.id] = at(`rest.${i + 1}`);
+      staff.modes[m.id] = { ...staff.modes[m.id], mode: 'resting' };
+    } else if (t?.arrived && t.spot) staff.pos[m.id] = at(t.spot);
+    else staff.pos[m.id] = at(POSTS[m.role].spots[staff.modes[m.id]?.postIndex ?? 0] ?? POSTS[m.role].spots[0]);
+  });
+  // a helper still on the way picks a spot again (the spots moved)
+  const care = data.care ? { ...data.care, tasks: data.care.tasks.map((t) => ((t.status === 'claimed' || t.status === 'working') && !t.arrived ? { ...t, spot: null } : { ...t })) } : data.care;
+  return { ...data, residents, staff, care };
+}
 export const SAVE_MIGRATIONS = {
   1: (record) => ({ ...record, data: upgradeV1(record.data) }),
   2: (record) => ({ ...record, data: upgradeV2(record.data) }),
   3: (record) => ({ ...record, data: upgradeV3(record.data) }),
   4: (record) => ({ ...record, data: upgradeV4(record.data) }),
+  5: (record) => ({ ...record, data: upgradeV5(record.data) }),
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

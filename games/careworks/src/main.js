@@ -37,19 +37,21 @@ import { ASSETS } from '../data/assets.js';
 import { SAVE } from '../data/save.js';
 import { createCampaigns } from './app/campaigns.js';
 import { paletteById } from '../data/setup.js';
-import { NEEDS, OUTCOMES, RESIDENTS, validateResidents } from '../data/residents.js';
+import { NEEDS, OUTCOMES, RESIDENTS, validateResidents, supportLevel, ROOM_TEMPLATES } from '../data/residents.js';
 import { DataValidator } from '../../../core/DataValidator.js';
 import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
 import { ROLES, STATS, TIERS } from '../data/roles.js';
 import { TRAITS, STAFF, validateStaff } from '../data/staff.js';
-import { SHIFTS } from '../data/balance.js';
+import { SHIFTS, FEES } from '../data/balance.js';
+import { ADMISSION } from '../data/admissions.js';
+import { ROOM_IDS } from '../data/home.js';
 import { FOUNDERS } from '../data/setup.js';
 import { DOMAINS, CARE_OPTIONS, optionById, optionsFor, validateCarePlans } from '../data/carePlans.js';
 import { TASK_TYPES, BELL } from '../data/tasks.js';
 import { familiarityOf } from './systems/careTasks.js';
 import { clockText } from './systems/residentNeeds.js';
 import { yearsEmployed } from './systems/staffTeam.js';
-import { createHomeWorld, makeClock } from './systems/homeWorld.js';
+import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
 import { createSlotsScreen } from './screens/SlotsScreen.js';
 import { createSetupScreen } from './screens/SetupScreen.js';
@@ -195,11 +197,12 @@ bus.on('input:up', () => systemBack.rearm()); // re-arm after any tap, in case a
 let campaigns = null;
 let open = null; // { n, data, world } — the campaign on screen and its home world
 
-// A campaign's world (Milestone 2): its clock and Arthur's saved state, the worker from its Founder.
+// A campaign's world (Milestone 2): its clock and the residents' saved states, the team from its Founder; Milestone 6:
+// the applicant board and the ledger (an older save's ledger opens with its saved Credits).
 function openRun(n, data) {
   const clock = makeClock(bus);
   if (data.clock) clock.load(data.clock);
-  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, resident: data.residents?.[0], staff: data.staff, care: data.care, seed: data.seed, bus });
+  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, residents: data.residents, staff: data.staff, care: data.care, seed: data.seed, bus, admissions: data.admissions, ledger: data.ledger, startCredits: data.economy?.credits ?? ECONOMY_START.credits });
   if (debug.enabled && PARAMS.get('paused') === '1') clock.speed = 0; // ?debug=1&paused=1: open exactly as saved (tests)
   data.economy ??= { ...ECONOMY_START };
   open = { n, data, world, seenMissed: new Set() };
@@ -213,13 +216,14 @@ function saveRun() {
   if (!o) return Promise.resolve();
   const c = o.world.clock;
   o.data = { ...o.data, ...o.world.serialize(), date: { year: c.year, month: c.month, day: c.day } };
+  o.data.economy = { ...(o.data.economy ?? ECONOMY_START), credits: o.world.ledger.balance }; // (the ledger is the truth; this is the summary)
   return campaigns.save(o.n, o.data);
 }
 // Autosave (core/Autosave): the series cadence (every game day, a rolling save, and when the app goes to the
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action'],
   save: () => saveRun(),
   stamp: () => (open ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && router.currentName === 'home' && !open.world.clock.paused,
@@ -395,6 +399,9 @@ const barClock = {
   setSpeed: (s) => runClock()?.setSpeed(s),
   dateOf: (d) => runClock()?.dateOf(d) ?? { year: 1, month: 1, day: 1 },
 };
+const credits = (n) => `${n < 0 ? '−' : ''}${Math.abs(Math.round(n)).toLocaleString('en-GB')}`;
+// Milestone 6: Credits from the ledger (red below zero — no debt system yet).
+const balanceNow = () => open?.world.ledger.balance ?? ECONOMY_START.credits;
 const topBar = createTopBar({
   layout,
   assets,
@@ -402,27 +409,28 @@ const topBar = createTopBar({
   home: true,
   stats: () => {
     const e = open?.data.economy ?? ECONOMY_START;
+    const b = balanceNow();
     return [
-      { icon: TOP_ICONS.credits, text: e.credits.toLocaleString('en-GB'), gap: 18 },
-      { icon: TOP_ICONS.careTokens, text: String(e.careTokens), gap: 18 },
+      { icon: TOP_ICONS.credits, text: credits(b), color: b < 0 ? COL.bad : COL.text, gap: 18 },
+      { icon: TOP_ICONS.careTokens, text: String(e.careTokens ?? 0), gap: 18 },
       { text: `Rank ${RANK_NONE}` },
     ];
   },
+  onStats: () => openLedger(),
   onInbox: () => openTopSheet('inbox'),
   onHelp: () => openTopSheet('help'),
   onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_LOCKED, accent: COL.progress, sections: [] })),
 });
-// Care's red dot: a call bell ringing, or a missed task today the player hasn't looked at yet (opening the resident list
-// or Arthur's card counts as looking).
-const missedToday = () => (open?.world.tasksToday() ?? []).filter((t) => t.status === 'missed');
+// Care's badge (Milestone 6: a count): the call bells ringing now plus the missed tasks today the player hasn't looked
+// at yet (opening the resident list or a resident's card counts as looking).
+const missedToday = () => open?.world.missedToday() ?? [];
 function careBadge() {
   if (!open) return null;
-  if (open.world.bell) return '!';
-  const n = missedToday().filter((t) => !open.seenMissed.has(t.id)).length;
+  const n = open.world.bells.length + missedToday().filter((t) => !open.seenMissed.has(t.id)).length;
   return n || null;
 }
-const markMissedSeen = () => {
-  for (const t of missedToday()) open?.seenMissed.add(t.id);
+const markMissedSeen = (residentId = null) => {
+  for (const t of missedToday()) if (!residentId || t.resident === residentId) open?.seenMissed.add(t.id);
 };
 const bottomBar = createBottomBar({
   layout,
@@ -441,6 +449,11 @@ bus.on('care:dayEnd', (summary) => {
   dayBeat.show(summary, `Day ${d.day}`);
   debug.log(`day ${summary.day}: ${summary.done} done, ${summary.missed} missed`);
 });
+// Milestone 6: a new resident moves in — the medium beat "Welcome, Betty Finch".
+bus.on('care:admit', ({ name }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`Welcome, ${name}`, true);
+  debug.log(`admitted: ${name}`);
+});
 
 // Where each bottom-bar slot goes (data/bars.js).
 function openBottom(id) {
@@ -448,28 +461,39 @@ function openBottom(id) {
   if (!r || !open) return;
   if (r.sheet === 'residents') openResidents();
   else if (r.sheet === 'roster') openRoster();
+  else if (r.slot.id === 'business') openBusiness();
   else openPlaceholder(r.slot);
   lastRoute = r.sheet;
 }
 let lastRoute = null;
 const accentNow = () => (open ? paletteById(open.data.facility.palette).hex : COL.progress);
-// Care: the resident list (one resident for now) and the Admissions row (Milestone 6).
+const first = (name) => name.split(' ')[0];
+const needName = (id) => NEEDS.find((n) => n.id === id)?.name ?? id;
+const stepName = (id) => ROUTINE.find((s) => s.id === id)?.name ?? id;
+// Care: every resident (portrait; the call-bell icon while theirs rings) and the Admissions row (Milestone 6).
 function openResidents() {
   markMissedSeen();
   sheet.open(() => {
     const w = open?.world;
     if (!w) return { title: '', sections: [] };
-    const a = w.resident;
-    const missed = missedToday().length;
-    const sub = w.bell ? `Call bell ringing · ${w.stateOf(a)}` : missed ? `${missed} missed today · ${w.stateOf(a)}` : w.stateOf(a);
+    const missedBy = (id) => missedToday().filter((t) => t.resident === id).length;
+    const rows = w.residents.map((a) => {
+      const bell = w.bellFor(a.id);
+      const missed = missedBy(a.id);
+      const sub = bell ? `Call bell ringing · ${w.stateOf(a)}` : missed ? `${missed} missed today · ${w.stateOf(a)}` : w.stateOf(a);
+      return { id: `resident:${a.id}`, label: a.name, sub, icon: a.art, iconCrop: PORTRAIT_CROP, iconBadge: bell ? CARE_ICONS.bell : null, accent: bell || missed ? COL.action : COL.progress, onTap: () => openFrom(a.id, 'residents') };
+    });
+    const adm = w.admissions;
+    const free = w.freeRooms().length;
+    const n = w.residents.length;
     return {
       title: 'Residents',
-      subtitle: '1 resident · tap for his card and care plan',
+      subtitle: `${n} resident${n === 1 ? '' : 's'} · ${free} of ${w.rooms.length} rooms free · tap someone for their card and care plan`,
       art: 'care_ui_01',
       accent: accentNow(),
       sections: [
-        { columns: 1, buttons: [{ id: 'resident:RES01', label: a.name, sub, icon: a.art, iconCrop: PORTRAIT_CROP, iconBadge: w.bell ? CARE_ICONS.bell : null, accent: w.bell || missed ? COL.action : COL.progress, onTap: () => openFrom('RES01', 'residents') }] },
-        { title: 'Admissions', columns: 1, buttons: [{ id: 'admissions', label: 'Admissions', sub: 'New residents and the waiting list come later', icon: CARE_ICONS.admissions, locked: true }] },
+        { columns: 1, buttons: rows },
+        { title: 'Admissions', columns: 1, buttons: [{ id: 'admissions', label: 'Admissions', sub: `${adm.board.length} applying · ${adm.waiting.length} on the waiting list`, icon: CARE_ICONS.admissions, badge: adm.board.length || null, accent: COL.action, onTap: () => openAdmissions() }] },
       ],
     };
   });
@@ -497,15 +521,58 @@ function openRoster() {
     };
   });
 }
-// Develop / Quality / Business: what will live there. Business also leaves for the Main Menu (the run is saved first).
+// Develop / Quality: what will live there.
 function openPlaceholder(slot) {
-  sheet.open(() => ({
-    title: slot.title,
-    subtitle: slot.text,
-    art: slot.icon,
-    accent: accentNow(),
-    sections: slot.id === 'business' ? [{ lines: ['Your home saves itself as you play.'], buttons: [{ id: 'mainMenu', label: 'Save and Main Menu', accent: COL.progress, onTap: () => leaveHome() }], columns: 1 }] : [],
-  }));
+  sheet.open(() => ({ title: slot.title, subtitle: slot.text, art: slot.icon, accent: accentNow(), sections: [] }));
+}
+// Business (Milestone 6): the Ledger, and Save and Main Menu (the run is saved first).
+function openBusiness() {
+  const slot = BOTTOM_SLOTS.find((s) => s.id === 'business');
+  sheet.open(() => {
+    const b = balanceNow();
+    return {
+      title: slot.title,
+      subtitle: slot.text,
+      art: slot.icon,
+      accent: accentNow(),
+      sections: [
+        {
+          columns: 1,
+          lines: ['Your home saves itself as you play.'],
+          buttons: [
+            { id: 'ledger', label: 'Ledger', sub: `Balance ${credits(b)} Credits · fees, funding and wages each month`, accent: COL.action, onTap: () => openLedger() },
+            { id: 'mainMenu', label: 'Save and Main Menu', accent: COL.progress, onTap: () => leaveHome() },
+          ],
+        },
+      ],
+    };
+  });
+}
+// The Ledger (Milestone 6): the balance, this month so far (what the close will bring) and the last month's close.
+function ledgerLines(lines) {
+  const out = lines.map((l) => ({ text: `${l.amount < 0 ? '−' : '+'}${credits(Math.abs(l.amount))}  ${l.reason}`, color: l.amount < 0 ? COL.bad : COL.good }));
+  const inc = lines.filter((l) => l.amount > 0).reduce((t, l) => t + l.amount, 0);
+  const cost = lines.filter((l) => l.amount < 0).reduce((t, l) => t + l.amount, 0);
+  out.push({ text: `Income ${credits(inc)} · Costs ${credits(-cost)} · Net ${inc + cost < 0 ? '−' : '+'}${credits(Math.abs(inc + cost))}`, color: COL.actionDark });
+  return out;
+}
+function openLedger() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const b = w.ledger.balance;
+    const c = w.clock;
+    const range = w.monthRange();
+    const soFar = w.ledger.forecast({ ...range, day: c.totalDays, residents: w.payers(), staff: w.payroll() });
+    const last = w.ledger.lastClose;
+    const sections = [
+      { lines: [{ text: `Balance: ${credits(b)} Credits`, color: b < 0 ? COL.bad : COL.actionDark }, ...(b < 0 ? [{ text: 'Below zero. There is no debt system yet: the home carries on.', color: COL.bad }] : [])] },
+      { title: `This month so far (Month ${c.month}, Year ${c.year})`, lines: [{ text: 'Paid at the month\'s close: fees and funding for each resident\'s days here, wages in full.', color: COL.textMuted }, ...ledgerLines(soFar)] },
+      last ? { title: `Last close: ${last.month}`, lines: ledgerLines(last.lines) } : { title: 'Last close', lines: [{ text: 'No month has closed yet.', color: COL.textMuted }] },
+      { columns: 1, buttons: [{ id: 'ledger:back', label: '‹ Back to Business', accent: COL.progress, onTap: () => openBusiness() }] },
+    ];
+    return { title: 'Ledger', subtitle: `Credits · Month ${c.month}, Year ${c.year}`, art: 'care_ui_05', accent: accentNow(), sections };
+  });
 }
 function openTopSheet(id) {
   const t = TOP_SHEETS[id];
@@ -517,40 +584,136 @@ function openFrom(id, list) {
   if (it) homeScreen.selection.select(it);
   openHomeSheet(id, list);
 }
-const stepName = (id) => ROUTINE.find((s) => s.id === id)?.name ?? id;
+
+// --- Admissions (Milestone 6, bible §8) -----------------------------------------------------------------------------
+const admitCtxNow = () => open.world.admitCtx();
+function openAdmissions() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const adm = w.admissions;
+    const ctx = admitCtxNow();
+    const row = (app, wait) => {
+      const def = adm.defOf(app);
+      const p = adm.prereq(app, ctx);
+      const days = adm.daysLeft(app, ctx.day);
+      const status = wait ? `${days} day${days === 1 ? '' : 's'} left on the list` : `${def.urgency} urgency`;
+      return { id: `app:${app.id}`, label: `${def.name}, ${def.age}`, sub: `${def.support} · ${status} · ${p.ok ? 'Ready' : p.text}`, icon: def.art, iconCrop: PORTRAIT_CROP, accent: p.ok ? COL.progress : COL.textFaint, onTap: () => openApplicant(app.id) };
+    };
+    const free = w.freeRooms().length;
+    return {
+      title: 'Admissions',
+      subtitle: `${free} of ${w.rooms.length} Standard Rooms free · new applicants every few days`,
+      art: CARE_ICONS.admissions,
+      accent: accentNow(),
+      sections: [
+        adm.board.length ? { title: 'Applicants', columns: 1, buttons: adm.board.map((a) => row(a, false)) } : { title: 'Applicants', lines: [{ text: 'Nobody is applying right now. New applicants arrive every few days.', color: COL.textMuted }] },
+        adm.waiting.length ? { title: 'Waiting list', columns: 1, buttons: adm.waiting.map((a) => row(a, true)) } : { title: 'Waiting list', lines: [{ text: 'Nobody is waiting.', color: COL.textMuted }] },
+        { columns: 1, buttons: [{ id: 'adm:back', label: '‹ Back to residents', accent: COL.progress, onTap: () => openResidents() }] },
+      ],
+    };
+  });
+}
+// One applicant's card (bible §8): who they are, their needs, what they want and need, and the four choices. A choice
+// that can't be made now is greyed with the reason in plain words — never a hidden fail.
+function openApplicant(id) {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    const adm = w?.admissions;
+    const app = adm?.get(id);
+    if (!app) return { title: 'No longer applying', subtitle: 'They have found a place elsewhere.', accent: COL.progress, sections: [{ columns: 1, buttons: [{ id: 'app:back', label: '‹ Back to admissions', accent: COL.progress, onTap: () => openAdmissions() }] }] };
+    const def = adm.defOf(app);
+    const ctx = admitCtxNow();
+    const p = adm.prereq(app, ctx);
+    const can = adm.canAdmit(app, ctx);
+    const level = supportLevel(def);
+    const days = adm.daysLeft(app, ctx.day);
+    const wait = app.status === 'wait';
+    const nextRoom = w.freeRooms()[0];
+    const act = (fn, ok) => {
+      const r = fn();
+      if (!r.ok) {
+        message = r.reason;
+        return;
+      }
+      bus.emit('admissions:action', { id });
+      ok?.();
+    };
+    const lines = [];
+    if (message) lines.push({ text: message, color: COL.bad });
+    lines.push({ text: p.ok ? 'Ready: the home can meet their needs' : p.text, color: p.ok ? COL.good : COL.bad });
+    if (!p.ok) lines.push({ text: p.reason, color: COL.bad });
+    lines.push(`Wants: ${ROOM_TEMPLATES[def.room].name} · Urgency: ${def.urgency} · ${def.stay}`);
+    lines.push(`Support Level ${level} · Care Support Funding ${credits(FEES.careSupportFundingByLevel[level])} a month · fee ${credits(FEES.accommodationPerMonth)} a month`);
+    lines.push(`Visitors: ${def.visitors} · ${def.personality} · enjoys ${def.interest}`);
+    lines.push({ text: wait ? `On the waiting list: ${days} day${days === 1 ? '' : 's'} left before they look elsewhere` : `Applying: ${days} day${days === 1 ? '' : 's'} before they look elsewhere if nobody answers`, color: COL.textMuted });
+    if (app.assessReady != null && ctx.day < app.assessReady) lines.push({ text: 'Assessment update under way: back tomorrow.', color: COL.actionDark });
+    else if (app.assessed) lines.push({ text: 'Assessment updated.', color: COL.textMuted });
+    return {
+      title: def.name,
+      subtitle: `${def.age} · ${def.support} · ${def.stay}`,
+      art: def.art,
+      accent: accentNow(),
+      sections: [
+        { lines },
+        { title: 'Needs', lines: [{ text: 'How much support they need now (their assessment)', color: COL.textMuted }], bars: NEEDS.map((n) => ({ label: n.name, value: app.needs[n.id], color: COL.progress })) },
+        {
+          columns: 1,
+          buttons: [
+            { id: 'act:admit', label: 'Admit now', sub: can.ok ? `Room ${ROOM_IDS.indexOf(nextRoom?.id) + 1} · walks in now, joins the routine from the next band` : can.reason, disabled: !can.ok, accent: COL.good, onTap: () => act(() => w.admit(id), () => {
+              sheet.close();
+              const person = w.residentById(id);
+              if (person) homeScreen.selection.select(person);
+            }) },
+            { id: 'act:wait', label: 'Wait-list', sub: wait ? 'Already on the waiting list' : `Keeps their place for ${ADMISSION.waitDays} days`, disabled: wait, accent: COL.progress, onTap: () => act(() => adm.waitlist(id, ctx.day)) },
+            { id: 'act:decline', label: 'Decline / refer elsewhere', sub: 'They look for a place elsewhere (and may apply again later)', accent: COL.progress, onTap: () => act(() => adm.decline(id, ctx.day), () => openAdmissions()) },
+            { id: 'act:assess', label: 'Request assessment update', sub: app.assessed ? 'Already updated once' : 'A fresh look at their needs · takes a day', disabled: app.assessed, accent: COL.progress, onTap: () => act(() => adm.requestAssessment(id, ctx.day)) },
+            { id: 'app:back', label: '‹ Back to admissions', accent: COL.progress, onTap: () => openAdmissions() },
+          ],
+        },
+      ],
+    };
+  });
+}
+
+// --- a resident's card (Milestones 2–6) --------------------------------------------------------------------------------
+// What they are doing now, their six needs and five outcomes as bars, today's log and their likes; who helps with each
+// step (a picker, which since Milestone 4 pins that step's task); the Care Plan section (six rows, each opening its
+// domain's options), today's care tasks, the call bells and Familiar Care. Milestone 6: any resident, not only Arthur.
 function residentSections(w, it) {
   const st = it.state;
-  const step = st.step ? stepName(st.step.id) : null;
+  const step = st.step && w.joined(it) ? stepName(st.step.id) : null;
   const log = st.log.slice(-LOG_SHOWN).map((e) => `${e.t}  ${e.text}`);
   const pick = (p) => ROUTINE.filter((s) => (st.prefs[s.id] ?? 'accept') === p).map((s) => (s.activity ? s.name : s.name.toLowerCase()));
   const likes = [pick('prefer').length && `Enjoys: ${pick('prefer').join(', ')}`, pick('dislike').length && `Would rather not: ${pick('dislike').join(', ')}`, pick('refuse').length && `Says no to: ${pick('refuse').join(', ')}`].filter(Boolean);
-  const bell = w.bell;
+  const bell = w.bellFor(it.id);
+  const they = theirOf(it.id) === 'her' ? 'she' : 'he';
   return [
-    { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : [])] },
-    { title: 'Care Plan', lines: [{ text: 'Tap a row to change it. A change shapes tomorrow\'s tasks, and today\'s where that part hasn\'t happened yet.', color: COL.textMuted }], buttons: planButtons(st), columns: 1 },
-    { title: 'Tasks today', lines: taskLines(w) },
-    { title: 'Call bells', lines: bellLines(w) },
-    { title: 'Familiar Care', lines: familiarLines(w) },
-    { title: 'Needs', lines: [{ text: 'How much support he needs right now', color: COL.textMuted }], bars: NEEDS.map((n) => ({ label: n.name, value: st.needs[n.id], color: COL.progress })) },
+    { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `Room ${ROOM_IDS.indexOf(st.room) + 1} · Support Level ${supportLevel(it.def)} · ${it.def.stay}`] },
+    { title: 'Care Plan', lines: [{ text: 'Tap a row to change it. A change shapes tomorrow\'s tasks, and today\'s where that part hasn\'t happened yet.', color: COL.textMuted }], buttons: planButtons(it), columns: 1 },
+    { title: 'Tasks today', lines: taskLines(w, it) },
+    { title: 'Call bells', lines: bellLines(w, it, they) },
+    { title: 'Familiar Care', lines: familiarLines(w, it) },
+    { title: 'Needs', lines: [{ text: `How much support ${they} needs right now`, color: COL.textMuted }], bars: NEEDS.map((n) => ({ label: n.name, value: st.needs[n.id], color: COL.progress })) },
     { title: 'Outcomes', bars: OUTCOMES.map((o) => ({ label: o.name, value: st.outcomes[o.id], color: COL.good })) },
     { title: 'Today', lines: log.length ? log : ['Nothing yet today'] },
     { title: 'Likes and dislikes', lines: likes },
-    { title: 'Who helps', lines: [{ text: 'Staff pick their own tasks. Tap a step to pin it to one person (Auto: whoever scores best).', color: COL.textMuted }], buttons: helpButtons(w), columns: 2 },
+    { title: 'Who helps', lines: [{ text: 'Staff pick their own tasks. Tap a step to pin it to one person (Auto: whoever scores best).', color: COL.textMuted }], buttons: helpButtons(w, it), columns: 2 },
   ];
 }
 // Milestone 4: the Care Plan section — one row per domain (bible §9), tap → that domain's options.
-const needName = (id) => NEEDS.find((n) => n.id === id)?.name ?? id;
-const first = (name) => name.split(' ')[0];
-function planButtons(st) {
+function planButtons(it) {
   return DOMAINS.map((d) => {
-    const o = optionById(st.plan?.[d.id]);
-    return { id: `plan:${d.id}`, label: d.name, sub: o ? o.name : 'Not set', accent: COL.progress, onTap: () => openPlanPicker(d.id) };
+    const o = optionById(it.state.plan?.[d.id]);
+    return { id: `plan:${d.id}`, label: d.name, sub: o ? o.name : 'Not set', accent: COL.progress, onTap: () => openPlanPicker(d.id, it.id) };
   });
 }
 // "07:00  Wake up · done with Ruby"
-const TASK_WORDS = { open: 'to do', claimed: 'on the way', working: 'being helped', done: 'done', missed: 'missed', refused: 'said no', self: 'on his own', unstaffed: 'no one on shift' };
-function taskLines(w) {
-  const tasks = w.tasksToday().filter((t) => t.type !== 'bell');
+const TASK_WORDS = { open: 'to do', claimed: 'on the way', working: 'being helped', done: 'done', missed: 'missed', refused: 'said no', self: 'on their own', unstaffed: 'no one on shift' };
+function taskLines(w, it) {
+  if (!w.joined(it)) return [{ text: 'Settling in: care tasks start from the next band.', color: COL.textMuted }];
+  const tasks = w.tasksToday(it.id).filter((t) => t.type !== 'bell');
   if (!tasks.length) return [{ text: 'No care tasks planned for this band (no one is on shift).', color: COL.textMuted }];
   return tasks.sort((a, b) => (a.at ?? a.opens % 24) - (b.at ?? b.opens % 24)).map((t) => {
     const who = t.slots[0] ? ` · ${first(w.byId(t.slots[0])?.name ?? t.slots[0])}` : '';
@@ -560,39 +723,40 @@ function taskLines(w) {
     return { text: `${clockText(at)}  ${t.name} · ${word}${who}`, color };
   });
 }
-function bellLines(w) {
-  const b = w.bellSummary();
+function bellLines(w, it, they) {
+  const b = w.bellSummary(it.id);
   const lines = [];
   if (!b.last.length) lines.push({ text: 'No call bells yet.', color: COL.textMuted });
   else {
     lines.push(`Last ${b.last.length}: ${b.last.map((r) => `${r.minutes} min`).join(' · ')}`);
     lines.push({ text: `Average response: ${Math.round(b.avg)} min (${b.count} bell${b.count === 1 ? '' : 's'} so far)`, color: COL.actionDark });
   }
-  lines.push({ text: `He rings when a need reaches ${BELL.line}; the time counts until someone is at his side.`, color: COL.textMuted });
+  const cap = they.charAt(0).toUpperCase() + they.slice(1);
+  lines.push({ text: `${cap} rings when a need reaches ${BELL.line}; the time counts until someone is at ${theirOf(it.id)} side.`, color: COL.textMuted });
   return lines;
 }
-function familiarLines(w) {
-  const top = w.mostFamiliar();
-  const counts = w.staff.map((p) => `${first(p.name)} ${familiarityOf(w.care, 'RES01', p.id)}`).join(' · ');
+function familiarLines(w, it) {
+  const top = w.mostFamiliar(it.id);
+  const counts = w.staff.map((p) => `${first(p.name)} ${familiarityOf(w.care, it.id, p.id)}`).join(' · ');
   return [{ text: top ? `Most familiar: ${w.byId(top).name}` : 'Most familiar: nobody yet', color: COL.actionDark }, { text: `Care together: ${counts}`, color: COL.textMuted }];
 }
-// "Mobility for Arthur": the domain's options (two each until Milestone 8), the current one marked.
-function openPlanPicker(domainId) {
+// "Mobility for Betty": the domain's options (two each until Milestone 8), the current one marked.
+function openPlanPicker(domainId, residentId) {
   sheet.open(() => {
     const w = open?.world;
     const d = DOMAINS.find((x) => x.id === domainId);
-    if (!w || !d) return { title: '', sections: [] };
-    const st = w.resident.state;
-    const current = st.plan?.[d.id];
+    const it = w?.residentById(residentId);
+    if (!w || !d || !it) return { title: '', sections: [] };
+    const current = it.state.plan?.[d.id];
     const choose = (id) => {
-      const r = w.changePlan(d.id, id);
+      const r = w.changePlan(d.id, id, residentId);
       if (r.ok && r.changed) autosave.request('plan');
-      openHomeSheet('RES01');
+      openHomeSheet(residentId);
     };
     return {
-      title: `${d.name} for Arthur`,
+      title: `${d.name} for ${first(it.name)}`,
       subtitle: 'Care plan · pick one option. More options arrive later.',
-      art: 'resident_res01',
+      art: it.art,
       accent: paletteById(open.data.facility.palette).hex,
       sections: [
         { lines: optionsFor(d.id).map((o) => ({ text: `${o.name}: ${o.text}`, color: o.id === current ? COL.actionDark : COL.text })) },
@@ -606,7 +770,7 @@ function openPlanPicker(domainId) {
               accent: o.id === current ? COL.good : COL.progress,
               onTap: () => choose(o.id),
             })),
-            { id: 'option:back', label: '‹ Back to Arthur', accent: COL.progress, onTap: () => openHomeSheet('RES01') },
+            { id: 'option:back', label: `‹ Back to ${first(it.name)}`, accent: COL.progress, onTap: () => openHomeSheet(residentId) },
           ],
         },
       ],
@@ -615,46 +779,47 @@ function openPlanPicker(domainId) {
 }
 // Milestone 3: one button per routine step — who will help with it.
 const onMorningShift = (step) => step.at >= SHIFTS.morning.from && step.at < SHIFTS.morning.to;
-function helpButtons(w) {
+function helpButtons(w, it) {
   return ROUTINE.map((step) => {
-    const chosen = w.chosenFor(step.id);
+    const chosen = w.chosenFor(step.id, it.id);
     const who = (id) => w.byId(id)?.name.split(' ')[0];
     let sub;
-    if (!onMorningShift(step)) sub = chosen ? `${who(chosen)} · off shift then` : 'Off shift: on his own';
+    if (!onMorningShift(step)) sub = chosen ? `${who(chosen)} · off shift then` : 'Off shift: on their own';
     else if (chosen) sub = `${who(chosen)} (chosen)`;
     else {
       // Auto names who normally does it: the first team member whose role fits (busy right now or not).
       const fit = w.staff.find((p) => step.roles.includes(p.role));
       sub = fit ? `Auto · ${who(fit.id)}` : 'Auto · no one on the team fits';
     }
-    return { id: `help:${step.id}`, label: step.name, sub, accent: chosen ? COL.action : COL.progress, onTap: () => openPicker(step.id) };
+    return { id: `help:${step.id}`, label: step.name, sub, accent: chosen ? COL.action : COL.progress, onTap: () => openPicker(step.id, it.id) };
   });
 }
 // "Who helps with breakfast?": Auto, or any team member. A role that doesn't fit is refused in plain words.
-function openPicker(stepId) {
+function openPicker(stepId, residentId) {
   let message = null;
   sheet.open(() => {
     const w = open?.world;
     const step = ROUTINE.find((s) => s.id === stepId);
-    if (!w || !step) return { title: '', sections: [] };
+    const it = w?.residentById(residentId);
+    if (!w || !step || !it) return { title: '', sections: [] };
     const needs = step.roles.map((r) => ROLES[r].name).join(' or ');
     const lines = [];
     if (message) lines.push({ text: message, color: COL.bad });
-    if (!onMorningShift(step)) lines.push({ text: `No one is on shift at ${clockText(step.at)}: Arthur manages on his own until more shifts arrive.`, color: COL.textMuted });
-    const chosen = w.chosenFor(stepId);
+    if (!onMorningShift(step)) lines.push({ text: `No one is on shift at ${clockText(step.at)}: ${first(it.name)} manages on their own until more shifts arrive.`, color: COL.textMuted });
+    const chosen = w.chosenFor(stepId, residentId);
     const pick = (id) => {
-      const r = w.assign(stepId, id);
+      const r = w.assign(stepId, id, residentId);
       if (!r.ok) {
         message = r.reason;
         return;
       }
       autosave.request('assign');
-      openHomeSheet('RES01');
+      openHomeSheet(residentId);
     };
     return {
-      title: `Who helps with ${step.activity ? step.name : step.name.toLowerCase()}?`,
-      subtitle: `Needs a ${needs} · ${step.task} · from ${clockText(step.at)}`,
-      art: 'resident_res01',
+      title: `Who helps ${first(it.name)} with ${step.activity ? step.name : step.name.toLowerCase()}?`,
+      subtitle: `Needs a ${needs} · ${step.task.replace(/\bhim\b/g, theirOf(it.id) === 'her' ? 'her' : 'him')} · from ${clockText(step.at)}`,
+      art: it.art,
       accent: paletteById(open.data.facility.palette).hex,
       sections: [
         { lines },
@@ -666,7 +831,7 @@ function openPicker(stepId) {
               const fits = step.roles.includes(p.role);
               return { id: `pick:${p.id}`, label: p.name, sub: `${ROLES[p.role].name}${fits ? '' : ' · role does not fit'}${chosen === p.id ? ' · chosen' : ''}`, icon: p.art, accent: !fits ? COL.textFaint : chosen === p.id ? COL.good : COL.progress, onTap: () => pick(p.id) };
             }),
-            { id: 'pick:back', label: '‹ Back to Arthur', accent: COL.progress, onTap: () => openHomeSheet('RES01') },
+            { id: 'pick:back', label: `‹ Back to ${first(it.name)}`, accent: COL.progress, onTap: () => openHomeSheet(residentId) },
           ],
         },
       ],
@@ -674,7 +839,7 @@ function openPicker(stepId) {
   });
 }
 // The staff card (Milestone 3): portrait with the role badge, FOUNDER tag, tier and level, five stat bars, Energy and
-// Morale, the trait, the shift and what they are doing now.
+// Morale, the trait, the shift and what they are doing now; Milestone 6: how familiar they are with each resident.
 function staffMenu(w, p, accent) {
   const m = p.model;
   const cap = TIERS[m.tier]?.statCap ?? 220;
@@ -682,8 +847,9 @@ function staffMenu(w, p, accent) {
   const isFounder = w.staffState.founder.id === p.id;
   const h = w.staffState.founder.history;
   const status = [m.status.tired && 'Tired', m.status.stressed && 'Stressed'].filter(Boolean);
+  const fam = w.residents.map((r) => `${first(r.name)} ${familiarityOf(w.care, r.id, p.id)}${w.mostFamiliar(r.id) === p.id ? ' (most familiar)' : ''}`).join(' · ');
   const sections = [
-    { lines: [{ text: w.stateOf(p), color: COL.actionDark }, w.roster.label(p.id), `Tasks helped with: ${m.counters.tasks ?? 0} · Salary ${m.salary} Credits a month`, `Familiar with Arthur: ${familiarityOf(w.care, 'RES01', p.id)}${w.mostFamiliar() === p.id ? ' (his most familiar)' : ''}`] },
+    { lines: [{ text: w.stateOf(p), color: COL.actionDark }, w.roster.label(p.id), `Tasks helped with: ${m.counters.tasks ?? 0} · Salary ${m.salary} Credits a month`, `Familiar with: ${fam}`] },
     { title: 'Stats', bars: STATS.map((s) => ({ label: s.name, value: m.stats[s.id], max: cap, color: s.id === ROLES[m.role].primaryStat ? COL.action : COL.progress })) },
     { title: status.length ? `Energy and Morale · ${status.join(', ')}` : 'Energy and Morale', bars: [{ label: 'Energy', value: m.energy, color: m.energy < 25 ? COL.bad : COL.good }, { label: 'Morale', value: m.morale, color: m.morale < 25 ? COL.bad : COL.gold }] },
     { title: 'Trait', lines: [trait ? `${trait.name}: ${trait.text}` : 'None'] },
@@ -697,7 +863,7 @@ function staffMenu(w, p, accent) {
 // from: 'residents' / 'roster' when opened from a bottom-bar list (Milestone 5) — the card then has a way back to it.
 const BACK_TO = { residents: { label: '‹ Back to residents', open: () => openResidents() }, roster: { label: '‹ Back to the team', open: () => openRoster() } };
 function openHomeSheet(id, from = null) {
-  if (id === 'RES01') markMissedSeen();
+  if (open?.world.residentById(id)) markMissedSeen(id);
   const back = BACK_TO[from];
   const withBack = (menu) => (back ? { ...menu, sections: [{ columns: 1, buttons: [{ id: 'back', label: back.label, accent: COL.progress, onTap: back.open }] }, ...menu.sections] } : menu);
   sheet.open(() => {
@@ -710,12 +876,15 @@ function openHomeSheet(id, from = null) {
     const here = w.people.filter((p) => w.whereIs(p) === it.id).map((p) => p.name.split(' ')[0]);
     const lines = [here.length ? `Here now: ${here.join(' and ')}` : 'Nobody here right now'];
     let sub = it.def.text;
+    const sections = [{ lines }];
     if (it.kind === 'room') {
       const who = it.residentId ? w.byId(it.residentId) : null;
-      sub = who ? `${who.name}'s room · ${it.def.text.toLowerCase()}` : `Empty · ${it.def.text.toLowerCase()}`;
-      lines.unshift(who ? `Resident: ${who.name} (${who.def.support})` : 'No resident yet');
+      const n = ROOM_IDS.indexOf(it.id) + 1;
+      sub = who ? `Room ${n} · ${who.name}'s room` : `Room ${n} · Empty`;
+      lines.unshift(who ? `Resident: ${who.name} (${who.def.support})` : 'Empty: ready for a new resident. Admit one from Care → Admissions.');
+      if (!who) sections.push({ columns: 1, buttons: [{ id: 'room:admissions', label: 'Admissions', sub: `${w.admissions.board.length} applying`, icon: CARE_ICONS.admissions, accent: COL.action, onTap: () => openAdmissions() }] });
     }
-    return { title: it.def.name, subtitle: sub, art: it.def.art, accent, sections: [{ lines }] };
+    return { title: it.def.name, subtitle: sub, art: it.def.art, accent, sections };
   });
 }
 // Leaving the home for the Main Menu: save the run first; a reload after this opens the menu again.
@@ -782,7 +951,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

@@ -7,9 +7,12 @@
 //        'primary' the worker's main stat (hook primaryStat) +min..max
 //        'lowest'  the `count` lowest stats +min..max each
 //        'all'     every stat +min..max
+//        'none'    no stat gain (the game's onComplete hook does the rest, e.g. an Energy / recovery course)
 //   morale: extra Morale on completion (on top of rules.successMorale)
-// slots (plain data): [{ id, name, roles: null | ['pilot'] }] — how many of each is open comes from slotCount(slot).
-//   A worker takes the first free slot made for their role, else a general one (roles: null).
+//   slot: optional — the one slot id this course must use (e.g. a single simulator seat)
+// slots (plain data): [{ id, name, roles: null | ['pilot'], courseOnly? }] — how many of each is open comes from
+//   slotCount(slot). A worker takes the first free slot made for their role, else a general one (roles: null).
+//   courseOnly: true = only courses that name it (course.slot) use it; a course with a slot uses only that one.
 // Game hooks:
 //   statCap(staff, statKey), primaryStat(staff), slotCount(slot), conditionMet(rule) → bool
 //   busyElsewhere(staffId) → reason | null    (on a project, researching…)
@@ -48,9 +51,9 @@ export class TrainingSystem {
     return this.active.filter((a) => a.slotId === slotId).length;
   }
 
-  // Slot a worker would take right now, or null.
-  slotFor(s) {
-    const fits = (slot) => this.used(slot.id) < this.slotCount(slot);
+  // Slot a worker would take right now for this course (optional), or null.
+  slotFor(s, course = null) {
+    const fits = (slot) => this.used(slot.id) < this.slotCount(slot) && (course?.slot ? slot.id === course.slot : !slot.courseOnly);
     return this.slots.find((sl) => sl.roles?.includes(s.role) && fits(sl)) ?? this.slots.find((sl) => !sl.roles && fits(sl)) ?? null;
   }
 
@@ -84,8 +87,8 @@ export class TrainingSystem {
     const running = this.active.some((a) => a.staffId === staffId && a.courseId === courseId) ? 1 : 0;
     if (lim.perWorkerPerYear && past.filter((l) => l.year === now.year).length + running >= lim.perWorkerPerYear) return 'Already done this year';
     if (lim.perWorkerPerRun && past.length + running >= lim.perWorkerPerRun) return 'Already done';
-    if (!this.slotFor(s)) return 'No free training slot';
-    if (this.gainRoom(courseId, s) <= 0) return 'Already at the tier cap';
+    if (!this.slotFor(s, c)) return 'No free training slot';
+    if (c.effect.kind !== 'none' && this.gainRoom(courseId, s) <= 0) return 'Already at the tier cap';
     return null;
   }
 
@@ -134,7 +137,7 @@ export class TrainingSystem {
     if (block) return { ok: false, reason: block };
     const c = this.byId[courseId];
     const s = this.staff.get(staffId);
-    const slot = this.slotFor(s);
+    const slot = this.slotFor(s, c);
     this.hooks.pay?.(c, s);
     const now = this.hooks.now?.() ?? { day: 0 };
     const t = { staffId, courseId, slotId: slot.id, daysDone: 0, days: this.daysFor(c, s, slot), startedDay: now.day };

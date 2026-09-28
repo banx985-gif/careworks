@@ -102,7 +102,7 @@ export const CARE_OPTIONS = [
   {
     id: 'EN01', domain: 'EN', name: 'Standard Room', roles: ANY, minutesPerDay: 10,
     text: 'A tidy, safe room with a daily room check.',
-    tasks: [{ type: 'roomCheck', name: 'Room check', at: 10.5, band: 'morning', roles: ANY, minutes: 10, place: 'room', outcomes: { comfort: 1, safety: 1 } }],
+    tasks: [{ type: 'roomCheck', name: 'Room check', at: 9.5, band: 'morning', roles: ANY, minutes: 10, place: 'room', outcomes: { comfort: 1, safety: 1 } }], // Milestone 6: 10:30 → 09:30 (longer walks in the bigger home)
     changes: [],
   },
   {

@@ -1,75 +1,98 @@
-// The small home (Milestone 1, bible §4): one residential home on a hidden 12×16 grid, seen in the 3/4 dollhouse view.
+// The small home (Milestone 1, bible §4): one residential home on a hidden grid, seen in the 3/4 dollhouse view.
 // Plain data only. Columns run along the right-hand back wall, rows along the left-hand one; (0, 0) is the far corner.
+// Milestone 6 grew it to 24 × 16 so four Standard Rooms stand side by side along the back wall (a room's art rises
+// above its footprint, so a room can only stand against a back wall with nothing behind it):
 //
-//   cols 0-4, rows 0-4   Arthur's Standard Room (the art fills cols 0-3, rows 0-3; row 4 is floor inside his door)
-//   col 5 / row 5        the room's inside walls, doorway at col 2 on row 5
-//   cols 6-11, rows 0-2  Milestone 5: the Staff Room (cols 6-8) and the Dining Room (cols 9-11) along the back wall
-//   rows 3-5             the back hall in front of them (timber floor): the dining and rest spots
-//   rows 6-9             the hall, with the Central Nurse Station
-//   row 10               the lounge wall, a wide doorway at cols 5-6
-//   rows 11-15           the Activity Lounge
-// Walls are blocked tiles, so the A* paths (core/Pathing) can only pass through the doorways.
+//   rows 0-5             the bedroom wing: four Standard Rooms (RM01 Arthur's, SR2, SR3, SR4), each 4 × 4 of art plus a
+//                        strip of floor inside its door; their side walls on cols 5 / 11 / 17 / 23, their front walls on
+//                        row 5 with a doorway in the middle
+//   rows 6-9             the corridor and hall; the front entrance at the right-hand end of the corridor (new residents
+//                        walk in there); the Staff Room (cols 0-2, rows 7-9) against the left-hand wall
+//   cols 3-15, rows 10-15  the lounge, walled, with two doorways (cols 8-9 and 13-14): the Activity Lounge (cols 5-7) and
+//                        the Dining Room (cols 10-12) in the middle, their seats in front, so a resident's walk to a meal
+//                        is about the same from every room (~1.5 game hours, as Arthur's was in Milestone 5)
+//   cols 16-23, rows 9-15  the Central Nurse Station (cols 17-19, rows 9-11), beside the lounge's side door (row 13)
+// Walls are blocked tiles, so the A* paths (core/Pathing) can only pass through the doorways. Nothing that has art may
+// stand in the two or three rows just behind a facility (its art would hide them): the M5 tests check the posts.
 
 export const HOME = {
-  cols: 12,
+  cols: 24,
   rows: 16,
   cellSize: 100, // plan units per tile (pathing and walking speed)
   view: { halfW: 72, halfH: 36 }, // one tile draws as a 144 × 72 diamond (2:1, the series art angle)
   wallH: 230, // the two outer back walls, drawn px
   innerWallH: 70, // inside walls are cut down low (dollhouse), so nobody is ever hidden behind one
   margin: 90, // empty world round the home (the camera stops at the home plus this)
-  zoom: { min: 0.5, max: 1.4, start: 0.85 }, // start close in (style guide §2) — Milestone 5: 0.85 fits Arthur's room to the
-  // Dining Room across a phone; 0.5 shows the whole home
+  zoom: { min: 0.35, max: 1.4, start: 0.85 }, // start close in (style guide §2); 0.35 shows the whole home on a phone
+  floorMaxPixels: 7e6, // the cached floor picture is capped at this many device pixels (bigger cost ~20 ms a frame)
 };
 
+// The Standard Rooms (Milestone 6: four, placed by data; Build Mode places more in Milestone 10). col = the room's
+// left edge; each is 4 × 4 of art, a strip of floor inside (the next column and row 4), a side wall and a front wall.
+const ROOM_COLS = [
+  { id: 'RM01', col: 0 },
+  { id: 'SR2', col: 6 },
+  { id: 'SR3', col: 12 },
+  { id: 'SR4', col: 18 },
+];
+export const ROOM_IDS = ROOM_COLS.map((r) => r.id);
+
 // Inside walls as runs of blocked tiles: { col, row, len, dir: 'col' (along a column, rows grow) | 'row' (along a row) }.
-// gaps = doorway tiles left open in the run.
+// gaps = doorway tiles left open in the run. (Arthur's room keeps its Milestone 1 ids, roomSide / roomFront.)
 export const WALLS = [
-  { id: 'roomSide', col: 5, row: 0, len: 6, dir: 'col', gaps: [] },
-  { id: 'roomFront', col: 0, row: 5, len: 5, dir: 'row', gaps: [2] },
-  { id: 'lounge', col: 0, row: 10, len: 12, dir: 'row', gaps: [5, 6] },
+  ...ROOM_COLS.flatMap((r, i) => [
+    { id: i ? `${r.id}Side` : 'roomSide', col: r.col + 5, row: 0, len: 6, dir: 'col', gaps: [] },
+    { id: i ? `${r.id}Front` : 'roomFront', col: r.col, row: 5, len: 5, dir: 'row', gaps: [2] },
+  ]),
+  { id: 'lounge', col: 4, row: 10, len: 11, dir: 'row', gaps: [4, 5, 9, 10] },
+  { id: 'loungeLeft', col: 3, row: 10, len: 6, dir: 'col', gaps: [] },
+  { id: 'loungeRight', col: 15, row: 10, len: 6, dir: 'col', gaps: [3] }, // a side door at row 13, from the Nurse Station
 ];
 
 // Floor areas (drawn by code): where each floor finish goes. Later areas paint over earlier ones.
 export const FLOORS = [
-  { id: 'hall', col: 0, row: 0, w: 12, h: 16, look: 'hall' },
-  { id: 'room', col: 0, row: 0, w: 5, h: 5, look: 'room' },
-  { id: 'backHall', col: 6, row: 0, w: 6, h: 6, look: 'room' }, // Milestone 5: timber in front of the Staff / Dining Rooms
-  { id: 'runner', col: 1, row: 7, w: 5, h: 1, look: 'runner' }, // a sage runner down the hall
-  { id: 'lounge', col: 0, row: 11, w: 12, h: 5, look: 'lounge' },
+  { id: 'hall', col: 0, row: 0, w: 24, h: 16, look: 'hall' },
+  ...ROOM_COLS.map((r) => ({ id: `room${r.id}`, col: r.col, row: 0, w: 5, h: 5, look: 'room' })),
+  { id: 'runner', col: 3, row: 6, w: 20, h: 1, look: 'runner' }, // a sage runner down the corridor
+  { id: 'lounge', col: 4, row: 11, w: 11, h: 5, look: 'lounge' },
 ];
+
+// A Standard Room at column c: walkable inside except the bed, drawers and chair; inside = where its resident stands,
+// help / help2 = where helpers stand beside them.
+const standardRoom = ({ id, col: c }) => ({
+  id, kind: 'room', template: 'RM01', name: 'Standard Room', art: 'room_rm01', fp: { col: c, row: 0, w: 4, h: 4 },
+  text: 'A private room for general long-term care',
+  walkIn: true, // the art is the room itself: drawn under the people, and its floor stays walkable
+  blockedInside: [{ col: c, row: 0, w: 4, h: 3 }], // the bed, the drawers and the chair
+  spots: { inside: { col: c + 2, row: 4 }, doorway: { col: c + 2, row: 5 }, help: { col: c + 3, row: 4 }, help2: { col: c + 1, row: 4 } },
+});
 
 // Everything placed on the grid (Milestone 10 builds more). fp = footprint in tiles (blocked for walking, except a
 // walk-in room's). spots = named tiles people stand on. text = the one line on its sheet (what it is for).
+// Milestone 6: the Dining Room and the Activity Lounge have four seats each (seat 1 keeps its Milestone 2-5 name).
 export const PLACED = [
   {
-    id: 'F01', kind: 'station', name: 'Central Nurse Station', art: 'facility_f01', fp: { col: 7, row: 6, w: 3, h: 3 },
+    id: 'F01', kind: 'station', name: 'Central Nurse Station', art: 'facility_f01', fp: { col: 17, row: 9, w: 3, h: 3 },
     text: 'Coordinates shifts, care rounds and handovers',
-    spots: { staff: { col: 8, row: 9 } },
+    spots: { staff: { col: 18, row: 12 } },
   },
   {
-    id: 'F05', kind: 'station', name: 'Activity Lounge', art: 'facility_f05', fp: { col: 3, row: 11, w: 3, h: 3 },
+    id: 'F05', kind: 'station', name: 'Activity Lounge', art: 'facility_f05', fp: { col: 5, row: 11, w: 3, h: 3 },
     text: 'Group activities and a comfortable place to relax',
-    spots: { resident: { col: 4, row: 14 }, staff: { col: 6, row: 13 } }, // (Milestones 2-4 had his meals here too)
+    spots: { resident: { col: 5, row: 14 }, seat2: { col: 6, row: 14 }, seat3: { col: 7, row: 14 }, seat4: { col: 8, row: 13 }, staff: { col: 8, row: 12 } },
   },
+  standardRoom(ROOM_COLS[0]),
   {
-    id: 'RM01', kind: 'room', name: 'Standard Room', art: 'room_rm01', fp: { col: 0, row: 0, w: 4, h: 4 },
-    text: 'A private room for general long-term care',
-    walkIn: true, // the art is the room itself: drawn under the people, and its floor stays walkable
-    blockedInside: [{ col: 0, row: 0, w: 4, h: 3 }], // the bed, the drawers and the chair
-    spots: { inside: { col: 2, row: 4 }, doorway: { col: 2, row: 5 } },
-  },
-  // Milestone 5: his meals move to the Dining Room; staff rest off shift in the Staff Room.
-  {
-    id: 'F03', kind: 'station', name: 'Dining Room', art: 'facility_f03', fp: { col: 9, row: 0, w: 3, h: 3 },
+    id: 'F03', kind: 'station', name: 'Dining Room', art: 'facility_f03', fp: { col: 10, row: 11, w: 3, h: 3 },
     text: 'Shared meals at the table, with a choice of seats',
-    spots: { dining: { col: 10, row: 3 } },
+    spots: { dining: { col: 10, row: 14 }, seat2: { col: 11, row: 14 }, seat3: { col: 12, row: 14 }, seat4: { col: 13, row: 13 } },
   },
   {
-    id: 'F08', kind: 'station', name: 'Staff Room', art: 'facility_f08', fp: { col: 6, row: 0, w: 3, h: 3 },
+    id: 'F08', kind: 'station', name: 'Staff Room', art: 'facility_f08', fp: { col: 0, row: 7, w: 3, h: 3 },
     text: 'Where staff rest and recover between shifts',
-    spots: { rest: { col: 7, row: 3 } },
+    spots: { rest: { col: 3, row: 8 } },
   },
+  ...ROOM_COLS.slice(1).map(standardRoom),
 ];
 
 // Drawing: every placed picture at one scale. width = the footprint's diamond width × this; drop = how far (in tile
@@ -80,62 +103,71 @@ export const ART_DRAW = { station: { width: 1.05, drop: 0.25 }, room: { width: 1
 // blocked, so nobody walks through it and Build Mode never offers it). flip: drawn mirrored.
 export const PROPS = [
   { id: 'P1', name: 'Walking frame', art: 'care_prop_early_01', col: 4, row: 1 }, // beside Arthur's bed
-  { id: 'P2', name: 'Wheelchair', art: 'care_prop_early_02', col: 0, row: 9 }, // parked by the hall wall
-  { id: 'P3', name: 'Activity trolley', art: 'care_prop_early_03', col: 2, row: 12 }, // by the lounge
-  { id: 'P4', name: 'Dining trolley', art: 'care_prop_early_04', col: 11, row: 6, flip: true }, // on the way to the Dining Room
-  { id: 'P5', name: 'Garden planter', art: 'care_prop_early_05', col: 0, row: 14 }, // under the lounge window
+  { id: 'P2', name: 'Wheelchair', art: 'care_prop_early_02', col: 0, row: 11 }, // parked by the Staff Room
+  { id: 'P3', name: 'Activity trolley', art: 'care_prop_early_03', col: 14, row: 15 }, // in the lounge's front corner
+  { id: 'P4', name: 'Dining trolley', art: 'care_prop_early_04', col: 16, row: 15, flip: true }, // outside the lounge
+  { id: 'P5', name: 'Garden planter', art: 'care_prop_early_05', col: 0, row: 15 }, // under the window
 ];
 
 // Windows on the left-hand outer wall (the back wall on the right is lined with rooms): rows along the wall. Each casts
 // a soft pool of daylight on the floor (light comes from the upper left, like the art).
 export const WINDOWS = [
-  { side: 'left', from: 6.2, to: 7.8 },
-  { side: 'left', from: 11.3, to: 12.8 },
+  { side: 'left', from: 11.9, to: 13.4 },
+  { side: 'left', from: 13.8, to: 15.3 },
 ];
+// Milestone 6: new residents come in through the front entrance, the open end of the corridor (Reception is not placed
+// yet), and walk to their room.
+export const ENTRANCE = { col: 23, row: 7 };
 // People: drawn height in logical px at zoom 1 (tested against the room and station art at phone scale).
-export const PERSON = { height: 190, speed: 280, tagSize: 28 }; // speed: staff, plan units a game-second (Milestone 3: brisker, so
-// helpers reach Arthur within his routine)
+export const PERSON = { height: 190, speed: 340, tagSize: 28 }; // speed: staff, plan units a game-second (Milestone 3: brisker, so
+// helpers reach Arthur within his routine; Milestone 6: 280 → 340 for the bigger home)
 // How people move (Milestone 5, style guide §6, core/CharacterMotion): a hop and a small sway while walking — one hop
 // per stride of plan distance actually walked, so the feet never slide at any speed —, a gentle lean while helping, a
-// slow breathe while standing, resting or sitting. Arthur walks steadier (a smaller hop and sway): respectful, never a
-// stagger or a slump.
+// slow breathe while standing, resting or sitting. Residents walk steadier (a smaller hop and sway): respectful, never
+// a stagger or a slump.
 export const MOTION = {
   stride: 70, // plan units walked per hop
   staff: { walkBobPx: 6, walkStepsPerSec: 1, walkTiltRad: 0.045, workTiltRad: 0.03, workTiltPerSec: 0.7, workBobPx: 2, idleBreathPx: 2.5, idleBreathPerSec: 0.25 },
   resident: { walkBobPx: 3.5, walkStepsPerSec: 1, walkTiltRad: 0.02, workTiltRad: 0, workTiltPerSec: 0.5, workBobPx: 0, idleBreathPx: 2, idleBreathPerSec: 0.2 },
 };
 
-// The home's one resident (Milestone 2: his profile is data/residents.js, his day data/routine.js) and the room he is
-// assigned. speed: plan units per game-second at 1× — a little brisker than staff, so a room → lounge walk (~16 tiles)
-// takes about 1.8 game hours of his day.
-export const RESIDENT = { id: 'RES01', room: 'RM01', speed: 240 };
+// The home's first resident (Milestone 2: his profile is data/residents.js, his day data/routine.js) and his room.
+// speed: plan units per game-second at 1× for every resident (Milestone 6: 240 → 300 for the bigger home).
+export const RESIDENT = { id: 'RES01', room: 'RM01', speed: 300 };
 
 // Where staff stand (Milestone 3). Named tiles outside the placed things (spotTile() reads these as well as PLACED spots).
-// Milestone 5: the rounds moved out from behind the Nurse Station (where its art hid them) and the Dining Room's and
-// Staff Room's spots are in front of them.
+// Milestone 6: rounds along the corridor and the open hall; the rest spots in front of the Staff Room.
 export const SPOTS = {
-  'hall.rnRound': { col: 6, row: 5 },
-  'hall.cwPost': { col: 3, row: 7 },
-  'hall.cwRound': { col: 10, row: 5 },
-  'hall.ahPost': { col: 4, row: 8 },
-  'hall.ahRound': { col: 11, row: 8 },
-  'lounge.lcRound': { col: 9, row: 14 },
-  'lounge.hnPost': { col: 10, row: 13 },
-  'lounge.hnRound': { col: 7, row: 11 },
-  // helpers stand beside Arthur: in his room, at the Dining Room table, at the Cards table
+  'hall.rnRound': { col: 12, row: 7 },
+  'hall.cwPost': { col: 8, row: 7 },
+  'hall.cwRound': { col: 21, row: 8 },
+  'hall.ahPost': { col: 5, row: 8 },
+  'hall.ahRound': { col: 22, row: 7 },
+  'lounge.lcRound': { col: 4, row: 15 },
+  'lounge.hnPost': { col: 14, row: 13 },
+  'lounge.hnRound': { col: 9, row: 15 },
+  // helpers beside a resident at the Dining Room and the Cards table (seat 1's pair keeps its Milestone 4 names); a
+  // room's helper spots are that room's help / help2
   'help.room': { col: 3, row: 4 },
-  'help.dining': { col: 11, row: 3 },
-  'help.lounge': { col: 5, row: 14 },
-  // Milestone 4: a second spot at each, for when two people come to him at once (e.g. breakfast and the medicine round)
   'help.room2': { col: 1, row: 4 },
-  'help.dining2': { col: 9, row: 3 },
-  'help.lounge2': { col: 3, row: 14 },
-  // off shift: resting in front of the Staff Room (Milestone 5; the lounge before it existed)
-  'rest.1': { col: 7, row: 3 },
-  'rest.2': { col: 6, row: 3 },
-  'rest.3': { col: 8, row: 3 },
-  'rest.4': { col: 6, row: 4 },
-  'rest.5': { col: 8, row: 4 },
+  'help.dining': { col: 10, row: 15 },
+  'help.dining2': { col: 11, row: 15 },
+  'help.dining3': { col: 12, row: 15 },
+  'help.dining4': { col: 13, row: 14 },
+  'help.dining5': { col: 9, row: 14 },
+  'help.dining6': { col: 13, row: 15 },
+  'help.lounge': { col: 5, row: 15 },
+  'help.lounge2': { col: 6, row: 15 },
+  'help.lounge3': { col: 7, row: 15 },
+  'help.lounge4': { col: 8, row: 14 },
+  'help.lounge5': { col: 4, row: 14 },
+  'help.lounge6': { col: 8, row: 15 },
+  // off shift: resting in front of the Staff Room
+  'rest.1': { col: 3, row: 8 },
+  'rest.2': { col: 3, row: 7 },
+  'rest.3': { col: 3, row: 9 },
+  'rest.4': { col: 4, row: 8 },
+  'rest.5': { col: 4, row: 9 },
 };
 // On shift and not helping, each role walks between its post and a second spot (so the home never looks frozen).
 // stay = game-seconds at each.
@@ -146,9 +178,21 @@ export const POSTS = {
   AH: { spots: ['hall.ahPost', 'hall.ahRound'], stay: [6, 3] },
   HN: { spots: ['lounge.hnPost', 'lounge.hnRound'], stay: [6, 3] },
 };
-// Where a helper stands for each routine place.
+// Milestone 6: the seats at each shared place (a resident's seat follows their room: room 1 → seat 1 …) and the spots
+// helpers may stand in there (the free one nearest the resident's seat is used).
+export const SEATS = {
+  dining: ['F03.dining', 'F03.seat2', 'F03.seat3', 'F03.seat4'],
+  lounge: ['F05.resident', 'F05.seat2', 'F05.seat3', 'F05.seat4'],
+};
+export const HELP_POOLS = {
+  dining: ['help.dining', 'help.dining2', 'help.dining3', 'help.dining4', 'help.dining5', 'help.dining6'],
+  lounge: ['help.lounge', 'help.lounge2', 'help.lounge3', 'help.lounge4', 'help.lounge5', 'help.lounge6'],
+};
+// Where a helper stands for Arthur at each routine place (Milestones 3-5; still his, and the start of each pool).
 export const HELP_SPOTS = { room: 'help.room', dining: 'help.dining', lounge: 'help.lounge' };
 export const HELP_SPOTS_2 = { room: 'help.room2', dining: 'help.dining2', lounge: 'help.lounge2' };
+// The two spots beside a resident at a place: in their own room, or the first pair of the shared place's pool.
+export const helpSpotsFor = (place, roomId) => (place === 'room' ? (roomId === 'RM01' ? ['help.room', 'help.room2'] : [`${roomId}.help`, `${roomId}.help2`]) : HELP_POOLS[place]);
 
 // Colours drawn by code: residential, not hospital — warm cream, sage and timber.
 export const HOME_LOOK = {
