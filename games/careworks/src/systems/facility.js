@@ -15,6 +15,8 @@
 //                             saved Credits)
 //                             v6 (Milestone 6) had one Morning shift: everyone stays on Morning (now 05:00–12:00), on
 //                             the Home wing, no floats, an RN on call at night, no coverage history yet
+//                             v7 (Milestone 7) had no plan reviews: every plan keeps its options and counts as reviewed
+//                             on the load day (not stale); option preferences come from data
 import { founderById, paletteById, ROLES, FOUNDER_FLAG } from '../../data/setup.js';
 import { residentById } from '../../data/residents.js';
 import { RESIDENT, HOME, HELP_SPOTS, HELP_SPOTS_2, SEATS, POSTS } from '../../data/home.js';
@@ -25,6 +27,7 @@ import { newResidentState } from './residentNeeds.js';
 import { newStaffState } from './staffTeam.js';
 import { ensureRosterState } from './roster.js';
 import { ensureCoverageState } from './coverage.js';
+import { markReviewed } from './carePlanRules.js';
 import { newCareState } from './careTasks.js';
 import { ensurePlan } from '../../data/carePlans.js';
 
@@ -184,6 +187,16 @@ export function upgradeV6(data) {
   const ids = data.staff.staff.map((m) => m.id);
   return { ...data, staff: { ...data.staff, roster: ensureRosterState(data.staff.roster, ids), coverage: ensureCoverageState(data.staff.coverage) } };
 }
+// Version 7 → 8 (Milestone 8): plan reviews. Plans keep their options; each counts as reviewed on the load day.
+export function upgradeV7(data) {
+  const day = data.clock?.totalDays ?? 0;
+  const residents = (data.residents ?? []).map((r) => {
+    const out = { ...r, needs: { ...(r.needs ?? {}) }, optionPrefs: { ...(residentById(r.id)?.optionPrefs ?? {}), ...(r.optionPrefs ?? {}) } };
+    if (out.review == null) markReviewed(out, day);
+    return out;
+  });
+  return { ...data, residents };
+}
 export const SAVE_MIGRATIONS = {
   1: (record) => ({ ...record, data: upgradeV1(record.data) }),
   2: (record) => ({ ...record, data: upgradeV2(record.data) }),
@@ -191,6 +204,7 @@ export const SAVE_MIGRATIONS = {
   4: (record) => ({ ...record, data: upgradeV4(record.data) }),
   5: (record) => ({ ...record, data: upgradeV5(record.data) }),
   6: (record) => ({ ...record, data: upgradeV6(record.data) }),
+  7: (record) => ({ ...record, data: upgradeV7(record.data) }),
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

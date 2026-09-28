@@ -13,6 +13,10 @@
 // move them), a Safe Coverage bar per shift, Float toggles, the Night on-call flag and the coverage log; a red badge on
 // Staff (and a banner in the home) while a shift is short or about to start short. The Ledger shows agency fees, care
 // recovery and the unsafe-shift counter.
+// Milestone 8: the Care Plan picker shows all eight options of a domain — greyed with the reason when not eligible,
+// the resident's like / dislike / refusal marked; tapping one shows what it does and a Choose button (a disliked
+// option says its Mood cost first). A plan due for review gets an amber dot on the card's Care Plan header, counts on
+// Care's badge and is listed under Care → "Plans to review"; Reviewed clears it.
 // Add ?debug=1 for the FPS/state overlay, ?screen=test for the scaling / tap / asset-loader test screen.
 import { THEME, font } from '../../../core/Theme.js';
 import { EventBus } from '../../../core/EventBus.js';
@@ -51,7 +55,7 @@ import { SHIFT_IDS, OFF, WINGS } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
 import { ROOM_IDS } from '../data/home.js';
 import { FOUNDERS } from '../data/setup.js';
-import { DOMAINS, CARE_OPTIONS, optionById, optionsFor, validateCarePlans } from '../data/carePlans.js';
+import { DOMAINS, CARE_OPTIONS, optionById, optionsFor, validateCarePlans, OPTION_PREF_MOOD } from '../data/carePlans.js';
 import { TASK_TYPES, BELL } from '../data/tasks.js';
 import { familiarityOf } from './systems/careTasks.js';
 import { clockText } from './systems/residentNeeds.js';
@@ -228,7 +232,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft'],
   save: () => saveRun(),
   stamp: () => (open ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && router.currentName === 'home' && !open.world.clock.paused,
@@ -431,7 +435,7 @@ const topBar = createTopBar({
 const missedToday = () => open?.world.missedToday() ?? [];
 function careBadge() {
   if (!open) return null;
-  const n = open.world.bells.length + missedToday().filter((t) => !open.seenMissed.has(t.id)).length;
+  const n = open.world.bells.length + missedToday().filter((t) => !open.seenMissed.has(t.id)).length + open.world.stalePlans().length; // Milestone 8: + plans to review
   return n || null;
 }
 // Staff's badge (Milestone 7): the shifts short now, or about to start short (from the band before).
@@ -500,6 +504,15 @@ function openResidents() {
       accent: accentNow(),
       sections: [
         { columns: 1, buttons: rows },
+        ...(() => {
+          const stale = w.stalePlans();
+          return stale.length
+            ? [{ title: 'Plans to review', titleDot: COL.warn, columns: 1, buttons: stale.map((x) => {
+              const r = w.residentById(x.resident);
+              return { id: `review:${r.id}`, label: r.name, sub: x.reasons[0].text + (x.reasons.length > 1 ? ` (+${x.reasons.length - 1} more)` : ''), icon: r.art, iconCrop: PORTRAIT_CROP, accent: COL.warn, onTap: () => openFrom(r.id, 'residents') };
+            }) }]
+            : [];
+        })(),
         { title: 'Admissions', columns: 1, buttons: [{ id: 'admissions', label: 'Admissions', sub: `${adm.board.length} applying · ${adm.waiting.length} on the waiting list`, icon: CARE_ICONS.admissions, badge: adm.board.length || null, accent: COL.action, onTap: () => openAdmissions() }] },
       ],
     };
@@ -799,7 +812,7 @@ function residentSections(w, it) {
   const they = theirOf(it.id) === 'her' ? 'she' : 'he';
   return [
     { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `Room ${ROOM_IDS.indexOf(st.room) + 1} · Support Level ${supportLevel(it.def)} · ${it.def.stay}`] },
-    { title: 'Care Plan', lines: [{ text: 'Tap a row to change it. A change shapes tomorrow\'s tasks, and today\'s where that part hasn\'t happened yet.', color: COL.textMuted }], buttons: planButtons(it), columns: 1 },
+    planSection(w, it),
     { title: 'Tasks today', lines: taskLines(w, it) },
     { title: 'Call bells', lines: bellLines(w, it, they) },
     { title: 'Familiar Care', lines: familiarLines(w, it) },
@@ -810,11 +823,27 @@ function residentSections(w, it) {
     { title: 'Who helps', lines: [{ text: 'Staff pick their own tasks. Tap a step to pin it to one person (Auto: whoever scores best).', color: COL.textMuted }], buttons: helpButtons(w, it), columns: 2 },
   ];
 }
-// Milestone 4: the Care Plan section — one row per domain (bible §9), tap → that domain's options.
-function planButtons(it) {
+// Milestone 4: the Care Plan section — one row per domain (bible §9), tap → that domain's options. Milestone 8: the
+// review (an amber dot and the reasons while it is due, the last review day, and Reviewed).
+function planSection(w, it) {
+  const stale = w.staleOf(it.id);
+  const r = it.state.review;
+  const lines = stale.map((x) => ({ text: x.text, color: COL.warn }));
+  lines.push({ text: r?.day == null ? 'Not reviewed yet.' : `Last reviewed ${r.day === w.clock.totalDays ? 'today' : `${w.clock.totalDays - r.day} day${w.clock.totalDays - r.day === 1 ? '' : 's'} ago`}. Tap a row to change it; a change shapes tomorrow's tasks, and today's where that part hasn't happened yet.`, color: COL.textMuted });
+  const buttons = planButtons(w, it);
+  buttons.push({ id: 'plan:review', label: stale.length ? 'Reviewed' : 'Reviewed (confirm the plan)', sub: stale.length ? 'The plan is right as it stands: mark it reviewed' : 'Up to date: review again any time', accent: stale.length ? COL.action : COL.progress, onTap: () => {
+    w.reviewPlan(it.id);
+    autosave.request('review');
+  } });
+  return { title: stale.length ? 'Care Plan · review due' : 'Care Plan', titleDot: stale.length ? COL.warn : null, lines, buttons, columns: 1 };
+}
+const PREF_WORDS = { prefer: 'likes this', dislike: 'dislikes this', refuse: 'refuses this' };
+function planButtons(w, it) {
   return DOMAINS.map((d) => {
     const o = optionById(it.state.plan?.[d.id]);
-    return { id: `plan:${d.id}`, label: d.name, sub: o ? o.name : 'Not set', accent: COL.progress, onTap: () => openPlanPicker(d.id, it.id) };
+    const pref = o && w.optionPref(o.id, it.id);
+    const note = pref === 'refuse' ? ' · refused: its tasks are refused' : pref === 'dislike' ? ' · disliked' : '';
+    return { id: `plan:${d.id}`, label: d.name, sub: o ? `${o.name}${note}` : 'Not set', accent: pref === 'refuse' ? COL.bad : COL.progress, onTap: () => openPlanPicker(d.id, it.id) };
   });
 }
 // "07:00  Wake up · done with Ruby"
@@ -848,41 +877,64 @@ function familiarLines(w, it) {
   const counts = w.team.map((p) => `${first(p.name)} ${familiarityOf(w.care, it.id, p.id)}`).join(' · ');
   return [{ text: top ? `Most familiar: ${w.byId(top).name}` : 'Most familiar: nobody yet', color: COL.actionDark }, { text: `Care together: ${counts}`, color: COL.textMuted }];
 }
-// "Mobility for Betty": the domain's options (two each until Milestone 8), the current one marked.
+// "Mobility for Betty" (Milestone 8: all eight options): each row says whether it can be chosen (greyed with the
+// reason when not), the current one and their like / dislike / refusal. Tap a row to see it; Choose to take it.
+const NEED_WORDS = Object.fromEntries(NEEDS.map((n) => [n.id, n.name]));
+const OUTCOME_WORDS = Object.fromEntries(OUTCOMES.map((o) => [o.id, o.name]));
 function openPlanPicker(domainId, residentId) {
+  let looking = null; // the option tapped (its details and Choose)
+  let message = null;
   sheet.open(() => {
     const w = open?.world;
     const d = DOMAINS.find((x) => x.id === domainId);
     const it = w?.residentById(residentId);
     if (!w || !d || !it) return { title: '', sections: [] };
     const current = it.state.plan?.[d.id];
-    const choose = (id) => {
-      const r = w.changePlan(d.id, id, residentId);
-      if (r.ok && r.changed) autosave.request('plan');
-      openHomeSheet(residentId);
-    };
-    return {
-      title: `${d.name} for ${first(it.name)}`,
-      subtitle: 'Care plan · pick one option. More options arrive later.',
-      art: it.art,
-      accent: paletteById(open.data.facility.palette).hex,
-      sections: [
-        { lines: optionsFor(d.id).map((o) => ({ text: `${o.name}: ${o.text}`, color: o.id === current ? COL.actionDark : COL.text })) },
-        {
-          columns: 1,
-          buttons: [
-            ...optionsFor(d.id).map((o) => ({
-              id: `option:${o.id}`,
-              label: o.name,
-              sub: `${o.roles.map((r) => ROLES[r].short).join(' / ')} · about ${o.minutesPerDay} min a day${o.id === current ? ' · current' : ''}`,
-              accent: o.id === current ? COL.good : COL.progress,
-              onTap: () => choose(o.id),
-            })),
-            { id: 'option:back', label: `‹ Back to ${first(it.name)}`, accent: COL.progress, onTap: () => openHomeSheet(residentId) },
-          ],
-        },
-      ],
-    };
+    const who = first(it.name);
+    const rows = optionsFor(d.id).map((o) => {
+      const el = w.eligibility(o.id, residentId);
+      const pref = w.optionPref(o.id, residentId);
+      const isCurrent = o.id === current;
+      let sub;
+      if (isCurrent) sub = `Current${PREF_WORDS[pref] ? ` · ${who} ${PREF_WORDS[pref]}` : ''}`;
+      else if (!el.ok) sub = el.reason;
+      else sub = `${PREF_WORDS[pref] ? `${who} ${PREF_WORDS[pref]} · ` : ''}about ${o.minutesPerDay} min a day`;
+      return { id: `option:${o.id}`, label: o.name, sub, disabled: !el.ok && !isCurrent, accent: isCurrent ? COL.good : looking === o.id ? COL.action : pref === 'refuse' ? COL.bad : COL.progress, onTap: () => {
+        looking = o.id;
+        message = null;
+        sheet.scrollY = 0;
+      } };
+    });
+    const sections = [];
+    if (message) sections.push({ lines: [{ text: message, color: COL.bad }] });
+    const o = looking && optionById(looking);
+    if (o) {
+      const pref = w.optionPref(o.id, residentId);
+      const el = w.eligibility(o.id, residentId);
+      const lines = [
+        o.text,
+        { text: `${o.roles.map((r) => ROLES[r].name).join(' / ')} · about ${o.minutesPerDay} min a day`, color: COL.textMuted },
+        { text: `Eases: ${o.nudges.needs.map((n) => NEED_WORDS[n]).join(', ') || 'nothing directly'}${o.nudges.outcomes.length ? ` · Helps: ${o.nudges.outcomes.map((x) => OUTCOME_WORDS[x]).join(', ')}` : ''}`, color: COL.textMuted },
+      ];
+      if (o.removes?.length) lines.push({ text: `${o.removes.map((x) => stepName(x)).join(', ')}: no staff help (${who} does it ${theirOf(it.id) === 'her' ? 'her' : 'his'} own way)`, color: COL.textMuted });
+      if (pref === 'dislike') lines.push({ text: `${who} dislikes this: choosing it costs ${-OPTION_PREF_MOOD.dislike} Mood, and ${theirOf(it.id) === 'her' ? 'she' : 'he'} may say no to its tasks.`, color: COL.warn });
+      if (pref === 'refuse') lines.push({ text: `${who} refuses this: you can choose it, but its tasks will be refused whenever they come up.`, color: COL.bad });
+      if (pref === 'prefer') lines.push({ text: `${who} likes this (+${OPTION_PREF_MOOD.prefer} Mood when chosen).`, color: COL.good });
+      if (!el.ok) lines.push({ text: el.reason, color: COL.bad });
+      const choose = () => {
+        const r = w.changePlan(d.id, o.id, residentId);
+        if (!r.ok) {
+          message = r.reason;
+          return;
+        }
+        if (r.changed) autosave.request('plan');
+        openHomeSheet(residentId);
+      };
+      const label = o.id === current ? 'Current option' : pref === 'dislike' ? `Choose anyway (Mood −${-OPTION_PREF_MOOD.dislike})` : pref === 'refuse' ? 'Choose anyway (tasks refused)' : `Choose ${o.name}`;
+      sections.push({ title: o.name, lines, columns: 1, buttons: [{ id: 'option:choose', label, disabled: !el.ok || o.id === current, accent: pref === 'dislike' || pref === 'refuse' ? COL.warn : COL.action, onTap: choose }] });
+    }
+    sections.push({ title: o ? 'All options' : null, lines: o ? [] : [{ text: 'Tap an option to see what it does. Greyed ones can\'t be chosen yet: the reason is on the row.', color: COL.textMuted }], columns: 1, buttons: [...rows, { id: 'option:back', label: `‹ Back to ${who}`, accent: COL.progress, onTap: () => openHomeSheet(residentId) }] });
+    return { title: `${d.name} for ${who}`, subtitle: 'Care plan · eight options · pick one', art: it.art, accent: paletteById(open.data.facility.palette).hex, sections };
   });
 }
 // Milestone 3: one button per routine step — who will help with it. Milestone 7: someone is rostered then when their

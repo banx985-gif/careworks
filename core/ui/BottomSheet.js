@@ -20,6 +20,8 @@
 //               items: [{ id, label, sub?, icon?, iconCrop?, iconBadge?, tag? (a small chip, e.g. AGENCY), accent?,
 //                         selected?, disabled?, onTap }] }]
 //     Every header and card is a button (buttonRect(id) finds it; a tap calls its onTap).
+//   Section title extra (CAREWORKS Milestone 8; optional): titleDot (a colour) — a round dot after the title (e.g. amber
+//   for a care plan due for review)
 // A MenuRegistry maps what was tapped (a station type, 'worker', 'floor'…) to the function that builds its menu.
 //   sheet.open(builder) — builder() → menu        sheet.close()        sheet.active
 //   sheet.handleInput(hook, p) → true when the sheet used it (tap a button, tap above it to close, drag to scroll)
@@ -241,7 +243,7 @@ export class BottomSheet {
     let y = 0;
     for (const sec of this.sections) {
       if (sec.title) {
-        items.push({ kind: 'title', text: sec.title, y });
+        items.push({ kind: 'title', text: sec.title, y, dot: sec.titleDot ?? null });
         y += lineH(S.heading, 1.3);
       }
       for (const line of sec.lines ?? []) {
@@ -379,6 +381,16 @@ export class BottomSheet {
         ctx.font = font(S.heading, true);
         ctx.textBaseline = 'top';
         ctx.fillText(it.text, 0, it.y + 4, b.w);
+        if (it.dot) {
+          const dx = Math.min(b.w - 20, ctx.measureText(it.text).width + 30);
+          ctx.fillStyle = it.dot;
+          ctx.strokeStyle = C.outline;
+          ctx.lineWidth = 3;
+          ctx.beginPath();
+          ctx.arc(dx, it.y + 4 + S.heading * 0.55, 13, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
       } else if (it.kind === 'line') {
         ctx.fillStyle = it.color;
         ctx.font = font(S.body);

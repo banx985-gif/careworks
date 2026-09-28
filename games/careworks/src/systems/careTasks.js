@@ -22,6 +22,11 @@
 //   changePlan(care, st, domain, optionId, ctx) → { from, to }   · closeDue(care, now) → closed tasks
 //   maybeRing(care, st, now) → bell task | null · recordResponse(care, residentId, rec) · bellSummary(care, residentId)
 //   addFamiliarity(care, residentId, staffId) · familiarityOf · mostFamiliar(care, residentId, staffIds)
+// Milestone 8: a plan option the resident refuses (st.optionPrefs) still makes its tasks, but each is refused the
+// moment it comes up (status 'refused', optionRefused: true — the home world logs it) and its routine-step changes
+// don't apply; no score, pin or shortage can take a refused task. A disliked option's tasks are said no to at the
+// dislike chance, decided when the helper arrives (like the M4 group activity). An option's removes take the staff help
+// off those routine steps (they manage them on their own).
 import { Rng } from '../../../../core/Rng.js';
 import { TASK_TYPES, ROUTINE_TASKS, NEED_TASKS, BELL, FAMILIARITY, SCORING, PLAN_CHANGE } from '../../data/tasks.js';
 import { DOMAINS, optionById, domainById, ensurePlan } from '../../data/carePlans.js';
@@ -94,11 +99,13 @@ function makeTask(care, fields) {
 }
 
 // What a routine step's task looks like under a plan: its roles, time and extra drops (an option's `changes`).
-export function routineTemplate(step, plan) {
+const refuses = (optionPrefs, id) => optionPrefs?.[id] === 'refuse';
+export function routineTemplate(step, plan, optionPrefs = null) {
   const base = ROUTINE_TASKS[step.id];
   const out = { type: base.type, band: base.band, minutes: base.minutes, roles: [...step.roles], drops: { ...step.drops }, changedBy: [] };
   for (const d of DOMAINS) {
     const o = optionById(plan[d.id]);
+    if (refuses(optionPrefs, o?.id)) continue; // (Milestone 8) they refuse it: the step stays as it was
     for (const c of o?.changes ?? []) {
       if (c.step !== step.id) continue;
       if (c.minutes) out.minutes = c.minutes;
@@ -124,11 +131,19 @@ export function generateBand({ care, st, band, day, now = -Infinity, rolesOnShif
     const t = makeTask(care, { resident: st.id, day, band: band.id, ...fields });
     care.tasks.push(t);
     out.push(t);
+    if (t.optionId && refuses(st.optionPrefs, t.optionId)) {
+      closeTask(care, t, 'refused'); // refused the moment it comes up: never on the board
+      t.optionRefused = true;
+    }
   };
+  const removed = new Set(DOMAINS.flatMap((d) => {
+    const o = optionById(plan[d.id]);
+    return o && !refuses(st.optionPrefs, o.id) ? o.removes ?? [] : [];
+  }));
   if (!only) {
     for (const step of ROUTINE) {
-      if (!ROUTINE_TASKS[step.id] || bandOfHour(step.at) !== band || stepOver(step.id, day)) continue;
-      const tpl = routineTemplate(step, plan);
+      if (!ROUTINE_TASKS[step.id] || bandOfHour(step.at) !== band || stepOver(step.id, day) || removed.has(step.id)) continue;
+      const tpl = routineTemplate(step, plan, st.optionPrefs);
       const opens = Math.max(absHour(day, step.at) - (ROUTINE_TASKS[step.id].lead ?? 0), bandStart(band, day));
       add({ type: tpl.type, name: step.name, source: 'routine', stepId: step.id, at: step.at, place: 'step', roles: tpl.roles, minutes: tpl.minutes, drops: tpl.drops, opens, due: dueOf(tpl.band, day, step.at), changedBy: tpl.changedBy });
     }
@@ -164,6 +179,7 @@ export function pruneTasks(care, today) {
 // person = { id, role, energy }. Returns null when they may not take it: the role doesn't fit (a hard rule, never
 // outscored), or it is pinned to someone else.
 export function scorePair({ task, person, tiles = 0, keyWorker = null, mostFamiliar = null, doneThisBand = 0 }) {
+  if (task.status === 'refused' || task.optionRefused) return null; // a refusal is never overridden (Milestone 8)
   if (!task.roles.includes(person.role)) return null;
   if (task.pinned && task.pinned !== person.id) return null;
   const W = SCORING;
@@ -215,12 +231,16 @@ export function closeTask(care, t, status) {
 }
 // A task he may say no to (a plan task with a preference key): 'go' or 'refuse', fixed for that band (reloads never
 // reroll).
+// Milestone 8: a plan task also answers to the resident's preference for its option (the stronger of the two counts).
 export function decideTask(st, task, seed = 'careworks') {
-  if (!task.pref) return 'go';
-  const chance = PREF_RULES[st.prefs?.[task.pref] ?? 'accept'].refuseChance;
+  const byKey = task.pref ? PREF_RULES[st.prefs?.[task.pref] ?? 'accept'].refuseChance : 0;
+  const op = task.optionId ? st.optionPrefs?.[task.optionId] : null;
+  const byOption = op === 'dislike' || op === 'refuse' ? PREF_RULES[op].refuseChance : 0; // (an accepted option: as M4)
+  if (!task.pref && !byOption) return 'go';
+  const chance = Math.max(byKey, byOption);
   if (chance >= 1) return 'refuse';
   if (chance <= 0) return 'go';
-  return new Rng(`${seed}:${st.id}:${task.day}:${task.band}:${task.pref}`).next() < chance ? 'refuse' : 'go';
+  return new Rng(`${seed}:${st.id}:${task.day}:${task.band}:${task.pref ?? task.optionId}`).next() < chance ? 'refuse' : 'go';
 }
 
 // --- the care plan ---------------------------------------------------------------------------------------------------
@@ -248,7 +268,7 @@ export function changePlan(care, st, domain, optionId, ctx) {
   for (const t of care.tasks) {
     // a step no one has started helping with yet (open, or someone on the way) takes the new option's changes
     if (t.resident !== st.id || t.source !== 'routine' || !(t.status === 'open' || t.status === 'claimed') || t.day !== ctx.day) continue;
-    const tpl = routineTemplate(ROUTINE.find((s) => s.id === t.stepId), plan);
+    const tpl = routineTemplate(ROUTINE.find((x) => x.id === t.stepId), plan, st.optionPrefs);
     Object.assign(t, { roles: tpl.roles, minutes: tpl.minutes, drops: tpl.drops, workLeft: tpl.minutes / 60, changedBy: tpl.changedBy });
     if (t.status === 'claimed' && !ctx.roleOf?.(t.slots[0])?.split(',').some((r) => t.roles.includes(r))) {
       t.status = 'open'; // the person on the way no longer fits: back on the board (the home world lets them go)

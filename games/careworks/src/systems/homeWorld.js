@@ -14,6 +14,9 @@
 // and the four-step fallback (src/systems/coverage.js) tick before the staff move: a warning the band before a short
 // shift, float cover, agency workers (hired here: they walk in from the entrance for one shift and leave after), then
 // admissions pause and the Cards activity is skipped. Missed essential tasks cost care recovery at the end of each day.
+// Milestone 8: all 48 plan options with eligibility (world.eligibility / planCtx), option preferences (a disliked
+// option costs a little Mood when chosen; a refused one's tasks are refused and logged as they come up), the plan
+// review / stale flag (world.stalePlans, world.reviewPlan) and a new resident's first plan from their primary support.
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
@@ -38,6 +41,8 @@
 //   world.rooms · world.freeRooms() · world.admissions · world.admitCtx() · world.admit(residentId) → { ok, reason }
 //   world.ledger · world.monthRange() → { fromDay, toDay } · world.payers() / world.payroll() (the ledger's lists)
 //   world.daySummary(day) → { day, done, missed }
+//   world.planCtx(residentId) · world.eligibility(optionId, residentId) → { ok, reason } · world.optionPref(optionId, residentId)
+//   world.staleOf(residentId) → [{ key, text }] · world.stalePlans() → [{ resident, reasons }] · world.reviewPlan(residentId)
 //   world.coverage (src/systems/coverage.js) · world.team (the staff without agency workers)
 //   world.moveStaff(id, shiftId | 'off') · world.setFloat(id, on) · world.setOnCall(on)
 //   world.serialize() → { clock, residents, staff, care, admissions, ledger }   (the run save; the page keeps the rest)
@@ -58,6 +63,9 @@ import { ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTas
 import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkPct } from './staffTeam.js';
 import { createRoster } from './roster.js';
 import { createCoverage } from './coverage.js';
+import { eligibilityOf, optionPrefOf, staleReasons, markReviewed, noteDay, admissionPlan } from './carePlanRules.js';
+import { optionById, domainById, OPTION_PREF_MOOD } from '../../data/carePlans.js';
+import { SHIFT_IDS } from '../../data/shifts.js';
 import { createCrew } from './staffCrew.js';
 import { createAdmissions } from './admissions.js';
 import { createLedger } from './ledger.js';
@@ -426,6 +434,14 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   }
   assignSys.refresh();
 
+  // Milestone 8: a task from an option they refuse is refused the moment it comes up — logged on their card.
+  function logRefused(p, tasks) {
+    for (const t of tasks ?? []) {
+      if (!t.optionRefused) continue;
+      log(p, `Refused: ${label(t)} (${optionById(t.optionId)?.name ?? 'plan option'})`);
+      bus?.emit('care:task', { id: t.id, type: t.type, status: 'refused', resident: t.resident });
+    }
+  }
   // Each frame: plan the band's tasks, ring bells, close what is overdue, move the work on, and let free staff pick.
   const REACH = 1.6 * HOME.cellSize; // "at their side" while they are walking
   function tickTasks(hours) {
@@ -434,7 +450,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (!care.gen[inst.key]) {
       care.gen[inst.key] = true;
       pruneTasks(care, clock.totalDays);
-      for (const p of residents) if (joined(p)) generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p) });
+      for (const p of residents) if (joined(p)) logRefused(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p) }));
     }
     for (const p of residents) {
       if (!joined(p)) continue;
@@ -517,6 +533,30 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   };
   const payers = () => residents.map((p) => ({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: p.state.admittedDay ?? 0 }));
   const payroll = () => team().map((q) => ({ id: q.id, name: q.name, salary: q.model.salary })); // agency is paid per shift
+  // --- care-plan rules (Milestone 8) -------------------------------------------------------------------------------
+  const PLACEABLE_ROOMS = new Set(['RM01']); // room templates the home can place (Build Mode, Milestone 10)
+  const facilityIds = () => new Set(placed.filter((x) => x.kind !== 'room').map((x) => x.id));
+  // What an option's eligibility rule reads: the resident, the team and roster, the rooms / facilities / programs.
+  function planCtx(p) {
+    const shiftRoles = Object.fromEntries(SHIFT_IDS.map((sid) => [sid, new Set()]));
+    const shiftCounts = Object.fromEntries(SHIFT_IDS.map((sid) => [sid, 0]));
+    for (const q of team()) {
+      const sid = roster.shiftOf(q.id)?.id;
+      if (!shiftRoles[sid]) continue;
+      shiftRoles[sid].add(q.role);
+      shiftCounts[sid]++;
+    }
+    return { name: p.name, needs: p.state.needs, level: supportLevel(p.def), support: p.def.support, stay: p.def.stay, visitors: p.def.visitors, teamRoles: teamRoles(), shiftRoles, shiftCounts, rooms: PLACEABLE_ROOMS, facilities: facilityIds(), programs: new Set() };
+  }
+  // End of a day: who had essential care missed (a run of such days makes their plan stale).
+  function noteMissed(day) {
+    for (const p of residents) {
+      if (!joined(p)) continue;
+      noteDay(p.state, day, care.tasks.some((t) => t.resident === p.id && t.day === day && t.status === 'missed' && t.essential));
+    }
+  }
+  // A plan never reviewed on this save (a new game, or an M7-era save): reviewed as of now, not stale.
+  for (const p of residents) if (p.state.review == null) markReviewed(p.state, clock.totalDays);
   const tickAdmissions = (day) => {
     const r = admissions.tick(day, { inHome: inHome() });
     if (r.left.length || r.arrived.length) bus?.emit('admissions:change', { day, left: r.left.map((a) => a.id), arrived: r.arrived.map((a) => a.id) });
@@ -528,6 +568,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     staffState.founder.history.daysEmployed += 1;
     bus?.emit('care:dayEnd', world.daySummary(day - 1));
     if (shortStaffing) coverage.dayEnd(day - 1); // care recovery for yesterday's missed essential tasks (Milestone 7)
+    noteMissed(day - 1); // Milestone 8: the missed-essential streak (plan review)
     tickAdmissions(day);
     if (day % clock.daysPerMonth === 0) {
       const d = clock.dateOf(day - 1);
@@ -674,6 +715,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     changePlan(domain, optionId, residentId = ARTHUR) {
       const p = byResident(residentId);
       if (!p) return { ok: false, reason: 'No such resident.' };
+      // Milestone 8: only an eligible option (the current one may stay even if its rule no longer passes)
+      if (p.state.plan?.[domain] !== optionId) {
+        const el = eligibilityOf(optionId, planCtx(p));
+        if (!el.ok) return { ok: false, reason: el.reason };
+      }
       const inst = bandInstance(hourNow(), clock.totalDays);
       const r = changePlan(care, p.state, domain, optionId, { day: inst.day, band: inst.band, now: absNow(), rolesOnShift, stepOver: stepOverFor(p), roleOf: (id) => crew.byId(id)?.role });
       // anyone whose task was taken away or no longer fits goes back to their post
@@ -684,9 +730,40 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       assignSys.refresh();
       if (r.ok && r.changed) {
         log(p, r.text);
+        logRefused(p, care.tasks.filter((t) => t.resident === p.id && t.optionId === optionId && t.optionRefused && t.day === inst.day));
+        // Milestone 8: choosing an option they dislike costs a little Mood (a preferred one lifts it)
+        const pref = optionPrefOf(p.state, optionId);
+        const mood = OPTION_PREF_MOOD[pref] ?? 0;
+        if (mood) {
+          p.state.outcomes.mood = clamp(p.state.outcomes.mood + mood);
+          log(p, pref === 'dislike' ? `Unhappy with ${optionById(optionId).name} (Mood ${mood})` : `Pleased with ${optionById(optionId).name} (Mood +${mood})`);
+        }
+        r.mood = mood;
         bus?.emit('care:plan', { resident: p.id, domain, option: optionId });
       }
       return r;
+    },
+    // --- Milestone 8 ------------------------------------------------------------------------------------------
+    planCtx: (residentId = ARTHUR) => (byResident(residentId) ? planCtx(byResident(residentId)) : null),
+    eligibility(optionId, residentId = ARTHUR) {
+      const p = byResident(residentId);
+      return p ? eligibilityOf(optionId, planCtx(p)) : { ok: false, reason: 'No such resident.' };
+    },
+    optionPref: (optionId, residentId = ARTHUR) => optionPrefOf(byResident(residentId)?.state, optionId),
+    staleOf: (residentId = ARTHUR) => (byResident(residentId) ? staleReasons(byResident(residentId).state, clock.totalDays) : []),
+    stalePlans: () => residents.map((p) => ({ resident: p.id, reasons: staleReasons(p.state, clock.totalDays) })).filter((x) => x.reasons.length),
+    // Review: confirm (or change) the options, then tap Reviewed. The Founder's history counts it when they are on
+    // shift to take part (the RN on shift leads the review).
+    reviewPlan(residentId = ARTHUR) {
+      const p = byResident(residentId);
+      if (!p) return { ok: false, reason: 'No such resident.' };
+      markReviewed(p.state, clock.totalDays);
+      const f = staffState.founder;
+      const founderOn = roster.onShift(f.id);
+      if (founderOn) f.history.carePlanReviews = (f.history.carePlanReviews ?? 0) + 1;
+      log(p, founderOn ? `Care plan reviewed (with ${helperName(f.id)})` : 'Care plan reviewed');
+      bus?.emit('care:review', { resident: p.id, founder: founderOn });
+      return { ok: true, reason: null, founder: founderOn };
     },
     // Today's tasks for a resident (Arthur by default), in the order they open (the card's list).
     tasksToday(residentId = ARTHUR) {
@@ -785,6 +862,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       st.needs = { ...app.needs };
       st.outcomes = { ...app.outcomes };
       st.admittedDay = clock.totalDays;
+      // Milestone 8: a first plan from their primary support, and a first review due (the plan starts stale)
+      st.plan = admissionPlan(def, st, planCtx({ name: def.name, def, state: st }));
+      st.review = { day: null, needs: null, reasons: [] };
       const inst = bandInstance(hourNow(), clock.totalDays);
       st.joinAt = bandEnd(inst.band, inst.day); // from the next band
       const p = addResident(st, { atEntrance: true });
@@ -796,7 +876,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return { ok: true, reason: null, resident: p };
     },
     serialize() {
-      for (const p of residents) p.state.pos = { x: p.agent.x, y: p.agent.y };
+      for (const p of residents) {
+        p.state.pos = { x: p.agent.x, y: p.agent.y };
+        if (p.state.review) p.state.review.reasons = staleReasons(p.state, clock.totalDays).map((r) => r.text); // (Milestone 8)
+      }
       for (const a of staffState.roster.agency) a.model = sys.get(a.id)?.toJSON() ?? null;
       const agencyIds = new Set(staffState.roster.agency.map((a) => a.id));
       staffState.staff = sys.serialize().filter((m) => !agencyIds.has(m.id));

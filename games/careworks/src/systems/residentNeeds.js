@@ -23,7 +23,10 @@ export function newResidentState(def, { room = null } = {}) {
     needs: { ...def.needs },
     outcomes: { ...def.outcomes },
     prefs: { ...def.prefs },
+    optionPrefs: { ...(def.optionPrefs ?? {}) }, // Milestone 8: care-plan option preferences (overrides live here too)
     plan: ensurePlan(def.plan), // Milestone 4: one care-plan option per domain (data/carePlans.js)
+    review: null, // Milestone 8: { day, needs, reasons } (null: the home world marks it reviewed on load / at a new game)
+    missStreak: { days: 0, lastDay: null }, // Milestone 8: days running with essential care missed
     room,
     step: null, // { id, day, status: 'walking' | 'doing' | 'refused' }
     log: [], // today's log: [{ t: "07:10", text: "Woke" }]
@@ -39,6 +42,8 @@ export function ensureResidentState(saved, def, { room = null } = {}) {
   out.needs = { ...fresh.needs, ...(saved.needs ?? {}) };
   out.outcomes = { ...fresh.outcomes, ...(saved.outcomes ?? {}) };
   out.prefs = { ...fresh.prefs, ...(saved.prefs ?? {}) };
+  out.optionPrefs = { ...fresh.optionPrefs, ...(saved.optionPrefs ?? {}) };
+  out.missStreak = { ...fresh.missStreak, ...(saved.missStreak ?? {}) };
   out.plan = ensurePlan(saved.plan, fresh.plan); // an M1–M3 save has none: the defaults from data
   out.room = saved.room ?? room;
   out.log = Array.isArray(saved.log) ? saved.log : [];

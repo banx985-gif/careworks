@@ -15,7 +15,7 @@
 //   template the home must have free, { role } a role someone on the team must have; urgency 'Low' | 'Medium' | 'High'.
 //   Their needs vary a little at admission (ADMISSION.needVariation), inside 0–100.
 
-import { DOMAINS, optionById, PLAN_PREF_KEYS } from './carePlans.js';
+import { DOMAINS, optionById, PLAN_PREF_KEYS, OPTION_PREFS_BY_PERSONALITY } from './carePlans.js';
 
 export const NEEDS = [
   { id: 'personal', name: 'Personal Support' },
@@ -93,6 +93,7 @@ const applicant = (n, name, age, support, personality, interest, visitors, stay,
   needs: Object.fromEntries(NEED_IDS.map((id, i) => [id, BY_SUPPORT[support].needs[i]])),
   outcomes: { comfort: outcomes[0], independence: outcomes[1], mood: outcomes[2], connection: outcomes[3], safety: outcomes[4] },
   prefs: { wake: 'accept', breakfast: 'accept', rest: 'accept', cards: 'accept', dinner: 'accept', settle: 'accept', groupActivity: 'accept', ...BY_PERSONALITY[personality] },
+  optionPrefs: { ...(OPTION_PREFS_BY_PERSONALITY[personality] ?? {}) }, // Milestone 8: care-plan options (data/carePlans.js)
   plan: { ...DEFAULT_PLAN, ...BY_SUPPORT[support].plan },
   room: ADMIT_RULES[support]?.room ?? 'RM01',
   ...(ADMIT_RULES[support]?.needs ? { requires: { ...ADMIT_RULES[support].needs } } : {}),
@@ -127,6 +128,8 @@ export const RESIDENTS = [
     outcomes: { comfort: 70, independence: 78, mood: 72, connection: 60, safety: 80 },
     // Warm and sociable: loves his Cards and a good breakfast, would rather not sit in his room mid-morning.
     prefs: { wake: 'accept', breakfast: 'prefer', rest: 'dislike', cards: 'prefer', dinner: 'accept', settle: 'accept', groupActivity: 'accept' },
+    // Milestone 8: care-plan options he prefers / dislikes / refuses (the rest: accept) — Warm, like his personality row
+    optionPrefs: { ...OPTION_PREFS_BY_PERSONALITY.Warm },
     // Milestone 4: his starting care plan (data/carePlans.js) — light support, so the first option in every domain.
     plan: { PC: 'PC01', CL: 'CL01', MO: 'MO01', NU: 'NU01', SO: 'SO01', EN: 'EN01' },
     room: 'RM01',
@@ -164,6 +167,11 @@ export function validateResidents(v, list = RESIDENTS, stepIds = []) {
     for (const [step, p] of Object.entries(r.prefs ?? {})) {
       v.check(PREFS.includes(p), `${who}: preference "${p}" for ${step}`);
       if (steps.size) v.ref(who, 'routine step', step, steps);
+    }
+    // Milestone 8: care-plan option preferences
+    for (const [id, p] of Object.entries(r.optionPrefs ?? {})) {
+      v.check(PREFS.includes(p), `${who}: option preference "${p}" for ${id}`);
+      v.check(!!optionById(id), `${who}: option preference for an unknown option ${id}`);
     }
     // the care plan: exactly one known option per domain
     v.check(!!r.plan && Object.keys(r.plan).length === DOMAINS.length, `${who}: plan needs one option per domain`);
