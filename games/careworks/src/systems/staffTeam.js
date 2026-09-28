@@ -57,6 +57,8 @@ export function newStaffState(founderId) {
     assignments: {}, // routine step id → staff id (none = automatic)
     noCandidates: [founder], // bible §3.5.4: the Founder never appears again as a candidate
     pos: {}, // staff id → { x, y } where they were (a reload puts them back)
+    bandDone: {}, // Milestone 4: staff id → tasks finished this band (the task AI's workload)
+    modes: {}, // Milestone 4: staff id → { mode, postIndex, stay } (a reload carries on the same walk)
   };
 }
 
@@ -71,6 +73,8 @@ export function ensureStaffState(saved, founderId) {
     assignments: { ...(saved.assignments ?? {}) },
     noCandidates: [...new Set([...(saved.noCandidates ?? []), fresh.founder.id])],
     pos: { ...(saved.pos ?? {}) },
+    bandDone: { ...(saved.bandDone ?? {}) },
+    modes: { ...(saved.modes ?? {}) },
   };
 }
 

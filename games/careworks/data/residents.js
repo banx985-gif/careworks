@@ -7,7 +7,11 @@
 //   needs:    the six care-need domains, 0–100 (higher = more support needed right now)
 //   outcomes: the five displayed outcomes, 0–100 (higher = better)
 //   prefs:    each routine step and activity → 'accept' | 'prefer' | 'dislike' | 'refuse' (bible §6: a refusal is a
-//             normal choice, never a failure). Anything not listed is 'accept'.
+//             normal choice, never a failure). Anything not listed is 'accept'. Keys: routine step ids, and the
+//             preference keys of care-plan tasks (Milestone 4, e.g. groupActivity).
+//   plan:     the starting care plan, one option id per domain (Milestone 4, data/carePlans.js)
+
+import { DOMAINS, optionById, PLAN_PREF_KEYS } from './carePlans.js';
 
 export const NEEDS = [
   { id: 'personal', name: 'Personal Support' },
@@ -42,14 +46,16 @@ export const RESIDENTS = [
     needs: { personal: 20, clinical: 12, mobility: 18, nutrition: 30, memory: 10, social: 28 },
     outcomes: { comfort: 70, independence: 78, mood: 72, connection: 60, safety: 80 },
     // Warm and sociable: loves his Cards and a good breakfast, would rather not sit in his room mid-morning.
-    prefs: { wake: 'accept', breakfast: 'prefer', rest: 'dislike', cards: 'prefer', dinner: 'accept', settle: 'accept' },
+    prefs: { wake: 'accept', breakfast: 'prefer', rest: 'dislike', cards: 'prefer', dinner: 'accept', settle: 'accept', groupActivity: 'accept' },
+    // Milestone 4: his starting care plan (data/carePlans.js) — light support, so the first option in every domain.
+    plan: { PC: 'PC01', CL: 'CL01', MO: 'MO01', NU: 'NU01', SO: 'SO01', EN: 'EN01' },
   },
 ];
 export const residentById = (id) => RESIDENTS.find((r) => r.id === id) ?? null;
 
 // Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator.
 export function validateResidents(v, list = RESIDENTS, stepIds = []) {
-  const steps = new Set(stepIds);
+  const steps = new Set([...stepIds, ...PLAN_PREF_KEYS]);
   v.uniqueIds('residents', list);
   for (const r of list) {
     const who = `resident ${r.id}`;
@@ -66,6 +72,9 @@ export function validateResidents(v, list = RESIDENTS, stepIds = []) {
       v.check(PREFS.includes(p), `${who}: preference "${p}" for ${step}`);
       if (steps.size) v.ref(who, 'routine step', step, steps);
     }
+    // the care plan: exactly one known option per domain
+    v.check(!!r.plan && Object.keys(r.plan).length === DOMAINS.length, `${who}: plan needs one option per domain`);
+    for (const d of DOMAINS) v.check(optionById(r.plan?.[d.id])?.domain === d.id, `${who}: plan ${d.id} is not a ${d.name} option`);
   }
   return v;
 }

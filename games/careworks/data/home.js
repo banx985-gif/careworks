@@ -82,6 +82,10 @@ export const SPOTS = {
   'help.room': { col: 3, row: 4 },
   'help.dining': { col: 9, row: 12 },
   'help.lounge': { col: 5, row: 14 },
+  // Milestone 4: a second spot at each, for when two people come to him at once (e.g. breakfast and the medicine round)
+  'help.room2': { col: 1, row: 4 },
+  'help.dining2': { col: 7, row: 12 },
+  'help.lounge2': { col: 3, row: 14 },
   // off shift: standing down in the lounge (the Staff Room area until the Staff Room exists)
   'rest.1': { col: 8, row: 15 },
   'rest.2': { col: 10, row: 15 },
@@ -100,6 +104,7 @@ export const POSTS = {
 };
 // Where a helper stands for each routine place.
 export const HELP_SPOTS = { room: 'help.room', dining: 'help.dining', lounge: 'help.lounge' };
+export const HELP_SPOTS_2 = { room: 'help.room2', dining: 'help.dining2', lounge: 'help.lounge2' };
 
 // Colours drawn by code: residential, not hospital — warm cream, sage and timber.
 export const HOME_LOOK = {

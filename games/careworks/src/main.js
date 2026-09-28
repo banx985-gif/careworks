@@ -29,11 +29,14 @@ import { createCampaigns } from './app/campaigns.js';
 import { paletteById } from '../data/setup.js';
 import { NEEDS, OUTCOMES, RESIDENTS, validateResidents } from '../data/residents.js';
 import { DataValidator } from '../../../core/DataValidator.js';
-import { ROUTINE, LOG_SHOWN } from '../data/routine.js';
+import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
 import { ROLES, STATS, TIERS } from '../data/roles.js';
 import { TRAITS, STAFF, validateStaff } from '../data/staff.js';
 import { SHIFTS } from '../data/balance.js';
 import { FOUNDERS } from '../data/setup.js';
+import { DOMAINS, CARE_OPTIONS, optionById, optionsFor, validateCarePlans } from '../data/carePlans.js';
+import { TASK_TYPES, BELL } from '../data/tasks.js';
+import { familiarityOf } from './systems/careTasks.js';
 import { clockText } from './systems/residentNeeds.js';
 import { yearsEmployed } from './systems/staffTeam.js';
 import { createHomeWorld, makeClock } from './systems/homeWorld.js';
@@ -182,7 +185,7 @@ let open = null; // { n, data, world } — the campaign on screen and its home w
 function openRun(n, data) {
   const clock = makeClock(bus);
   if (data.clock) clock.load(data.clock);
-  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, resident: data.residents?.[0], staff: data.staff, seed: data.seed, bus });
+  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, resident: data.residents?.[0], staff: data.staff, care: data.care, seed: data.seed, bus });
   if (debug.enabled && PARAMS.get('paused') === '1') clock.speed = 0; // ?debug=1&paused=1: open exactly as saved (tests)
   open = { n, data, world };
 }
@@ -198,7 +201,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'clock:speed', 'staff:onShift', 'staff:offShift'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift'],
   save: () => saveRun(),
   stamp: () => (open ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && router.currentName === 'home' && !open.world.clock.paused,
@@ -220,6 +223,10 @@ async function prepareSaves() {
     const s = validateStaff(new DataValidator(), STAFF).report();
     debug.log(s.ok ? `staff: ${STAFF.length} checked` : `staff data: ${s.errors.join('; ')}`);
     if (!s.ok) console.error('[CAREWORKS] staff data', s.errors);
+    const known = { taskTypes: Object.keys(TASK_TYPES), steps: ROUTINE.map((x) => x.id), bands: BANDS.map((b) => b.id), needs: NEEDS.map((n) => n.id), outcomes: OUTCOMES.map((o) => o.id), roles: Object.keys(ROLES) };
+    const c = validateCarePlans(new DataValidator(), known).report();
+    debug.log(c.ok ? `care options: ${CARE_OPTIONS.length} checked` : `care plan data: ${c.errors.join('; ')}`);
+    if (!c.ok) console.error('[CAREWORKS] care plan data', c.errors);
   }
 }
 const cards = () => campaigns?.cards ?? [];
@@ -344,9 +351,11 @@ function leaveSetup() {
   router.go(to?.name ?? 'menu', to?.params ?? {});
 }
 const setupScreen = createSetupScreen({ layout, assets, textPrompt, onBack: () => leaveSetup(), onStart: (n, setup) => startFacility(n, setup) });
-// The home (Milestones 1–3). Tapping Arthur, a staff member or a place opens its sheet (rebuilt every frame, so it stays
+// The home (Milestones 1–4). Tapping Arthur, a staff member or a place opens its sheet (rebuilt every frame, so it stays
 // live). Arthur's card (Milestone 2): what he is doing now, his six needs and five outcomes as bars, today's log and
-// his likes and dislikes; Milestone 3 adds who helps with each step (a picker). The room card names its resident.
+// his likes and dislikes; Milestone 3 adds who helps with each step (a picker, which since Milestone 4 pins that step's
+// task). Milestone 4: the Care Plan section (six rows, each opening its domain's options), today's care tasks, the call
+// bells (the last five and the average response) and Familiar Care. The room card names its resident.
 const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), debug });
 const stepName = (id) => ROUTINE.find((s) => s.id === id)?.name ?? id;
 function residentSections(w, it) {
@@ -355,14 +364,94 @@ function residentSections(w, it) {
   const log = st.log.slice(-LOG_SHOWN).map((e) => `${e.t}  ${e.text}`);
   const pick = (p) => ROUTINE.filter((s) => (st.prefs[s.id] ?? 'accept') === p).map((s) => (s.activity ? s.name : s.name.toLowerCase()));
   const likes = [pick('prefer').length && `Enjoys: ${pick('prefer').join(', ')}`, pick('dislike').length && `Would rather not: ${pick('dislike').join(', ')}`, pick('refuse').length && `Says no to: ${pick('refuse').join(', ')}`].filter(Boolean);
+  const bell = w.bell;
   return [
-    { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }] },
+    { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : [])] },
+    { title: 'Care Plan', lines: [{ text: 'Tap a row to change it. A change shapes tomorrow\'s tasks, and today\'s where that part hasn\'t happened yet.', color: COL.textMuted }], buttons: planButtons(st), columns: 1 },
+    { title: 'Tasks today', lines: taskLines(w) },
+    { title: 'Call bells', lines: bellLines(w) },
+    { title: 'Familiar Care', lines: familiarLines(w) },
     { title: 'Needs', lines: [{ text: 'How much support he needs right now', color: COL.textMuted }], bars: NEEDS.map((n) => ({ label: n.name, value: st.needs[n.id], color: COL.progress })) },
     { title: 'Outcomes', bars: OUTCOMES.map((o) => ({ label: o.name, value: st.outcomes[o.id], color: COL.good })) },
     { title: 'Today', lines: log.length ? log : ['Nothing yet today'] },
     { title: 'Likes and dislikes', lines: likes },
-    { title: 'Who helps', lines: [{ text: 'Tap a step to choose who helps (Auto: the first free person on shift whose role fits)', color: COL.textMuted }], buttons: helpButtons(w), columns: 2 },
+    { title: 'Who helps', lines: [{ text: 'Staff pick their own tasks. Tap a step to pin it to one person (Auto: whoever scores best).', color: COL.textMuted }], buttons: helpButtons(w), columns: 2 },
   ];
+}
+// Milestone 4: the Care Plan section — one row per domain (bible §9), tap → that domain's options.
+const needName = (id) => NEEDS.find((n) => n.id === id)?.name ?? id;
+const first = (name) => name.split(' ')[0];
+function planButtons(st) {
+  return DOMAINS.map((d) => {
+    const o = optionById(st.plan?.[d.id]);
+    return { id: `plan:${d.id}`, label: d.name, sub: o ? o.name : 'Not set', accent: COL.progress, onTap: () => openPlanPicker(d.id) };
+  });
+}
+// "07:00  Wake up · done with Ruby"
+const TASK_WORDS = { open: 'to do', claimed: 'on the way', working: 'being helped', done: 'done', missed: 'missed', refused: 'said no', self: 'on his own', unstaffed: 'no one on shift' };
+function taskLines(w) {
+  const tasks = w.tasksToday().filter((t) => t.type !== 'bell');
+  if (!tasks.length) return [{ text: 'No care tasks planned for this band (no one is on shift).', color: COL.textMuted }];
+  return tasks.sort((a, b) => (a.at ?? a.opens % 24) - (b.at ?? b.opens % 24)).map((t) => {
+    const who = t.slots[0] ? ` · ${first(w.byId(t.slots[0])?.name ?? t.slots[0])}` : '';
+    const at = t.at ?? t.opens % 24;
+    const word = t.status === 'open' && t.opens > w.clock.totalDays * 24 + w.hour ? 'later' : TASK_WORDS[t.status];
+    const color = t.status === 'missed' ? COL.bad : t.status === 'done' ? COL.good : t.status === 'open' ? COL.textMuted : COL.actionDark;
+    return { text: `${clockText(at)}  ${t.name} · ${word}${who}`, color };
+  });
+}
+function bellLines(w) {
+  const b = w.bellSummary();
+  const lines = [];
+  if (!b.last.length) lines.push({ text: 'No call bells yet.', color: COL.textMuted });
+  else {
+    lines.push(`Last ${b.last.length}: ${b.last.map((r) => `${r.minutes} min`).join(' · ')}`);
+    lines.push({ text: `Average response: ${Math.round(b.avg)} min (${b.count} bell${b.count === 1 ? '' : 's'} so far)`, color: COL.actionDark });
+  }
+  lines.push({ text: `He rings when a need reaches ${BELL.line}; the time counts until someone is at his side.`, color: COL.textMuted });
+  return lines;
+}
+function familiarLines(w) {
+  const top = w.mostFamiliar();
+  const counts = w.staff.map((p) => `${first(p.name)} ${familiarityOf(w.care, 'RES01', p.id)}`).join(' · ');
+  return [{ text: top ? `Most familiar: ${w.byId(top).name}` : 'Most familiar: nobody yet', color: COL.actionDark }, { text: `Care together: ${counts}`, color: COL.textMuted }];
+}
+// "Mobility for Arthur": the domain's options (two each until Milestone 8), the current one marked.
+function openPlanPicker(domainId) {
+  sheet.open(() => {
+    const w = open?.world;
+    const d = DOMAINS.find((x) => x.id === domainId);
+    if (!w || !d) return { title: '', sections: [] };
+    const st = w.resident.state;
+    const current = st.plan?.[d.id];
+    const choose = (id) => {
+      const r = w.changePlan(d.id, id);
+      if (r.ok && r.changed) autosave.request('plan');
+      openHomeSheet('RES01');
+    };
+    return {
+      title: `${d.name} for Arthur`,
+      subtitle: 'Care plan · pick one option. More options arrive later.',
+      art: 'resident_res01',
+      accent: paletteById(open.data.facility.palette).hex,
+      sections: [
+        { lines: optionsFor(d.id).map((o) => ({ text: `${o.name}: ${o.text}`, color: o.id === current ? COL.actionDark : COL.text })) },
+        {
+          columns: 1,
+          buttons: [
+            ...optionsFor(d.id).map((o) => ({
+              id: `option:${o.id}`,
+              label: o.name,
+              sub: `${o.roles.map((r) => ROLES[r].short).join(' / ')} · about ${o.minutesPerDay} min a day${o.id === current ? ' · current' : ''}`,
+              accent: o.id === current ? COL.good : COL.progress,
+              onTap: () => choose(o.id),
+            })),
+            { id: 'option:back', label: '‹ Back to Arthur', accent: COL.progress, onTap: () => openHomeSheet('RES01') },
+          ],
+        },
+      ],
+    };
+  });
 }
 // Milestone 3: one button per routine step — who will help with it.
 const onMorningShift = (step) => step.at >= SHIFTS.morning.from && step.at < SHIFTS.morning.to;
@@ -412,7 +501,7 @@ function openPicker(stepId) {
         {
           columns: 1,
           buttons: [
-            { id: 'pick:auto', label: 'Auto', sub: 'The first free person on shift whose role fits', accent: chosen ? COL.progress : COL.good, onTap: () => pick(null) },
+            { id: 'pick:auto', label: 'Auto', sub: 'Staff pick it themselves by urgency, role, familiarity and distance', accent: chosen ? COL.progress : COL.good, onTap: () => pick(null) },
             ...w.staff.map((p) => {
               const fits = step.roles.includes(p.role);
               return { id: `pick:${p.id}`, label: p.name, sub: `${ROLES[p.role].name}${fits ? '' : ' · role does not fit'}${chosen === p.id ? ' · chosen' : ''}`, icon: p.art, accent: !fits ? COL.textFaint : chosen === p.id ? COL.good : COL.progress, onTap: () => pick(p.id) };
@@ -434,7 +523,7 @@ function staffMenu(w, p, accent) {
   const h = w.staffState.founder.history;
   const status = [m.status.tired && 'Tired', m.status.stressed && 'Stressed'].filter(Boolean);
   const sections = [
-    { lines: [{ text: w.stateOf(p), color: COL.actionDark }, w.roster.label(p.id), `Tasks helped with: ${m.counters.tasks ?? 0} · Salary ${m.salary} Credits a month`] },
+    { lines: [{ text: w.stateOf(p), color: COL.actionDark }, w.roster.label(p.id), `Tasks helped with: ${m.counters.tasks ?? 0} · Salary ${m.salary} Credits a month`, `Familiar with Arthur: ${familiarityOf(w.care, 'RES01', p.id)}${w.mostFamiliar() === p.id ? ' (his most familiar)' : ''}`] },
     { title: 'Stats', bars: STATS.map((s) => ({ label: s.name, value: m.stats[s.id], max: cap, color: s.id === ROLES[m.role].primaryStat ? COL.action : COL.progress })) },
     { title: status.length ? `Energy and Morale · ${status.join(', ')}` : 'Energy and Morale', bars: [{ label: 'Energy', value: m.energy, color: m.energy < 25 ? COL.bad : COL.good }, { label: 'Morale', value: m.morale, color: m.morale < 25 ? COL.bad : COL.gold }] },
     { title: 'Trait', lines: [trait ? `${trait.name}: ${trait.text}` : 'None'] },

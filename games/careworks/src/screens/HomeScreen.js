@@ -7,6 +7,8 @@
 // Milestone 2: the game clock's day, month, year, band and time as plain code text under the top row, with Pause / 1×
 // (2× / 4× shown locked until Milestone 5 — not the real top bar yet); Arthur now lives his daily routine
 // (src/systems/homeWorld.js); the home dims a little at night.
+// Milestone 4: a small code-drawn marker over each helper's head (one shape per task type, no text) and the ringing
+// call bell over Arthur (src/ui/taskMarkers.js); the art pass is Milestone 5.
 // Plan space lives in the world; only drawing and tapping go through the IsoProjection here.
 //   createHomeScreen({ renderer, layout, assets, bus, sheet, campaign, world, openSheet(kind, id), onMenu, debug })
 //   campaign() → { n, data } of the open slot · world() → its home world (main makes one per opened campaign)
@@ -23,6 +25,8 @@ import { HOME, FLOORS, ART_DRAW, PERSON, HOME_LOOK as L, WALLS } from '../../dat
 import { paletteById } from '../../data/setup.js';
 import { wallTiles } from '../systems/homeWorld.js';
 import { bandAt, clockText } from '../systems/residentNeeds.js';
+import { TASK_TYPES } from '../../data/tasks.js';
+import { drawTaskMarker, drawBellMarker } from '../ui/taskMarkers.js';
 
 const C = THEME.color;
 const S = THEME.size;
@@ -336,6 +340,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       drawNight(ctx);
       // Name tags in screen space: always the small text size (28), whatever the zoom.
       for (const p of world.people) drawTag(ctx, p);
+      drawMarkers(ctx); // Milestone 4: task markers over helpers' heads, the call bell over Arthur
       if (buildMode) drawBanner(ctx);
       else {
         drawButton(ctx, menuRect(), '‹ Menu', { accent: C.progress });
@@ -505,6 +510,32 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     ctx.fillText(label, s.x, y + h / 2 + 1);
     ctx.restore();
   }
+  // Milestone 4: a small badge over each helper's head (one shape per task type, no text) and the bell over a resident
+  // whose call bell is ringing. Screen space, above the name tag, the same size at any zoom.
+  const MARK_R = 34;
+  let markT = 0;
+  function markerAt(p) {
+    const r = personRect(p);
+    const s = camera.worldToScreen(r.x + r.w / 2, r.y + r.h * 0.02);
+    return { x: s.x, y: s.y - 48 - 6 - 12 - MARK_R * 1.35 };
+  }
+  function drawMarkers(ctx) {
+    markT = performance.now() / 1000;
+    const onScreen = (m) => m.y > camera.viewY - MARK_R && m.y < camera.viewY + camera.viewH;
+    for (const p of world.staff) {
+      const t = world.taskOf(p);
+      if (!t) continue;
+      const m = markerAt(p);
+      if (onScreen(m)) drawTaskMarker(ctx, m.x, m.y, MARK_R, TASK_TYPES[t.type].icon, { ring: t.status === 'working' ? C.good : C.outline });
+    }
+    if (world.bell) {
+      const m = markerAt(world.resident);
+      if (onScreen(m)) drawBellMarker(ctx, m.x, m.y, MARK_R * 1.15, markT);
+    }
+  }
+  // Where a person's marker is drawn (tests).
+  screen.markerPoint = (id) => markerAt(world.byId(id));
+
   function drawFacilityName(ctx) {
     const m = menuRect();
     const sr = layout.safeRect;

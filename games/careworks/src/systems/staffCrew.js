@@ -6,9 +6,9 @@
 //   crew.people                       [{ kind: 'staff', id, name, art, line, model, agent, mode, … }]
 //   crew.update(g, hours)             g = game-seconds this step, hours = game hours this step
 //   crew.canHelp(id, step) → { ok, reason }        the role rule, in plain words (the resident card's picker)
-//   crew.pickHelper(step, chosenId) → id | null    the chosen person if they can, else the first eligible free one on shift
-//   crew.startHelp(id, step, place, onArrive)      walk to Arthur's side; onArrive() when there
-//   crew.finishHelp(id) · crew.releaseHelp(id)     the step happened (task counted) / never mind (back to their post)
+//   crew.isFree(p) · crew.tooTired(p)              Milestone 4: they pick their own tasks (src/systems/homeWorld.js)
+//   crew.startTask(id, task, spot) · crew.retarget(id, spot) · crew.resumeTask(id, task, spot, arrived)
+//   crew.finishTask(id) · crew.releaseTask(id)     done (task counted) / never mind (back to their post)
 //   crew.stateOf(person) → "On shift at the Nurse Station" …
 import { Agent } from '../../../../core/Agent.js';
 import { POSTS, HELP_SPOTS, PERSON } from '../../data/home.js';
@@ -38,7 +38,8 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       mode: 'post', // post · toHelp · helping · toRest · resting
       postIndex: 0,
       stay: 1 + i * 1.5, // game-seconds before the first move (so they don't all set off together)
-      task: null, // { stepId, stepName, onArrive, arrived }
+      task: null, // Milestone 4: { id (care task id), type, label, room, spot, arrived }
+      bandDone: state.bandDone?.[model.id] ?? 0, // tasks finished this band (the AI's workload)
     };
     p.agent = new Agent({ id: model.id, name: model.name, speed: PERSON.speed, noPathTeleportSec: 3 });
     const at = state.pos?.[model.id];
@@ -71,6 +72,17 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
     p.agent.placeAtTile(grid, t.col, t.row);
     p.mode = 'resting';
   }
+  // After a reload (Milestone 4): back to what they were doing — resting, walking to rest, or on their way to a post
+  // (a task they were on is picked up again by the home world).
+  for (const p of people) {
+    const was = state.modes?.[p.id];
+    if (!was || !state.pos?.[p.id]) continue;
+    p.postIndex = was.postIndex ?? 0;
+    p.stay = was.stay ?? p.stay;
+    if (was.mode === 'resting') p.mode = 'resting';
+    else if (was.mode === 'toRest') walk(p, p.restSpot, 'toRest', () => (p.mode = 'resting'));
+    else if (was.mode === 'toPost') toPost(p);
+  }
 
   function tickNumbers(p, hours) {
     const m = p.model;
@@ -94,7 +106,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
         tickNumbers(p, hours);
         const shift = onShift(p);
         if (!shift && p.mode !== 'toRest' && p.mode !== 'resting') {
-          if (p.task) crew.releaseHelp(p.id);
+          if (p.task) crew.releaseTask(p.id);
           walk(p, p.restSpot, 'toRest', () => (p.mode = 'resting'));
           bus?.emit('staff:offShift', { id: p.id });
         } else if (shift && (p.mode === 'toRest' || p.mode === 'resting')) {
@@ -117,33 +129,43 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       }
       return { ok: true, reason: null };
     },
-    // Free = on shift, not already helping. Auto skips anyone nearly out of Energy.
-    pickHelper(step, chosenId = null) {
-      const free = (p) => onShift(p) && !p.task && step.roles?.includes(p.role);
-      const chosen = chosenId && byId(chosenId);
-      if (chosen && free(chosen)) return chosen.id;
-      return people.find((p) => free(p) && p.model.energy >= B.tooTiredBelow)?.id ?? null;
-    },
-    startHelp(id, step, place, onArrive) {
+    // Free to pick a task (Milestone 4: they pick it themselves, src/systems/homeWorld.js): on shift, not on a task,
+    // not going off to rest. tired: Energy is below the line (only a task pinned to them, or a call bell, then).
+    isFree: (p) => onShift(p) && !p.task && p.mode !== 'toRest' && p.mode !== 'resting',
+    tooTired: (p) => p.model.energy < B.tooTiredBelow,
+    // Walk to a task. task = { id, type, label, room }: label says what it is ("medication round"); room = it is his
+    // room, not him. p.task.arrived turns true on arrival (the home world watches it).
+    startTask(id, task, spot) {
       const p = byId(id);
       if (!p) return;
-      p.task = { stepId: step.id, stepName: stepWord(step), onArrive, arrived: false };
-      walk(p, HELP_SPOTS[place], 'toHelp', () => {
+      p.task = { id: task.id, type: task.type, label: task.label, room: !!task.room, spot, arrived: false };
+      walk(p, spot, 'toHelp', () => {
         p.mode = 'helping';
-        p.task.arrived = true;
-        p.task.onArrive?.();
+        if (p.task) p.task.arrived = true;
       });
     },
-    // After a reload: back to what they were doing for the step.
-    resumeHelp(id, step, place, arrived, onArrive) {
+    // He moved: follow him to the new spot (a task already begun keeps going on the way).
+    retarget(id, spot) {
+      const p = byId(id);
+      if (!p?.task || p.task.spot === spot) return;
+      p.task.spot = spot;
+      p.task.arrived = false;
+      walk(p, spot, 'toHelp', () => {
+        p.mode = 'helping';
+        if (p.task) p.task.arrived = true;
+      });
+    },
+    // After a reload: back to what they were doing.
+    resumeTask(id, task, spot, arrived) {
       const p = byId(id);
       if (!p) return;
       if (arrived) {
-        p.task = { stepId: step.id, stepName: stepWord(step), onArrive, arrived: true };
+        p.task = { id: task.id, type: task.type, label: task.label, room: !!task.room, spot, arrived: true };
         p.mode = 'helping';
-      } else crew.startHelp(id, step, place, onArrive);
+      } else crew.startTask(id, task, spot);
     },
-    finishHelp(id) {
+    // The task is done: Energy, Morale, their task count (and the Founder's history), then back to their post.
+    finishTask(id) {
       const p = byId(id);
       if (!p) return;
       const m = p.model;
@@ -151,24 +173,33 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       m.morale = clamp(m.morale + B.morale.perTask);
       m.counters.tasks = (m.counters.tasks ?? 0) + 1;
       if (m.counters[FOUNDER_FLAG]) state.founder.history.careTasks++;
+      p.bandDone = (p.bandDone ?? 0) + 1;
       sys.refreshStatus(m);
       p.task = null;
       bus?.emit('staff:task', { id, tasks: m.counters.tasks });
-      toPost(p);
+      if (onShift(p)) toPost(p);
     },
-    releaseHelp(id) {
+    // Never mind (he said no, it was too late, or the shift ended): back to their post.
+    releaseTask(id) {
       const p = byId(id);
       if (!p || !p.task) return;
       p.task = null;
       if (onShift(p)) toPost(p);
     },
+    newBand() {
+      for (const p of people) p.bandDone = 0;
+    },
     stateOf(p) {
-      if (p.mode === 'toHelp') return `Going to ${p.task?.stepName === 'Cards' ? 'run Cards with' : 'help'} Arthur (${p.task?.stepName})`;
-      if (p.mode === 'helping') return `Helping Arthur: ${p.task?.stepName}`;
+      const t = p.task;
+      if (t && p.mode === 'toHelp') return t.type === 'bell' ? "Answering Arthur's call bell" : t.room ? `Going to Arthur's room (${t.label})` : `Going to Arthur (${t.label})`;
+      if (t && p.mode === 'helping') return t.type === 'bell' ? "At Arthur's call bell" : t.room ? `In Arthur's room: ${t.label}` : `With Arthur: ${t.label}`;
       if (p.mode === 'toRest') return 'Off shift: going to rest in the lounge';
       if (p.mode === 'resting') return 'Off shift: resting in the lounge';
       if (p.mode === 'toPost') return 'On shift: walking the home';
       return `On shift ${PLACE_WORDS[POSTS[p.role].spots[p.postIndex]] ?? 'in the hall'}`;
+    },
+    modes() {
+      return Object.fromEntries(people.map((p) => [p.id, { mode: p.mode, postIndex: p.postIndex, stay: p.stay }]));
     },
     positions() {
       return Object.fromEntries(people.map((p) => [p.id, { x: p.agent.x, y: p.agent.y }]));

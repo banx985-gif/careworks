@@ -11,6 +11,7 @@
 //   bandAt(hour) · clockText(hour) → "07:10"
 import { Rng } from '../../../../core/Rng.js';
 import { NEEDS, OUTCOMES } from '../../data/residents.js';
+import { ensurePlan } from '../../data/carePlans.js';
 import { ROUTINE, BANDS, NEED_RISE, ASLEEP_RISE, OUTCOME_TARGETS, OUTCOME_PULL, PREF_RULES, ACTIVITY_DONE, ACTIVITY_REFUSED } from '../../data/routine.js';
 
 const clamp = (x) => Math.max(0, Math.min(100, x));
@@ -22,6 +23,7 @@ export function newResidentState(def, { room = null } = {}) {
     needs: { ...def.needs },
     outcomes: { ...def.outcomes },
     prefs: { ...def.prefs },
+    plan: ensurePlan(def.plan), // Milestone 4: one care-plan option per domain (data/carePlans.js)
     room,
     step: null, // { id, day, status: 'walking' | 'doing' | 'refused' }
     log: [], // today's log: [{ t: "07:10", text: "Woke" }]
@@ -37,6 +39,7 @@ export function ensureResidentState(saved, def, { room = null } = {}) {
   out.needs = { ...fresh.needs, ...(saved.needs ?? {}) };
   out.outcomes = { ...fresh.outcomes, ...(saved.outcomes ?? {}) };
   out.prefs = { ...fresh.prefs, ...(saved.prefs ?? {}) };
+  out.plan = ensurePlan(saved.plan, fresh.plan); // an M1–M3 save has none: the defaults from data
   out.room = saved.room ?? room;
   out.log = Array.isArray(saved.log) ? saved.log : [];
   return out;
@@ -86,7 +89,7 @@ export function decide(st, step, day, seed = 'careworks') {
   return new Rng(`${seed}:${st.id}:${day}:${step.id}`).next() < chance ? 'refuse' : 'go';
 }
 
-function addLog(st, day, t, text) {
+export function addLog(st, day, t, text) {
   if (st.logDay !== day) {
     st.log = [];
     st.logDay = day;
