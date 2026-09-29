@@ -104,7 +104,7 @@ export function makeStaffSystem(state, rng = new Rng('careworks-staff')) {
 
 export function makeFounderPerks(state) {
   const perks = new FounderPerks({ founders: FOUNDERS.map((f) => ({ id: f.id, perkName: f.perk.name, perkText: f.perk.text, effects: f.perk.effects, team: openingTeam(f.id) })) });
-  perks.set(state.founder?.id ?? null);
+  perks.set(state.founder?.ended ? null : state.founder?.id ?? null); // (Milestone 11: a Founder let go keeps no perk)
   return perks;
 }
 

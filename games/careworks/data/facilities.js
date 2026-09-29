@@ -51,7 +51,10 @@ export const FACILITIES = [
   }),
   f('F09', 'Reception / Family Desk', 'Front desk', start, 1100, fx('familyMeetings', 1, 'Admissions and family meetings'), { text: 'Welcomes families and new residents' }),
   f('F10', 'Laundry / Linen Point', 'Support', start, 1200, fx('roomRoutinePct', 5, 'Room routine efficiency +5%'), { text: 'Fresh linen and clothes for every room' }),
-  f('F11', 'Training Room', 'Rest/Training', rank('D'), 1800, fx('staffCourses', 1, 'Unlocks staff courses'), { text: 'Courses and practice for the team' }),
+  f('F11', 'Training Room', 'Rest/Training', rank('D'), 1800, fx('staffCourses', 1, 'Unlocks staff courses', true), {
+    text: 'Courses and practice for the team',
+    spots: { trainee1: { col: 0, row: 3 }, trainee2: { col: 2, row: 3 } }, // (Milestone 11: where trainees sit)
+  }),
   f('F12', 'Hair & Grooming Salon', 'Lifestyle', rank('D'), 1600, fx('dignityMoodEvent', 1, 'Dignity and mood event bonus'), { text: 'A proper hairdo and a chat' }),
   f('F13', 'Library Corner', 'Lifestyle', rank('D'), 1200, fx('quietInterest', 6, 'Quiet-interest satisfaction +6'), { text: 'Books, papers and a good chair' }),
   f('F14', 'Courtyard Garden', 'Lifestyle', rank('D'), 2200, fx('outdoorMood', 8, 'Outdoor mood +8'), { text: 'Fresh air, flowers and a bench in the sun' }),

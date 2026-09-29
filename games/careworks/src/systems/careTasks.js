@@ -29,6 +29,7 @@
 // off those routine steps (they manage them on their own).
 import { Rng } from '../../../../core/Rng.js';
 import { TASK_TYPES, ROUTINE_TASKS, NEED_TASKS, BELL, FAMILIARITY, SCORING, PLAN_CHANGE } from '../../data/tasks.js';
+import { SPECIALTY_SCORE } from '../../data/training.js';
 import { DOMAINS, optionById, domainById, ensurePlan } from '../../data/carePlans.js';
 import { ROUTINE, BANDS, PREF_RULES } from '../../data/routine.js';
 import { NEEDS } from '../../data/residents.js';
@@ -178,7 +179,7 @@ export function pruneTasks(care, today) {
 // --- scoring (bible §15) -------------------------------------------------------------------------------------------
 // person = { id, role, energy }. Returns null when they may not take it: the role doesn't fit (a hard rule, never
 // outscored), or it is pinned to someone else.
-export function scorePair({ task, person, tiles = 0, keyWorker = null, mostFamiliar = null, doneThisBand = 0 }) {
+export function scorePair({ task, person, tiles = 0, keyWorker = null, mostFamiliar = null, doneThisBand = 0, specialty = false }) {
   if (task.status === 'refused' || task.optionRefused) return null; // a refusal is never overridden (Milestone 8)
   if (!task.roles.includes(person.role)) return null;
   if (task.pinned && task.pinned !== person.id) return null;
@@ -186,6 +187,7 @@ export function scorePair({ task, person, tiles = 0, keyWorker = null, mostFamil
   let s = task.urgency * W.urgency;
   if (keyWorker && keyWorker === person.id) s += W.assigned;
   if (task.urgency < TASK_TYPES.bell.urgency && mostFamiliar === person.id) s += W.familiar;
+  if (specialty) s += SPECIALTY_SCORE; // Milestone 11: their specialty fits the task (a small tip, like Familiar Care)
   s -= tiles * W.perTile + doneThisBand * W.perTaskDone + (100 - (person.energy ?? 100)) * W.perEnergyUsed;
   return s;
 }

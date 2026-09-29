@@ -30,7 +30,9 @@ const joinRoles = (ids) => {
 };
 const stepWord = (step) => (step.activity ? step.name : step.name.toLowerCase());
 
-export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow, bandNow, bus = null }) {
+// Milestone 11: trainingSpot(p) → the spot ref a trainee sits at (the Training Room, or their rest spot without one);
+// trainingLabel(id) → the course they are on.
+export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow, bandNow, bus = null, trainingSpot = (p) => p.restSpot, trainingLabel = () => 'a course' }) {
   const makePerson = (model, i) => {
     const p = {
       kind: 'staff',
@@ -95,6 +97,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       p.mode = 'leaving';
       p.agent.walkTo(grid, ENTRANCE.col, ENTRANCE.row, () => (p.gone = true));
     } else if (was.mode === 'resting') p.mode = 'resting';
+    else if (was.mode === 'training') p.mode = 'training';
     else if (was.mode === 'toRest') walk(p, p.restSpot, 'toRest', () => (p.mode = 'resting'));
     else if (was.mode === 'toPost') toPost(p);
   }
@@ -125,6 +128,26 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       for (const p of people) {
         tickNumbers(p, hours);
         const shift = onShift(p);
+        if (p.leftTeam) {
+          if (p.agent.state === 'walking') p.agent.update(g, grid);
+          continue;
+        }
+        // Milestone 11: away training — off the roster, at the Training Room
+        if (roster.isTraining?.(p.id)) {
+          if (p.mode !== 'toTrain' && p.mode !== 'training') {
+            if (p.task) crew.releaseTask(p.id);
+            walk(p, trainingSpot(p), 'toTrain', () => (p.mode = 'training'));
+          }
+          if (p.agent.state === 'walking') p.agent.update(g, grid);
+          continue;
+        }
+        if (p.mode === 'toTrain' || p.mode === 'training') {
+          // back from a course: to work, or to rest
+          if (shift) {
+            p.postIndex = 0;
+            toPost(p);
+          } else walk(p, p.restSpot, 'toRest', () => (p.mode = 'resting'));
+        }
         if (p.agency) {
           // an agency worker's one shift is over: out through the front entrance
           if (!shift && p.mode !== 'leaving') crew.leave(p);
@@ -241,7 +264,9 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       const who = t?.who ?? 'Arthur'; // Milestone 6: whichever resident the task is for
       if (t && p.mode === 'toHelp') return t.type === 'bell' ? `Answering ${who}'s call bell` : t.room ? `Going to ${who}'s room (${t.label})` : `Going to ${who} (${t.label})`;
       if (t && p.mode === 'helping') return t.type === 'bell' ? `At ${who}'s call bell` : t.room ? `In ${who}'s room: ${t.label}` : `With ${who}: ${t.label}`;
-      if (p.mode === 'leaving') return 'Agency shift over: leaving the home';
+      if (p.mode === 'leaving') return p.leftTeam ? 'Leaving the home: no longer on the team' : 'Agency shift over: leaving the home';
+      if (p.mode === 'toTrain') return `Going to the Training Room (${trainingLabel(p.id)})`;
+      if (p.mode === 'training') return `Training: ${trainingLabel(p.id)}`;
       if (p.mode === 'toRest') return 'Off shift: going to the Staff Room';
       if (p.mode === 'resting') return 'Off shift: resting in the Staff Room';
       if (p.mode === 'toPost') return 'On shift: walking the home';

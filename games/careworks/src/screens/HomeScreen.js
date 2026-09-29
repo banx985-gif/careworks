@@ -178,9 +178,17 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   function resetView() {
     fitView();
     camera.zoom = HOME.zoom.start;
-    // Start on the corridor in front of the first rooms, with the lounge below (Milestone 6: the bigger home).
-    const c = iso.cellCenter(6, 7);
+    // Milestone 11: open centred on the Nurse Station (the heart of the bigger home); the corridor if it was sold.
+    const f01 = world?.placed.find((p) => p.defId === 'F01');
+    const c = f01 ? iso.cellCenter(f01.box.col + f01.box.w / 2, f01.box.row + f01.box.h / 2) : iso.cellCenter(6, 7);
     camera.centerOn(c.x, c.y);
+  }
+  // Milestone 11: double-tap a station (or room) to jump the camera to it.
+  let lastTap = null;
+  const DOUBLE_TAP_SEC = 0.4;
+  function jumpTo(it) {
+    const r = artRect(it);
+    camera.centerOn(r.x + r.w / 2, r.y + r.h * 0.6);
   }
 
   // --- how each person moves (Milestone 5) -----------------------------------------------------------------------
@@ -442,6 +450,9 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
         return;
       }
       const picked = pickAt(p.x, p.y);
+      const t = performance.now() / 1000;
+      if (picked && !isPerson(picked) && lastTap?.id === picked.id && t - lastTap.t < DOUBLE_TAP_SEC) jumpTo(picked);
+      lastTap = picked ? { id: picked.id, t, x: p.x, y: p.y } : null;
       if (picked) open(picked);
       else selection.clear();
       taps.push({ x: p.x, y: p.y, picked: picked?.id ?? null });
@@ -788,6 +799,17 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   screen.markerPoint = (id) => markerAt(world.byId(id));
   screen.statusIconOf = (id) => statusIcon(world.byId(id))?.icon ?? null;
   screen.poseStateOf = (id) => stateOf(world.byId(id));
+  screen.jumpTo = (id) => world && jumpTo(world.byId(id)); // (Milestone 11: what a double-tap does)
+  // The second tap of a double-tap may land on the sheet the first one opened: main asks here first.
+  screen.doubleTap = (p) => {
+    const t = performance.now() / 1000;
+    if (!world || !active || buildMode || !lastTap || t - lastTap.t >= DOUBLE_TAP_SEC || Math.hypot(p.x - lastTap.x, p.y - lastTap.y) > 60) return false;
+    const it = world.byId(lastTap.id);
+    lastTap = null;
+    if (!it || isPerson(it)) return false;
+    jumpTo(it);
+    return true;
+  };
 
   // --- Build Mode (Milestone 10) ---------------------------------------------------------------------------------------
   // ghost: { defId, uid (a piece being moved) | null (a new one), col, row, res (the check: { ok, reason }) }

@@ -24,6 +24,11 @@
 // (S2 "Locked — needs Rank D"; ?debug=1 upgrades now, and unlocks every room and facility). The Build list is a sheet
 // of every room and facility with its picture, cost and effect (locked ones greyed with the reason; the two secret
 // ones never listed). Selling asks first. Growing to Stage 2 plays the big "Expanded Care Home" moment.
+// Milestone 11: Staff → Recruit (or the Reception / Family Desk): a board of three candidates from the channels (Local
+// Applicants open; the ranked ones locked with the reason, ?debug=1 opens them), a free new board every 56 days and
+// paid ones; each candidate's card (portrait, role, tier, level, stats, salary, trait, shift preference) with Hire —
+// greyed at the Rank E cap of 12. The staff card gains Specialties, Training (a course list with what each would add,
+// "Would reach cap" when the tier cap trims it) and Let go (asks first; the Founder twice).
 // Add ?debug=1 for the FPS/state overlay, ?screen=test for the scaling / tap / asset-loader test screen.
 import { THEME, font } from '../../../core/Theme.js';
 import { EventBus } from '../../../core/EventBus.js';
@@ -61,6 +66,8 @@ import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL } from '../data/balance.js';
 import { SHIFT_IDS, OFF, WINGS } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
 import { STAGES } from '../data/home.js';
+import { CHANNELS, RANK_NOW } from '../data/recruitment.js';
+import { SPECIALTIES } from '../data/training.js';
 import { ROOMS } from '../data/rooms.js';
 import { BUILDABLE_FACILITIES } from '../data/facilities.js';
 import { FOUNDERS } from '../data/setup.js';
@@ -181,6 +188,13 @@ function drawPaused(ctx) {
 
 // The sheet is asked before the screen; the test screen's pause button before both.
 router.layers.push(
+  // Milestone 11: a double-tap on a station jumps the camera to it, even when its sheet has just slid up under the finger
+  {
+    get active() {
+      return router.currentName === 'home';
+    },
+    handleInput: (hook, p) => hook === 'onTap' && homeScreen.doubleTap(p),
+  },
   {
     get active() {
       return onTestScreen();
@@ -246,7 +260,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left'],
   save: () => saveRun(),
   stamp: () => (open && !spawn ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && !spawn && router.currentName === 'home' && !open.world.clock.paused,
@@ -486,6 +500,16 @@ bus.on('care:leaving', ({ name }) => {
   debug.log(`went home: ${name}`);
 });
 
+// Milestone 11: a new hire walks in (medium beat); a course is finished.
+bus.on('staff:hired', ({ name }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`Welcome to the team, ${first(name)}`, true);
+  debug.log(`hired: ${name}`);
+});
+bus.on('staff:trained', ({ name, course, specialty }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} finished ${course}${specialty ? ` · ${SPECIALTIES[specialty].name}` : ''}`, true);
+  debug.log(`trained: ${name} · ${course}`);
+});
+
 // Where each bottom-bar slot goes (data/bars.js).
 function openBottom(id) {
   const r = bottomRoute(id);
@@ -568,7 +592,7 @@ function openRoster() {
     const card = (p, sid) => {
       const ag = r.agencyOf(p.id);
       const cover = !ag && sid !== OFF && r.shiftOf(p.id)?.id !== sid;
-      const tag = ag ? 'AGENCY' : cover ? 'COVER' : r.isFloat(p.id) ? 'FLOAT' : null;
+      const tag = r.isTraining(p.id) ? 'TRAINING' : ag ? 'AGENCY' : cover ? 'COVER' : r.isFloat(p.id) ? 'FLOAT' : null;
       return {
         id: `roster:${sid}:${p.id}`,
         label: first(p.name),
@@ -588,7 +612,7 @@ function openRoster() {
     };
     const lanes = [...SHIFT_IDS, OFF].map((sid) => {
       const a = status.find((x) => x.shift === sid);
-      const ids = sid === OFF ? w.team.filter((p) => !r.shiftOf(p.id)).map((p) => p.id) : a.staff;
+      const ids = sid === OFF ? w.team.filter((p) => !r.shiftOf(p.id) || r.isTraining(p.id)).map((p) => p.id) : a.staff; // (Milestone 11: trainees under Off)
       const people = ids.map((id) => w.byId(id)).filter(Boolean);
       return {
         id: `lane:${sid}`,
@@ -634,11 +658,12 @@ function openRoster() {
     const log = [...cov.state.log].reverse().slice(0, 6).map((l) => ({ text: `Day ${w.clock.dateOf(l.day).day} ${l.t} · ${l.text}`, color: /Warning|Unsafe|scaled|No agency/.test(l.text) ? COL.bad : COL.text }));
     return {
       title: 'Roster',
-      subtitle: `${w.team.length} staff · three shifts · Safe Coverage for each`,
+      subtitle: `Staff ${w.team.length} / ${w.staffing.cap} · three shifts · Safe Coverage for each`,
       art: 'care_ui_02',
       accent: accentNow(),
       sections: [
         { lines, lanes },
+        { columns: 1, buttons: [{ id: 'recruit', label: 'Recruit', sub: `${w.staffing.board.length} candidates · Staff ${w.team.length} / ${w.staffing.cap} (Rank ${RANK_NOW})`, icon: 'care_ui_02', accent: COL.action, onTap: () => openRecruit() }] },
         { title: 'Safe Coverage', bars, lines: detail },
         { title: 'Team', columns: 2, buttons: teamRows },
         {
@@ -1052,6 +1077,138 @@ function finishSpawnCheck() {
   }));
 }
 
+// --- Recruitment and training (Milestone 11) ---------------------------------------------------------------------------
+const STAT_WORDS = Object.fromEntries(STATS.map((x) => [x.id, x.id]));
+// Staff → Recruit: the board of three, the next free board, and a paid board from each channel (locked ones greyed with
+// the reason; ?debug=1 opens them).
+function openRecruit() {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const sf = w.staffing;
+    const daysToFree = Math.max(0, sf.nextFreeDay - w.clock.totalDays);
+    const full = w.team.length >= sf.cap;
+    const cards = sf.board.map((c) => ({ id: `cand:${c.id}`, label: `${c.name} · ${TIERS[c.tier].name}`, sub: `${ROLES[c.role].name} · Lv ${c.level} · ${c.salary} a month · ${TRAITS[c.trait]?.name ?? ''}`, icon: c.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[c.role].badge, accent: c.tier === 'rare' ? COL.gold : COL.progress, onTap: () => openCandidate(c.id) }));
+    const chans = sf.channels().map(({ channel: c, ok, reason }) => ({ id: `chan:${c.id}`, label: c.id === 'special' ? c.name : `${c.name} · ${credits(c.cost)}`, sub: ok ? c.text : `${reason} · ${c.text}`, disabled: !ok || c.id === 'special', accent: COL.progress, onTap: () => {
+      const r = sf.refresh(c.id);
+      message = r.ok ? { text: `A new board from ${c.name}`, good: true } : { text: r.reason, good: false };
+      if (r.ok) autosave.request('recruit');
+    } }));
+    const lines = [];
+    if (message) lines.push({ text: message.text, color: message.good ? COL.good : COL.bad });
+    lines.push({ text: `Staff ${w.team.length} / ${sf.cap} (Rank ${RANK_NOW})${full ? ': the team is full' : ''} · a free new board in ${daysToFree} day${daysToFree === 1 ? '' : 's'}`, color: full ? COL.bad : COL.textMuted });
+    return {
+      title: 'Recruit',
+      subtitle: 'Candidates for the team · hire someone to have them walk in',
+      art: 'care_ui_02',
+      accent: accentNow(),
+      sections: [
+        { lines },
+        cards.length ? { title: 'Candidates', columns: 1, buttons: cards } : { title: 'Candidates', lines: [{ text: 'Nobody on the board: try a new board.', color: COL.textMuted }] },
+        { title: 'A new board now', columns: 1, buttons: chans },
+        ...(debug.enabled ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'chan:debug', label: `Open every channel and training without a room (debug): ${sf.debug ? 'On' : 'Off'}`, accent: sf.debug ? COL.good : COL.progress, onTap: () => sf.setDebug(!sf.debug) }] }] : []),
+        { columns: 1, buttons: [{ id: 'recruit:back', label: '‹ Back to the roster', accent: COL.progress, onTap: () => openRoster() }] },
+      ],
+    };
+  });
+}
+// One candidate: who they are, their stats against their tier cap, pay, trait, shift preference — and Hire.
+function openCandidate(cardId) {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    const c = w?.staffing.card(cardId);
+    if (!c) return { title: 'No longer on the board', subtitle: 'They took another job.', accent: COL.progress, sections: [{ columns: 1, buttons: [{ id: 'cand:back', label: '‹ Back to Recruit', accent: COL.progress, onTap: () => openRecruit() }] }] };
+    const can = w.staffing.canHire(cardId);
+    const cap = TIERS[c.tier].statCap;
+    const trait = TRAITS[c.trait];
+    return {
+      title: c.name,
+      subtitle: `${ROLES[c.role].name} · ${TIERS[c.tier].name} · Lv ${c.level}`,
+      art: c.art,
+      badge: ROLES[c.role].badge,
+      tag: c.tier === 'rare' ? { text: 'RARE' } : null,
+      accent: accentNow(),
+      sections: [
+        { lines: [...(message ? [{ text: message, color: COL.bad }] : []), `Salary ${c.salary} Credits a month · prefers ${PREF_WORD[c.shiftPref] ?? '—'} shifts`, trait ? `${trait.name}: ${trait.text}` : '', { text: `From ${CHANNELS.find((x) => x.id === c.channel)?.name ?? 'the board'}`, color: COL.textMuted }] },
+        { title: `Stats (tier cap ${cap})`, bars: STATS.map((x) => ({ label: x.name, value: c.stats[x.id], max: cap, color: x.id === ROLES[c.role].primaryStat ? COL.action : COL.progress })) },
+        {
+          columns: 1,
+          buttons: [
+            { id: 'cand:hire', label: 'Hire', sub: can.ok ? 'Joins Off shift and walks in from the front door; put them on a shift in the roster' : can.reason, disabled: !can.ok, accent: COL.good, onTap: () => {
+              const r = w.hire(cardId);
+              if (!r.ok) return void (message = r.reason);
+              autosave.request('hire');
+              openRecruit();
+            } },
+            { id: 'cand:back', label: '‹ Back to Recruit', accent: COL.progress, onTap: () => openRecruit() },
+          ],
+        },
+      ],
+    };
+  });
+}
+// A staff member's courses: what each would add (trimmed at the tier cap: "Would reach cap"), days, cost, specialty.
+function openCourses(staffId) {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    const q = w?.crew.byId(staffId);
+    if (!q) return { title: '', sections: [] };
+    const rows = w.staffing.courses(staffId).map((x) => {
+      const c = x.course;
+      const gains = x.preview.map((g) => `${STAT_WORDS[g.key]} +${g.min}–${g.max}`).join(', ');
+      const sp = c.specialty ? ` · ${SPECIALTIES[c.specialty].name}${x.specialtyNote ? ` (${x.specialtyNote})` : ''}` : '';
+      const cap = x.capped ? ' · Would reach cap' : '';
+      return { id: `course:${c.id}`, label: `${c.name} · ${credits(c.cost)} · ${c.days} days`, sub: x.ok ? `${gains}${cap}${sp}` : `${x.reason}${gains ? ` · ${gains}` : ''}`, disabled: !x.ok, accent: x.capped ? COL.gold : COL.progress, tag: x.capped ? 'CAP' : null, onTap: () => {
+        const r = w.train(c.id, staffId);
+        if (!r.ok) return void (message = r.reason);
+        autosave.request('training');
+        openHomeSheet(staffId, 'roster');
+      } };
+    });
+    const hasRoom = w.layout.ofDef('F11').length > 0;
+    return {
+      title: `Training: ${q.name}`,
+      subtitle: `${ROLES[q.role].name} · ${TIERS[q.model.tier].name} (cap ${TIERS[q.model.tier].statCap}) · specialties ${w.specialtiesOf(staffId).length} of ${w.staffing.specialtyLimit(staffId)}`,
+      art: q.art,
+      badge: ROLES[q.role].badge,
+      accent: accentNow(),
+      sections: [
+        { lines: [...(message ? [{ text: message, color: COL.bad }] : []), { text: hasRoom ? 'Away from the roster at the Training Room for the course.' : 'Needs a Training Room (Build Mode; it opens at Rank D).', color: hasRoom ? COL.textMuted : COL.bad }] },
+        { columns: 1, buttons: rows },
+        { columns: 1, buttons: [{ id: 'courses:back', label: '‹ Back to their card', accent: COL.progress, onTap: () => openHomeSheet(staffId, 'roster') }] },
+      ],
+    };
+  });
+}
+// Let go: asks first; the Founder asks twice (the Founding Staff flag ends and they never come back).
+function confirmLetGo(staffId) {
+  const w = open?.world;
+  const q = w?.crew.byId(staffId);
+  if (!q) return;
+  const founder = w.staffState.founder.id === staffId && !w.staffState.founder.ended;
+  const go = () => {
+    const r = w.letGo(staffId);
+    if (r.ok) {
+      autosave.request('letGo');
+      openRoster();
+    }
+  };
+  dialog.confirm({
+    title: `Let ${first(q.name)} go?`,
+    body: `They leave the home. Their Familiar Care with residents stays on record, and they could be hired again later.`,
+    art: q.art,
+    yes: 'Let go',
+    danger: true,
+    onYes: () => {
+      if (!founder) return go();
+      dialog.confirm({ title: 'Your Founder?', body: `${q.name} has been with you since Day 1. The Founding Staff flag and perk end, and a Founder never comes back.`, art: q.art, yes: 'Let the Founder go', danger: true, onYes: go });
+    },
+  });
+}
+
 // --- a resident's card (Milestones 2–6) --------------------------------------------------------------------------------
 // What they are doing now, their six needs and five outcomes as bars, today's log and their likes; who helps with each
 // step (a picker, which since Milestone 4 pins that step's task); the Care Plan section (six rows, each opening its
@@ -1266,7 +1423,7 @@ function staffMenu(w, p, accent) {
   const m = p.model;
   const cap = TIERS[m.tier]?.statCap ?? 220;
   const trait = TRAITS[m.traits[0]];
-  const isFounder = w.staffState.founder.id === p.id;
+  const isFounder = w.staffState.founder.id === p.id && !w.staffState.founder.ended;
   const h = w.staffState.founder.history;
   const agency = w.roster.isAgency(p.id);
   const pref = STAFF.find((d) => d.id === p.id)?.shiftPref;
@@ -1282,6 +1439,23 @@ function staffMenu(w, p, accent) {
     { title: status.length ? `Energy and Morale · ${status.join(', ')}` : 'Energy and Morale', bars: [{ label: 'Energy', value: m.energy, color: m.energy < 25 ? COL.bad : COL.good }, { label: 'Morale', value: m.morale, color: m.morale < 25 ? COL.bad : COL.gold }] },
     { title: 'Trait', lines: [trait ? `${trait.name}: ${trait.text}` : 'None'] },
   ];
+  // Milestone 11: specialties, training, let go
+  if (!agency) {
+    const sp = w.specialtiesOf(p.id);
+    const lim = w.staffing.specialtyLimit(p.id);
+    const tr = w.staffing.trainingOf(p.id);
+    const course = tr && w.staffing.training.course(tr.courseId);
+    sections.push({ title: `Specialties (${sp.length} of ${lim})`, lines: [sp.length ? sp.map((x) => SPECIALTIES[x].name).join(' · ') : { text: 'None yet: courses can give one', color: COL.textMuted }] });
+    sections.push({
+      title: 'Training',
+      lines: [tr ? { text: `At the Training Room: ${course?.name} · ${tr.days - tr.daysDone} day${tr.days - tr.daysDone === 1 ? '' : 's'} left`, color: COL.actionDark } : { text: 'Courses raise stats (never past the tier cap) and can give a specialty.', color: COL.textMuted }],
+      columns: 2,
+      buttons: [
+        { id: 'staff:train', label: 'Train', sub: tr ? 'Already training' : 'Choose a course', disabled: !!tr, accent: COL.progress, onTap: () => openCourses(p.id) },
+        { id: 'staff:letGo', label: 'Let go', sub: isFounder ? 'The Founder: asks twice' : 'Asks first', accent: COL.bad, onTap: () => confirmLetGo(p.id) },
+      ],
+    });
+  }
   if (isFounder) {
     const f = FOUNDERS.find((x) => x.id === p.id);
     sections.push({ title: 'Founding Staff', lines: [`${f.perk.name}: ${f.perk.text}`, `With you since Day 1 · ${h.daysEmployed} days (${yearsEmployed(h)} years) · ${h.careTasks} care tasks`] });
@@ -1311,6 +1485,11 @@ function openHomeSheet(id, from = null) {
       sub = who ? `Room ${n} · ${who.name}'s room` : `Room ${n} · Empty`;
       lines.unshift(who ? `Resident: ${who.name} (${who.def.support})` : 'Empty: ready for a new resident. Admit one from Care → Admissions.');
       if (!who) sections.push({ columns: 1, buttons: [{ id: 'room:admissions', label: 'Admissions', sub: `${w.admissions.board.length} applying`, icon: CARE_ICONS.admissions, accent: COL.action, onTap: () => openAdmissions() }] });
+    }
+    if (it.defId === 'F09') sections.push({ columns: 1, buttons: [{ id: 'place:recruit', label: 'Recruit', sub: `${w.staffing.board.length} candidates · Staff ${w.team.length} / ${w.staffing.cap}`, accent: COL.action, onTap: () => openRecruit() }] });
+    if (it.defId === 'F11') {
+      const trainees = w.team.filter((q) => w.roster.isTraining(q.id));
+      lines.push(trainees.length ? `Training now: ${trainees.map((q) => `${first(q.name)} (${w.staffing.training.course(w.staffing.trainingOf(q.id)?.courseId)?.name ?? ''})`).join(', ')}` : 'Nobody training right now: choose a course from a staff card.');
     }
     sections.push({ columns: 1, buttons: [{ id: 'place:build', label: 'Move or sell in Build Mode', sub: it.def.effect ? `${it.def.effect.text}${it.def.effect.wired ? '' : ' (its system comes later)'}` : '', accent: COL.progress, onTap: () => {
       homeScreen.setBuildMode(true);
@@ -1391,7 +1570,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

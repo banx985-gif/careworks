@@ -218,6 +218,7 @@ export const SAVE_MIGRATIONS = {
   7: (record) => ({ ...record, data: upgradeV7(record.data) }),
   8: (record) => record, // (Milestone 9: nothing to move; new data only reaches new admissions)
   9: (record) => record, // (Milestone 10: no layout saved = the default layout, Stage 1 — exactly what it had)
+  10: (record) => record, // (Milestone 11: no staffing saved = a fresh board; the bigger floor needs nothing)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

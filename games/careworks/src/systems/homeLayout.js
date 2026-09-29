@@ -369,7 +369,10 @@ export function createLayout({ saved = null, bus = null } = {}) {
       const moved = [];
       for (let n = 0; n < pieces().length && accessOf(pieces()).length; n++) {
         const pr = accessOf(pieces()).find((x) => x.piece) ?? null;
-        const suspects = pr ? [pr.piece, ...pieces().filter((p) => p !== pr.piece)] : pieces();
+        // facilities first (the nearest to the problem): a room, and whoever lives in it, moves only as a last resort
+        const near = (p) => (pr ? Math.abs(p.col - pr.piece.col) + Math.abs(p.row - pr.piece.row) : 0);
+        const others = pieces().filter((p) => p !== pr?.piece);
+        const suspects = [...others.filter((p) => p.kind !== 'room').sort((a, b) => near(a) - near(b)), ...(pr ? [pr.piece] : []), ...others.filter((p) => p.kind === 'room').sort((a, b) => near(a) - near(b))];
         let done = false;
         for (const p of suspects) {
           const before = accessOf(pieces()).length;

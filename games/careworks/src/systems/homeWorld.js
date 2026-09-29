@@ -80,6 +80,10 @@ import { SHIFT_IDS } from '../../data/shifts.js';
 import { createCrew } from './staffCrew.js';
 import { createAdmissions, stayLengthFor, varied } from './admissions.js';
 import { createLedger } from './ledger.js';
+import { createStaffing } from './staffing.js';
+import { SPECIALTIES, TRAINING } from '../../data/training.js';
+import { staffById } from '../../data/staff.js';
+import { FOUNDER_FLAG } from '../../data/setup.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
 // own live layout; these are for older saves' upgrades and the tests.
@@ -149,7 +153,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // Milestone 7: agency workers hired for a shift still under way come back with the save (their model is kept there)
   for (const a of staffState.roster.agency) if (a.model && !sys.get(a.id)) sys.add(StaffModel.fromJSON(a.model));
   staffState.roster.agency = staffState.roster.agency.filter((a) => sys.get(a.id));
-  const crew = createCrew({ grid, state: staffState, sys, perks, roster, spotTile: spot, hourNow, bandNow: () => bandAt(hourNow()), bus });
+  // Milestone 11: trainees sit at a Training Room (the two places of the first one; their rest spot without one)
+  const trainingSpot = (p) => {
+    const rooms = layout.ofDef('F11');
+    if (!rooms.length) return p.restSpot;
+    const i = Object.keys(staffState.roster.training ?? {}).indexOf(p.id);
+    const room = rooms[Math.floor(Math.max(0, i) / 2) % rooms.length];
+    return `${room.id}.trainee${(Math.max(0, i) % 2) + 1}`;
+  };
+  const crew = createCrew({ grid, state: staffState, sys, perks, roster, spotTile: spot, hourNow, bandNow: () => bandAt(hourNow()), bus, trainingSpot, trainingLabel: (id) => staffing?.trainingOf(id) ? staffing.training.course(staffing.trainingOf(id).courseId)?.name ?? 'a course' : 'a course' });
+  let staffing = null; // (Milestone 11: made with the ledger, below)
 
   // --- the residents ---------------------------------------------------------------------------------------------
   // A resident's person: { kind: 'resident', id, name, art, line, def, state (their saved state), agent }.
@@ -303,6 +316,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       keyWorker: assigned ? q.id : care.keyWorkers[t.resident] ?? null,
       mostFamiliar: mostFamiliar(care, t.resident, crew.people.map((x) => x.id)),
       doneThisBand: q.bandDone ?? 0,
+      specialty: (staffing?.specialtiesOf(q.id) ?? []).some((sp) => SPECIALTIES[sp]?.tasks.includes(t.type)), // (Milestone 11)
     });
   }
   function claim(t, q) {
@@ -597,6 +611,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // --- admissions and money (Milestone 6) -----------------------------------------------------------------------
   const admissions = createAdmissions({ saved: admissionsSaved, seed });
   const ledger = createLedger({ saved: ledgerSaved, bus, now: () => clock.totalDays, startCredits });
+  // --- recruitment and training (Milestone 11) -------------------------------------------------------------------------
+  staffing = createStaffing({ state: staffState, sys, ledger, seed, bus, today: () => clock.totalDays, year: () => clock.year, teamSize: () => crew.people.filter((q) => !q.agency && !q.leftTeam).length, trainingPlaces: () => layout.ofDef('F11').length * TRAINING.placesPerRoom });
+  staffing.onTrained((s, c, gains, specialty) => {
+    roster.setTraining(s.id, false);
+    bus?.emit('staff:trained', { id: s.id, name: s.name, course: c.name, gains, specialty });
+  });
   const inHome = () => new Set(residents.map((p) => p.id));
   const freeRooms = () => roomList().filter((r) => !r.residentId);
   // Milestone 10: the free rooms a resident may have, best first — one of the template they need (Memory Support,
@@ -609,7 +629,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     return [...general.filter((r) => r.defId === def.room), ...general.filter((r) => r.defId !== def.room)];
   }
   const roomTemplatesHere = () => new Set(roomList().map((r) => r.defId));
-  const team = () => crew.people.filter((q) => !q.agency);
+  const team = () => crew.people.filter((q) => !q.agency && !q.leftTeam);
   const teamRoles = () => new Set(team().map((q) => q.role));
   const admitCtx = () => ({ roles: teamRoles(), freeRooms: freeRooms().map((r) => r.id), freeRoomsFor: (def) => roomsFor(def).map((r) => r.id), day: clock.totalDays, placeable: roomTemplatesHere(), buildable: (id) => layout.unlock(id).ok, paused: coverage.admissionsPaused() });
   const monthRange = (endDay = null) => {
@@ -629,13 +649,18 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function planCtx(p) {
     const shiftRoles = Object.fromEntries(SHIFT_IDS.map((sid) => [sid, new Set()]));
     const shiftCounts = Object.fromEntries(SHIFT_IDS.map((sid) => [sid, 0]));
+    // Milestone 11: a specialty stands in for a role in these rules (the Falls specialty for "an Allied Health …")
+    const standIns = (q) => (staffing?.specialtiesOf(q.id) ?? []).map((sp) => SPECIALTIES[sp]?.standsInFor).filter(Boolean);
+    const roles = teamRoles();
     for (const q of team()) {
+      for (const r of standIns(q)) roles.add(r);
       const sid = roster.shiftOf(q.id)?.id;
       if (!shiftRoles[sid]) continue;
       shiftRoles[sid].add(q.role);
+      for (const r of standIns(q)) shiftRoles[sid].add(r);
       shiftCounts[sid]++;
     }
-    return { name: p.name, needs: p.state.needs, level: supportLevel(p.def), support: p.def.support, stay: p.def.stay, visitors: p.def.visitors, teamRoles: teamRoles(), shiftRoles, shiftCounts, rooms: roomTemplatesHere(), facilities: facilityIds(), programs: new Set() };
+    return { name: p.name, needs: p.state.needs, level: supportLevel(p.def), support: p.def.support, stay: p.def.stay, visitors: p.def.visitors, teamRoles: roles, shiftRoles, shiftCounts, rooms: roomTemplatesHere(), facilities: facilityIds(), programs: new Set() };
   }
   // End of a day: who had essential care missed (a run of such days makes their plan stale).
   function noteMissed(day) {
@@ -665,6 +690,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (shortStaffing) coverage.dayEnd(day - 1); // care recovery for yesterday's missed essential tasks (Milestone 7)
     noteMissed(day - 1); // Milestone 8: the missed-essential streak (plan review)
     tickAdmissions(day);
+    staffing.tick(day); // Milestone 11: the free board refresh every 56 days, training days
     if (day % clock.daysPerMonth === 0) {
       const d = clock.dateOf(day - 1);
       ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll() });
@@ -687,6 +713,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // They walked out: gone from the team, the roster and the home.
   function dropGone() {
     for (const q of crew.people.filter((x) => x.gone)) {
+      if (q.leftTeam) delete staffState.assignments[q.id];
       for (const t of care.tasks) if ((t.status === 'claimed' || t.status === 'working') && t.slots[0] === q.id) unclaim(t);
       crew.remove(q.id);
       sys.remove(q.id);
@@ -695,7 +722,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       staffState.roster.agency = staffState.roster.agency.filter((a) => a.id !== q.id);
       delete staffState.pos[q.id];
       delete staffState.modes[q.id];
-      bus?.emit('staff:agencyLeft', { id: q.id });
+      bus?.emit(q.leftTeam ? 'staff:left' : 'staff:agencyLeft', { id: q.id });
     }
   }
   const coverage = createCoverage({
@@ -720,6 +747,58 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return roomList();
     },
     residents,
+    // --- Milestone 11 -----------------------------------------------------------------------------------------
+    get staffing() {
+      return staffing;
+    },
+    // Hire a card from the board: they join Off shift and walk in from the front entrance.
+    hire(cardId) {
+      const r = staffing.take(cardId);
+      if (!r.ok) return r;
+      const def = r.def;
+      const model = StaffModel.fromDefinition({ ...def, startLevel: def.level }, { startEnergy: STAFF_BALANCE.startEnergy, startMorale: STAFF_BALANCE.startMorale });
+      model.counters = { tasks: 0 };
+      sys.add(model);
+      roster.join(model.id);
+      const q = crew.addPerson(model);
+      world.people.push(q);
+      bus?.emit('staff:hired', { id: model.id, name: model.name, role: model.role });
+      return { ok: true, reason: null, person: q };
+    },
+    // Let someone go (the page asks first; the Founder twice). Their Familiar Care stays on record in the care state.
+    letGo(staffId) {
+      const q = crew.byId(staffId);
+      if (!q || q.agency || q.leftTeam) return { ok: false, reason: 'They are not on the team.' };
+      if (team().length <= 1) return { ok: false, reason: 'The home needs someone on the team.' };
+      const founder = staffState.founder.id === staffId && !staffState.founder.ended;
+      for (const t of care.tasks) if ((t.status === 'claimed' || t.status === 'working') && t.slots[0] === staffId) unclaim(t);
+      for (const [k, v] of Object.entries(care.keyWorkers)) if (v === staffId) delete care.keyWorkers[k];
+      for (const [k, v] of Object.entries(staffState.assignments)) if (v === staffId) delete staffState.assignments[k];
+      staffing.departed(q.model, clock.totalDays, founder);
+      roster.forget(staffId);
+      q.leftTeam = true;
+      crew.leave(q);
+      if (founder) {
+        // bible §3.5.3: the Founding Staff flag ends with them (and they never come back as a candidate)
+        staffState.founder.ended = true;
+        staffState.founder.history.continuous = false;
+        delete q.model.counters[FOUNDER_FLAG];
+        perks.set(null);
+      }
+      bus?.emit('staff:letGo', { id: staffId, name: q.name, founder });
+      return { ok: true, reason: null, founder };
+    },
+    // Start a course: paid, off the roster, off to the Training Room.
+    train(courseId, staffId) {
+      const r = staffing.startCourse(courseId, staffId);
+      if (!r.ok) return r;
+      const q = crew.byId(staffId);
+      for (const t of care.tasks) if ((t.status === 'claimed' || t.status === 'working') && t.slots[0] === staffId) unclaim(t);
+      roster.setTraining(staffId, true);
+      bus?.emit('staff:training', { id: staffId, name: q?.name, course: courseId });
+      return r;
+    },
+    specialtiesOf: (staffId) => staffing.specialtiesOf(staffId),
     // --- Milestone 10 -----------------------------------------------------------------------------------------
     layout,
     fixedUp,
@@ -1042,7 +1121,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       }
       for (const a of staffState.roster.agency) a.model = sys.get(a.id)?.toJSON() ?? null;
       const agencyIds = new Set(staffState.roster.agency.map((a) => a.id));
-      staffState.staff = sys.serialize().filter((m) => !agencyIds.has(m.id));
+      const gone = new Set(crew.people.filter((q) => q.leftTeam).map((q) => q.id)); // (Milestone 11: let go, on their way out)
+      staffState.staff = sys.serialize().filter((m) => !agencyIds.has(m.id) && !gone.has(m.id));
+      staffing.serialize();
       staffState.pos = crew.positions();
       staffState.modes = crew.modes();
       staffState.bandDone = Object.fromEntries(crew.people.map((q) => [q.id, q.bandDone ?? 0]));

@@ -23,7 +23,7 @@ import { facilityById } from './facilities.js';
 
 export const HOME = {
   cols: 24,
-  rows: 16,
+  rows: 48, // (Milestone 11: the Stage 1 floor — was 16; see STAGES)
   cellSize: 100, // plan units per tile (pathing and walking speed)
   view: { halfW: 72, halfH: 36 }, // one tile draws as a 144 × 72 diamond (2:1, the series art angle)
   wallH: 230, // the two outer back walls, drawn px
@@ -50,6 +50,9 @@ export const FIXED_WALLS = [
   { id: 'lounge', col: 4, row: 10, len: 11, dir: 'row', gaps: [4, 5, 9, 10] },
   { id: 'loungeLeft', col: 3, row: 10, len: 6, dir: 'col', gaps: [] },
   { id: 'loungeRight', col: 15, row: 10, len: 6, dir: 'col', gaps: [3] }, // a side door at row 13, from the Nurse Station
+  // Milestone 11: the floor now carries on past the lounge, so it has a front wall of its own (it used to be the edge
+  // of the home): still entered only through its doorways
+  { id: 'loungeFront', col: 0, row: 16, len: 16, dir: 'row', gaps: [] }, // (from the left-hand wall: the corner under the Staff Room stays closed off, as since M5)
 ];
 // A room's walls at (col, row), with its Milestone 1–9 ids (Arthur's are roomSide / roomFront).
 export const roomWalls = (id, col, row) =>
@@ -126,11 +129,16 @@ export const WINDOWS = [
 // Milestone 10: the home's physical stages (bible §24; S3–S5 are Milestone 24). capacity = most residents (one to a
 // room); the floor grows forward, away from the two back walls, so every piece stays exactly where it was. zone = the
 // new floor as a core/FacilitySystem expansion. S2 unlocks at Rank D (no Rank yet: ?debug=1 upgrades).
+// Milestone 11 (Aaron's choice: bigger floors, same size on screen): S1 grew 16 → 48 rows and S2 32 → 72, so a tidy
+// layout fits 16 Standard Rooms and all ten Start facilities at S1, and 24 rooms and the Rank D facilities at S2 —
+// bands of three rooms with a corridor in front of each, an aisle down the right-hand side and the facilities beside
+// it (tests/careworks/m11.test.mjs FULL_LAYOUT places one and passes the access check). The floor only grows forward
+// (the front entrance stays on the right-hand wall), so every save keeps every piece where it was.
 export const STAGES = [
-  { id: 'S1', n: 1, name: 'Small Residential Home', capacity: 16, cols: 24, rows: 16, unlock: { type: 'start', text: 'Start' } },
-  { id: 'S2', n: 2, name: 'Expanded Care Home', capacity: 24, cols: 24, rows: 32, unlock: { type: 'rank', value: 'D', text: 'Needs Rank D' }, zone: { id: 'S2', col: 0, row: 16, w: 24, h: 16 }, art: 'care_event_06' },
+  { id: 'S1', n: 1, name: 'Small Residential Home', capacity: 16, cols: 24, rows: 48, unlock: { type: 'start', text: 'Start' } },
+  { id: 'S2', n: 2, name: 'Expanded Care Home', capacity: 24, cols: 24, rows: 72, unlock: { type: 'rank', value: 'D', text: 'Needs Rank D' }, zone: { id: 'S2', col: 0, row: 48, w: 24, h: 24 }, art: 'care_event_06' },
 ];
-export const MAX_FLOOR = { cols: 24, rows: 32 };
+export const MAX_FLOOR = { cols: 24, rows: 72 };
 // Milestone 6: new residents come in through the front entrance, the open end of the corridor (Reception is not placed
 // yet), and walk to their room.
 export const ENTRANCE = { col: 23, row: 7 };
