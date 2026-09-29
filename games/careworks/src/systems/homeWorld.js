@@ -53,12 +53,13 @@ import { findPath } from '../../../../core/Pathing.js';
 import { AssignmentSystem } from '../../../../core/AssignmentSystem.js';
 import { StaffModel } from '../../../../core/StaffModel.js';
 import { HOME, WALLS, PLACED, PROPS, RESIDENT, SPOTS, SEATS, HELP_POOLS, helpSpotsFor, ROOM_IDS, ENTRANCE } from '../../data/home.js';
-import { residentById, NEEDS, supportLevel } from '../../data/residents.js';
+import { residentById, NEEDS, supportLevel, RESIDENTS, STAY_LEAVE_HOUR } from '../../data/residents.js';
+import { Rng } from '../../../../core/Rng.js';
 import { DAY, ROUTINE } from '../../data/routine.js';
 import { BELL } from '../../data/tasks.js';
 import { ECONOMY_START, STAFF_BALANCE } from '../../data/balance.js';
 import { AGENCY } from '../../data/shifts.js';
-import { ensureResidentState, newResidentState, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog } from './residentNeeds.js';
+import { ensureResidentState, newResidentState, newStay, stayDaysLeft, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog } from './residentNeeds.js';
 import { ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar } from './careTasks.js';
 import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkPct } from './staffTeam.js';
 import { createRoster } from './roster.js';
@@ -67,7 +68,7 @@ import { eligibilityOf, optionPrefOf, staleReasons, markReviewed, noteDay, admis
 import { optionById, domainById, OPTION_PREF_MOOD } from '../../data/carePlans.js';
 import { SHIFT_IDS } from '../../data/shifts.js';
 import { createCrew } from './staffCrew.js';
-import { createAdmissions } from './admissions.js';
+import { createAdmissions, stayLengthFor, varied } from './admissions.js';
 import { createLedger } from './ledger.js';
 
 // Every wall tile (doorways left out).
@@ -116,9 +117,8 @@ const clamp = (x) => Math.max(0, Math.min(100, x));
 const stepWord = (step) => (step.activity ? step.name : step.name.toLowerCase());
 const needName = (id) => NEEDS.find((n) => n.id === id)?.name ?? id;
 const ARTHUR = RESIDENT.id;
-// A resident's pronoun for the card lines (story data: 'his' unless the row is one of these).
-const FEMALE = new Set(['RES02', 'RES04', 'RES06', 'RES08', 'RES10', 'RES12']);
-export const theirOf = (id) => (FEMALE.has(id) ? 'her' : 'his');
+// A resident's pronoun for the card lines (Milestone 9: story data on each row, data/lifeStories.js).
+export const theirOf = (id) => (residentById(id)?.pronoun === 'she' ? 'her' : 'his');
 
 export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, residents: savedResidents = null, staff = null, care: careSaved = null, seed = 'careworks', bus = null, admissions: admissionsSaved = null, ledger: ledgerSaved = null, startCredits = ECONOMY_START.credits, shortStaffing = true } = {}) {
   clock ??= makeClock();
@@ -153,7 +153,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const p = { kind: 'resident', id: def.id, name: def.name, art: def.art, line: `${def.support} · age ${def.age}`, def, state: st };
     p.agent = new Agent({ id: def.id, name: def.name, speed: RESIDENT.speed, noPathTeleportSec: 3 });
     const room = placed.find((r) => r.id === st.room);
-    if (room) room.residentId = def.id; // the room knows its resident
+    if (room && !st.leaving && !st.guest) room.residentId = def.id; // the room knows its resident (not one going home)
     if (st.pos) {
       p.agent.x = st.pos.x;
       p.agent.y = st.pos.y;
@@ -165,17 +165,24 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     residents.push(p);
     return p;
   }
-  const savedList = Array.isArray(savedResidents) && savedResidents.length ? savedResidents : [resident];
+  // Milestone 6+: the saved list as it is (Milestone 9: it may be empty — everyone went home). Milestones 1–5 saved
+  // Arthur alone; a new home starts with Arthur on his respite stay (Milestone 9).
+  const listSaved = Array.isArray(savedResidents);
+  const savedList = listSaved ? savedResidents : resident ? [resident] : [];
   for (const s of savedList) {
     const id = s?.id ?? ARTHUR;
     const def = residentById(id);
     if (!def || byResident(id)) continue;
     addResident(ensureResidentState(s, def, { room: id === ARTHUR ? RESIDENT.room : null }));
   }
-  if (!byResident(ARTHUR)) addResident(newResidentState(residentById(ARTHUR), { room: RESIDENT.room }));
+  if (!listSaved && !resident) {
+    const st = newResidentState(residentById(ARTHUR), { room: RESIDENT.room });
+    st.stay = { ...newStay(residentById(ARTHUR), stayLengthFor(residentById(ARTHUR), seed, 0), clock.totalDays), opening: true, paused: 0 };
+    addResident(st);
+  } else if (!listSaved && !byResident(ARTHUR)) addResident(newResidentState(residentById(ARTHUR), { room: RESIDENT.room }));
   // (a saved resident without a room — never expected — gets the first free one)
   for (const p of residents) {
-    if (placed.find((r) => r.id === p.state.room)) continue;
+    if (p.state.leaving || placed.find((r) => r.id === p.state.room)) continue;
     const free = rooms.find((r) => !r.residentId);
     if (free) {
       p.state.room = free.id;
@@ -184,7 +191,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (!p.state.pos) p.agent.placeAtTile(grid, t.col, t.row);
     }
   }
-  const arthur = byResident(ARTHUR);
+  // Arthur (the first resident) where one is still needed as a fallback; null once he has gone home.
+  let arthur = byResident(ARTHUR);
 
   // --- care tasks (Milestone 4) --------------------------------------------------------------------------------
   const care = ensureCareState(careSaved);
@@ -196,6 +204,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const rolesOnShift = (bandId) => new Set(crew.people.filter((q) => roster.coversBand(q.id, bandId)).map((q) => q.role));
   const stepIndex = (id) => ROUTINE.findIndex((s) => s.id === id);
   const joined = (p) => p.state.joinAt == null || absNow() >= p.state.joinAt;
+  // Milestone 9: living the routine and planned for — not someone heading home, not a spawn-check guest.
+  const inCare = (p) => joined(p) && !p.state.leaving && !p.state.guest;
   // The step has already run today (or is under way and past needing help).
   const stepOverFor = (p) => (stepId, day) => {
     const st = p.state;
@@ -450,10 +460,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (!care.gen[inst.key]) {
       care.gen[inst.key] = true;
       pruneTasks(care, clock.totalDays);
-      for (const p of residents) if (joined(p)) logRefused(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p) }));
+      for (const p of residents) if (inCare(p)) logRefused(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p) }));
     }
     for (const p of residents) {
-      if (!joined(p)) continue;
+      if (!inCare(p)) continue;
       const bell = maybeRing(care, p.state, at, clock.totalDays);
       if (bell) {
         log(p, `Rang the call bell (${needName(bell.need)})`);
@@ -518,6 +528,47 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     for (const { task, person } of choosePairs(avail, free, scoreFor)) claim(task, person);
   }
 
+  // --- going home (Milestone 9) -------------------------------------------------------------------------------------
+  // A set stay (Respite, Rehab / Short Stay) ends on its leaveDay at STAY_LEAVE_HOUR (or at once when that has passed,
+  // e.g. after a load): their open tasks end, the room frees up, they say goodbye and walk out of the front entrance.
+  // It is a good outcome, never a failure; they may apply again later as Returning (their Familiar Care is kept).
+  // The opening resident (a new home's Arthur) never goes home while he is the only resident: each day he is alone
+  // moves his go-home day back one (the countdown pauses), and it carries on once someone else has been admitted.
+  const othersHere = (p) => residents.some((q) => q !== p && !q.state.leaving && !q.state.guest);
+  const aloneOpening = (p) => !!p.state.stay?.opening && !othersHere(p);
+  const due = (p) => !aloneOpening(p) && (clock.totalDays > p.state.stay.leaveDay || (clock.totalDays === p.state.stay.leaveDay && hourNow() >= STAY_LEAVE_HOUR));
+  function startLeaving(p) {
+    const st = p.state;
+    for (const t of care.tasks) if (t.resident === p.id && isOpen(t)) finish(t, 'gone');
+    st.leaving = true;
+    st.step = null;
+    delete st.joinAt;
+    const room = placed.find((r) => r.id === st.room);
+    if (room?.residentId === p.id) room.residentId = null;
+    st.leftDay = clock.totalDays;
+    admissions.wentHome({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: st.admittedDay ?? 0, leftDay: clock.totalDays, stay: st.stay?.type ?? p.def.stay });
+    addLog(st, logDay(), now(), 'Heading home: the stay is over');
+    bus?.emit('care:leaving', { resident: p.id, name: p.name, stay: st.stay?.type ?? p.def.stay });
+    walkOut(p);
+  }
+  function walkOut(p) {
+    if (p.agent.state === 'walking') return;
+    const here = grid.worldToTile(p.agent.x, p.agent.y);
+    if (here && here.col === ENTRANCE.col && here.row === ENTRANCE.row) return removeResident(p);
+    p.agent.walkTo(grid, ENTRANCE.col, ENTRANCE.row);
+  }
+  // Out of the home: off every list (their Familiar Care, bells record and key worker stay in the care state).
+  function removeResident(p) {
+    const i = residents.indexOf(p);
+    if (i >= 0) residents.splice(i, 1);
+    const j = world.people.indexOf(p);
+    if (j >= 0) world.people.splice(j, 1);
+    const room = placed.find((r) => r.residentId === p.id);
+    if (room) room.residentId = null;
+    if (p.id === ARTHUR) arthur = null;
+    if (!p.state.guest) bus?.emit('care:left', { resident: p.id, name: p.name });
+  }
+
   // --- admissions and money (Milestone 6) -----------------------------------------------------------------------
   const admissions = createAdmissions({ saved: admissionsSaved, seed });
   const ledger = createLedger({ saved: ledgerSaved, bus, now: () => clock.totalDays, startCredits });
@@ -531,7 +582,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const toDay = endDay ?? (Math.floor(clock.totalDays / len) + 1) * len;
     return { fromDay: toDay - len, toDay };
   };
-  const payers = () => residents.map((p) => ({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: p.state.admittedDay ?? 0 }));
+  // Milestone 9: plus who went home (they pay for their days here: admittedDay → leftDay)
+  const payers = () => [
+    ...residents.filter((p) => !p.state.leaving && !p.state.guest).map((p) => ({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: p.state.admittedDay ?? 0 })),
+    ...admissions.homeGoings.map((h) => ({ id: h.id, name: h.name, level: h.level, admittedDay: h.admittedDay ?? 0, leftDay: h.leftDay })),
+  ];
   const payroll = () => team().map((q) => ({ id: q.id, name: q.name, salary: q.model.salary })); // agency is paid per shift
   // --- care-plan rules (Milestone 8) -------------------------------------------------------------------------------
   const PLACEABLE_ROOMS = new Set(['RM01']); // room templates the home can place (Build Mode, Milestone 10)
@@ -551,20 +606,26 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // End of a day: who had essential care missed (a run of such days makes their plan stale).
   function noteMissed(day) {
     for (const p of residents) {
-      if (!joined(p)) continue;
+      if (!inCare(p)) continue;
       noteDay(p.state, day, care.tasks.some((t) => t.resident === p.id && t.day === day && t.status === 'missed' && t.essential));
     }
   }
   // A plan never reviewed on this save (a new game, or an M7-era save): reviewed as of now, not stale.
   for (const p of residents) if (p.state.review == null) markReviewed(p.state, clock.totalDays);
   const tickAdmissions = (day) => {
-    const r = admissions.tick(day, { inHome: inHome() });
+    const r = admissions.tick(day, { inHome: inHome(), roles: teamRoles(), placeable: PLACEABLE_ROOMS });
     if (r.left.length || r.arrived.length) bus?.emit('admissions:change', { day, left: r.left.map((a) => a.id), arrived: r.arrived.map((a) => a.id) });
     return r;
   };
   tickAdmissions(clock.totalDays); // a new home (or an older save) gets its first board
   // A new day: the day's beat, the Founder's days, the board; a new month: the ledger's close for the month just ended.
   function newDay(day) {
+    // Milestone 9: the opening resident's countdown pauses for each day he spent as the only resident
+    for (const p of residents) {
+      if (!aloneOpening(p) || p.state.leaving) continue;
+      p.state.stay.leaveDay += 1;
+      p.state.stay.paused = (p.state.stay.paused ?? 0) + 1;
+    }
     staffState.founder.history.daysEmployed += 1;
     bus?.emit('care:dayEnd', world.daySummary(day - 1));
     if (shortStaffing) coverage.dayEnd(day - 1); // care recovery for yesterday's missed essential tasks (Milestone 7)
@@ -607,7 +668,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     state: staffState,
     roster,
     team: () => crew.people,
-    levels: () => residents.map((p) => supportLevel(p.def)),
+    levels: () => residents.filter((p) => !p.state.leaving && !p.state.guest).map((p) => supportLevel(p.def)),
     ledger,
     abs: absTime,
     hire,
@@ -628,7 +689,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     coverage,
     get resident() {
-      return arthur;
+      return byResident(ARTHUR); // (null once he has gone home — Milestone 9)
     },
     worker: crew.people[0], // the Founder (Milestones 1–2 had one worker)
     founder: { id: staffState.founder.id, name: crew.byId(staffState.founder.id)?.name },
@@ -648,7 +709,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     // Asleep: settled for the night (Arthur, or anyone given).
     get asleep() {
-      return world.isAsleep(arthur);
+      return !!byResident(ARTHUR) && world.isAsleep(byResident(ARTHUR));
     },
     isAsleep: (p) => p.state.step?.id === 'settle' && p.state.step.status === 'doing',
     joined,
@@ -672,7 +733,15 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (shortStaffing) coverage.tick(); // Milestone 7: warnings, float / agency cover, scale-back — before anyone moves
       crew.update(g, hours);
       dropGone();
-      for (const p of residents) {
+      for (const p of [...residents]) {
+        if (p.state.leaving || p.state.guest) {
+          if (p.state.leaving) walkOut(p); // Milestone 9: heading home
+          continue;
+        }
+        if (p.state.stay && due(p)) {
+          startLeaving(p);
+          continue;
+        }
         if (p.state.joinAt != null) {
           if (!joined(p)) continue;
           delete p.state.joinAt; // settled in: from this band they live the routine
@@ -751,7 +820,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     optionPref: (optionId, residentId = ARTHUR) => optionPrefOf(byResident(residentId)?.state, optionId),
     staleOf: (residentId = ARTHUR) => (byResident(residentId) ? staleReasons(byResident(residentId).state, clock.totalDays) : []),
-    stalePlans: () => residents.map((p) => ({ resident: p.id, reasons: staleReasons(p.state, clock.totalDays) })).filter((x) => x.reasons.length),
+    stalePlans: () => residents.filter((p) => !p.state.leaving && !p.state.guest).map((p) => ({ resident: p.id, reasons: staleReasons(p.state, clock.totalDays) })).filter((x) => x.reasons.length),
     // Review: confirm (or change) the options, then tap Reviewed. The Founder's history counts it when they are on
     // shift to take part (the RN on shift leads the review).
     reviewPlan(residentId = ARTHUR) {
@@ -794,6 +863,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (p.kind === 'staff') return crew.stateOf(p);
       const st = p.state;
       const who = theirOf(p.id);
+      if (st.guest) return 'Visiting for the spawn check';
+      if (st.leaving) return `Going home today: walking out to the front door`;
       if (!joined(p)) return p.agent.state === 'walking' ? `Arriving: walking to ${who} room` : `Settling in to ${who} room`;
       const step = st.step && routineStep(st.step.id);
       if (!step) return `In ${who} room`;
@@ -844,6 +915,38 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     setOnCall: (on) => roster.setOnCall(on),
     // The task AI's second rule: their key worker, or staff on the resident's wing (not floats, not agency).
     assignedTo: (staffId, residentId) => !!byResident(residentId) && assignedTo(staffId, byResident(residentId)),
+    // --- Milestone 9 ------------------------------------------------------------------------------------------
+    inCare,
+    stayDaysLeft: (residentId) => (byResident(residentId) ? stayDaysLeft(byResident(residentId).state, clock.totalDays) : null),
+    homeGoings: () => admissions.homeGoings,
+    // ?debug=1 "Spawn all 60" (a test home only): everyone not here comes in as a guest, ignoring rooms and capacity —
+    // placed on an open tile, then walking to another (seeded). Guests live no routine, get no tasks and are never
+    // saved. → the guests (people)
+    spawnGuests(ids = RESIDENTS.map((r) => r.id)) {
+      const rng = new Rng(`${seed}:spawn`);
+      const open = [];
+      for (let r = 0; r < HOME.rows; r++) for (let c = 0; c < HOME.cols; c++) if (!grid.isBlocked(c, r)) open.push({ col: c, row: r });
+      const out = [];
+      ids.forEach((id, i) => {
+        const def = residentById(id);
+        if (!def || byResident(id)) return;
+        const st = newResidentState(def, { room: null });
+        Object.assign(st, varied(def, seed, 1000 + i));
+        st.guest = true;
+        st.stay = newStay(def, stayLengthFor(def, seed, 1000 + i), clock.totalDays);
+        const p = addResident(st);
+        const a = open[rng.int(0, open.length - 1)];
+        const b = open[rng.int(0, open.length - 1)];
+        p.agent.placeAtTile(grid, a.col, a.row);
+        p.agent.walkTo(grid, b.col, b.row);
+        world.people.splice(residents.length - 1, 0, p);
+        out.push(p);
+      });
+      return out;
+    },
+    clearGuests() {
+      for (const p of residents.filter((x) => x.state.guest)) removeResident(p);
+    },
     // --- Milestone 6 ------------------------------------------------------------------------------------------
     freeRooms,
     admitCtx,
@@ -862,6 +965,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       st.needs = { ...app.needs };
       st.outcomes = { ...app.outcomes };
       st.admittedDay = clock.totalDays;
+      // Milestone 9: the stay's length from their application, their tags; a returning resident is marked
+      st.stay = newStay(def, app.stayDays ?? stayLengthFor(def, seed, app.rolls?.[0] ?? 0), clock.totalDays);
+      st.tags = [...(def.tags ?? [])];
+      if (app.returning) st.returning = true;
       // Milestone 8: a first plan from their primary support, and a first review due (the plan starts stale)
       st.plan = admissionPlan(def, st, planCtx({ name: def.name, def, state: st }));
       st.review = { day: null, needs: null, reasons: [] };
@@ -894,7 +1001,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         }
       }
       const copy = (x) => JSON.parse(JSON.stringify(x));
-      return { clock: clock.serialize(), residents: residents.map((p) => copy(p.state)), staff: copy(staffState), care: copy(care), admissions: admissions.serialize(), ledger: ledger.serialize() };
+      return { clock: clock.serialize(), residents: residents.filter((p) => !p.state.guest).map((p) => copy(p.state)), staff: copy(staffState), care: copy(care), admissions: admissions.serialize(), ledger: ledger.serialize() };
     },
   };
   return world;

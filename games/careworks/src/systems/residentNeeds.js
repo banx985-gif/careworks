@@ -24,6 +24,8 @@ export function newResidentState(def, { room = null } = {}) {
     outcomes: { ...def.outcomes },
     prefs: { ...def.prefs },
     optionPrefs: { ...(def.optionPrefs ?? {}) }, // Milestone 8: care-plan option preferences (overrides live here too)
+    tags: [...(def.tags ?? [])], // Milestone 9: life-story tags (data/lifeStories.js)
+    stay: null, // Milestone 9: { type, days, fromDay, leaveDay } for a set stay (newStay); null = stays
     plan: ensurePlan(def.plan), // Milestone 4: one care-plan option per domain (data/carePlans.js)
     review: null, // Milestone 8: { day, needs, reasons } (null: the home world marks it reviewed on load / at a new game)
     missStreak: { days: 0, lastDay: null }, // Milestone 8: days running with essential care missed
@@ -45,10 +47,18 @@ export function ensureResidentState(saved, def, { room = null } = {}) {
   out.optionPrefs = { ...fresh.optionPrefs, ...(saved.optionPrefs ?? {}) };
   out.missStreak = { ...fresh.missStreak, ...(saved.missStreak ?? {}) };
   out.plan = ensurePlan(saved.plan, fresh.plan); // an M1–M3 save has none: the defaults from data
+  out.tags = Array.isArray(saved.tags) ? [...saved.tags] : fresh.tags; // (Milestone 9; an older save: from data)
+  out.stay = saved.stay ?? null; // an older save's residents keep staying (no timer)
   out.room = saved.room ?? room;
   out.log = Array.isArray(saved.log) ? saved.log : [];
   return out;
 }
+
+// Milestone 9: a set stay (Respite, Rehab / Short Stay) of `days` from `fromDay`; they head home on day leaveDay. A new
+// home's Arthur also has opening: true and paused (days added while he was the only resident — src/systems/homeWorld.js).
+// days null = Long Term (no timer).
+export const newStay = (def, days, fromDay) => (days == null ? null : { type: def.stay, days, fromDay, leaveDay: fromDay + days });
+export const stayDaysLeft = (st, today) => (st.stay ? Math.max(0, st.stay.leaveDay - today) : null);
 
 export function riseNeeds(st, hours, asleep = false) {
   const k = asleep ? ASLEEP_RISE : 1;

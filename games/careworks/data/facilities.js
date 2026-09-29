@@ -1,0 +1,42 @@
+// The 35 facilities of bible §25, as ids only for now (Milestone 9): what a resident's hard prerequisite may point at.
+// Milestone 10 grows each row into its full data contract (cost, station role, effect, footprint, art). secret: an
+// SEC-FAC reward (never a prerequisite for anything ordinary). Plain data only.
+const f = (id, name, unlock, secret = false) => ({ id, name, unlock, secret });
+export const FACILITIES = [
+  f('F01', 'Central Nurse Station', 'Start'),
+  f('F02', 'Medication Room', 'Start'),
+  f('F03', 'Dining Room', 'Start'),
+  f('F04', 'Kitchen', 'Start'),
+  f('F05', 'Activity Lounge', 'Start'),
+  f('F06', 'Quiet Lounge', 'Start'),
+  f('F07', 'Basic Physio Space', 'Start'),
+  f('F08', 'Staff Room', 'Start'),
+  f('F09', 'Reception / Family Desk', 'Start'),
+  f('F10', 'Laundry / Linen Point', 'Start'),
+  f('F11', 'Training Room', 'Rank D'),
+  f('F12', 'Hair & Grooming Salon', 'Rank D'),
+  f('F13', 'Library Corner', 'Rank D'),
+  f('F14', 'Courtyard Garden', 'Rank D'),
+  f('F15', 'Family Room', 'Rank C'),
+  f('F16', 'Commercial Kitchen', 'Rank C'),
+  f('F17', 'Nutrition Office', 'Nutrition 3'),
+  f('F18', 'Rehabilitation Gym', 'Rank C'),
+  f('F19', 'Falls Prevention Lab', 'Mobility 4'),
+  f('F20', 'Memory Activity Room', 'Memory 3'),
+  f('F21', 'Sensory Room', 'Memory 4'),
+  f('F22', 'Memory Garden', 'Memory Wing'),
+  f('F23', 'Clinical Treatment Room', 'Rank B'),
+  f('F24', 'Palliative Family Lounge', 'Palliative 3'),
+  f('F25', 'Community Day Room', 'Rank B'),
+  f('F26', 'Transport Bay', 'Rank B'),
+  f('F27', 'Staff Education Centre', 'Rank B'),
+  f('F28', 'Clinical Governance Office', 'Rank A'),
+  f('F29', 'Family Partnership Centre', 'Rank A'),
+  f('F30', 'High-Care Nursing Wing Hub', 'Rank A'),
+  f('F31', 'Rehabilitation Wing Hub', 'Rank A'),
+  f('F32', 'Palliative Care Wing Hub', 'Rank A'),
+  f('F33', 'Emergency Preparedness Hub', 'Safety 5'),
+  f('F34', 'Centenarian Garden', 'SEC-FAC-01', true),
+  f('F35', 'Legacy House', 'SEC-FAC-02', true),
+];
+export const facilityById = (id) => FACILITIES.find((x) => x.id === id) ?? null;

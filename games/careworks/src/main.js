@@ -17,6 +17,9 @@
 // the resident's like / dislike / refusal marked; tapping one shows what it does and a Choose button (a disliked
 // option says its Mood cost first). A plan due for review gets an amber dot on the card's Care Plan header, counts on
 // Care's badge and is listed under Care → "Plans to review"; Reviewed clears it.
+// Milestone 9: all 60 residents. Applicant and resident cards show the stay type and its length (Respite / Rehab end
+// with "Arthur heads home", the room freed), a Returning tag, the life-story line and tags. ?debug=1 adds "Spawn all 60"
+// under Care: a test home (never saved) where every resident comes in, walks to a spot and has their card opened once.
 // Add ?debug=1 for the FPS/state overlay, ?screen=test for the scaling / tap / asset-loader test screen.
 import { THEME, font } from '../../../core/Theme.js';
 import { EventBus } from '../../../core/EventBus.js';
@@ -45,7 +48,7 @@ import { ASSETS } from '../data/assets.js';
 import { SAVE } from '../data/save.js';
 import { createCampaigns } from './app/campaigns.js';
 import { paletteById } from '../data/setup.js';
-import { NEEDS, OUTCOMES, RESIDENTS, validateResidents, supportLevel, ROOM_TEMPLATES } from '../data/residents.js';
+import { NEEDS, OUTCOMES, RESIDENTS, validateResidents, supportLevel, ROOM_TEMPLATES, STAYS } from '../data/residents.js';
 import { DataValidator } from '../../../core/DataValidator.js';
 import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
 import { ROLES, STATS, TIERS } from '../data/roles.js';
@@ -108,6 +111,7 @@ const loop = new FixedStepLoop({
   bus,
   update: (dt) => {
     router.update(dt); // on the home: the clock and everyone in it move
+    tickSpawnCheck(dt); // (?debug=1 "Spawn all 60", Milestone 9)
     if (open && router.currentName === 'home') open.data.playSec = (open.data.playSec ?? 0) + dt;
     vfx.update(dt); // real seconds: pops keep their pace at any game speed
     carePops.update(dt);
@@ -205,6 +209,7 @@ bus.on('input:up', () => systemBack.rearm()); // re-arm after any tap, in case a
 // Campaign slots (bible §3.5.9): four slots, each its own save + summary record; the account store is separate.
 let campaigns = null;
 let open = null; // { n, data, world } — the campaign on screen and its home world
+let spawn = null; // Milestone 9: ?debug=1 "Spawn all 60" while it runs: { real (the campaign's world), world, ids, i, t, phase, errors, starts, report }
 
 // A campaign's world (Milestone 2): its clock and the residents' saved states, the team from its Founder; Milestone 6:
 // the applicant board and the ledger (an older save's ledger opens with its saved Credits).
@@ -222,7 +227,7 @@ function openRun(n, data) {
 // The run save: the page's campaign data with the world's clock and residents written in (and the slot's summary).
 function saveRun() {
   const o = open;
-  if (!o) return Promise.resolve();
+  if (!o || spawn) return Promise.resolve(); // (the spawn check's test home is never saved)
   const c = o.world.clock;
   o.data = { ...o.data, ...o.world.serialize(), date: { year: c.year, month: c.month, day: c.day } };
   o.data.economy = { ...(o.data.economy ?? ECONOMY_START), credits: o.world.ledger.balance }; // (the ledger is the truth; this is the summary)
@@ -232,11 +237,11 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left'],
   save: () => saveRun(),
-  stamp: () => (open ? JSON.stringify(open.world.serialize()) : null),
-  running: () => !!open && router.currentName === 'home' && !open.world.clock.paused,
-  enabled: () => !!open,
+  stamp: () => (open && !spawn ? JSON.stringify(open.world.serialize()) : null),
+  running: () => !!open && !spawn && router.currentName === 'home' && !open.world.clock.paused,
+  enabled: () => !!open && !spawn,
 });
 autosave.installBackground();
 bus.on('autosave:failed', ({ error }) => debug.log(`save failed: ${error?.message ?? error}`));
@@ -466,6 +471,12 @@ bus.on('care:admit', ({ name }) => {
   debug.log(`admitted: ${name}`);
 });
 
+// Milestone 9: a respite / short-stay resident heads home at the end of their stay — a good outcome (medium beat).
+bus.on('care:leaving', ({ name }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} heads home`, true);
+  debug.log(`went home: ${name}`);
+});
+
 // Where each bottom-bar slot goes (data/bars.js).
 function openBottom(id) {
   const r = bottomRoute(id);
@@ -514,6 +525,7 @@ function openResidents() {
             : [];
         })(),
         { title: 'Admissions', columns: 1, buttons: [{ id: 'admissions', label: 'Admissions', sub: `${adm.board.length} applying · ${adm.waiting.length} on the waiting list`, icon: CARE_ICONS.admissions, badge: adm.board.length || null, accent: COL.action, onTap: () => openAdmissions() }] },
+        ...(debug.enabled && !spawn ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'debug:spawn60', label: 'Spawn all 60', sub: 'A test home (never saved): everyone comes in, walks to a spot, has their card opened once, then it clears', accent: COL.progress, onTap: () => startSpawnCheck() }] }] : []),
       ],
     };
   });
@@ -719,7 +731,7 @@ function openAdmissions() {
       const p = adm.prereq(app, ctx);
       const days = adm.daysLeft(app, ctx.day);
       const status = wait ? `${days} day${days === 1 ? '' : 's'} left on the list` : `${def.urgency} urgency`;
-      return { id: `app:${app.id}`, label: `${def.name}, ${def.age}`, sub: `${def.support} · ${status} · ${p.ok ? 'Ready' : p.text}`, icon: def.art, iconCrop: PORTRAIT_CROP, accent: p.ok ? COL.progress : COL.textFaint, onTap: () => openApplicant(app.id) };
+      return { id: `app:${app.id}`, label: `${def.name}, ${def.age}${app.returning ? ' · Returning' : ''}`, sub: `${def.support} · ${stayWords(def, app.stayDays)} · ${status} · ${p.ok ? 'Ready' : p.text}`, icon: def.art, iconCrop: PORTRAIT_CROP, accent: p.ok ? COL.progress : COL.textFaint, onTap: () => openApplicant(app.id) };
     };
     const free = w.freeRooms().length;
     return {
@@ -765,15 +777,19 @@ function openApplicant(id) {
     if (message) lines.push({ text: message, color: COL.bad });
     lines.push({ text: p.ok ? 'Ready: the home can meet their needs' : p.text, color: p.ok ? COL.good : COL.bad });
     if (!p.ok) lines.push({ text: p.reason, color: COL.bad });
-    lines.push(`Wants: ${ROOM_TEMPLATES[def.room].name} · Urgency: ${def.urgency} · ${def.stay}`);
+    if (app.returning) lines.push({ text: `Returning: ${first(def.name)} stayed here before and went home. Familiar Care is kept.`, color: COL.good });
+    lines.push({ text: `Stay: ${stayWords(def, app.stayDays, true)}`, color: COL.actionDark });
+    lines.push(`Wants: ${ROOM_TEMPLATES[def.room].name} · Urgency: ${def.urgency}`);
     lines.push(`Support Level ${level} · Care Support Funding ${credits(FEES.careSupportFundingByLevel[level])} a month · fee ${credits(FEES.accommodationPerMonth)} a month`);
     lines.push(`Visitors: ${def.visitors} · ${def.personality} · enjoys ${def.interest}`);
+    lines.push({ text: def.story, color: COL.textMuted });
+    lines.push({ text: `Life story: ${def.tags.join(' · ')}`, color: COL.textMuted });
     lines.push({ text: wait ? `On the waiting list: ${days} day${days === 1 ? '' : 's'} left before they look elsewhere` : `Applying: ${days} day${days === 1 ? '' : 's'} before they look elsewhere if nobody answers`, color: COL.textMuted });
     if (app.assessReady != null && ctx.day < app.assessReady) lines.push({ text: 'Assessment update under way: back tomorrow.', color: COL.actionDark });
     else if (app.assessed) lines.push({ text: 'Assessment updated.', color: COL.textMuted });
     return {
       title: def.name,
-      subtitle: `${def.age} · ${def.support} · ${def.stay}`,
+      subtitle: `${def.age} · ${def.support} · ${stayWords(def, app.stayDays)}${app.returning ? ' · Returning' : ''}`,
       art: def.art,
       accent: accentNow(),
       sections: [
@@ -798,6 +814,103 @@ function openApplicant(id) {
   });
 }
 
+// Milestone 9: "Respite · 21 days" (long: "Respite · 21 days, then home"; Long Term: "Long Term").
+function stayWords(def, days, long = false) {
+  const t = STAYS[def.stay]?.text ?? def.stay;
+  if (days == null) return long ? `${t} (stays)` : t;
+  return long ? `${t} · ${days} days, then home (the room frees up)` : `${t} · ${days} days`;
+}
+// The resident card's stay line: how long is left, or Long Term.
+function stayLine(w, it) {
+  const st = it.state;
+  const t = STAYS[it.def.stay]?.text ?? it.def.stay;
+  if (st.leaving) return `${t}: the stay is over, heading home today`;
+  if (!st.stay) return `${t}: no set end`;
+  const left = w.stayDaysLeft(it.id);
+  if (st.stay.opening && !w.residents.some((q) => q !== it && !q.state.leaving && !q.state.guest)) return `${t}: stays on while ${theirOf(it.id) === 'her' ? 'she is' : 'he is'} the only resident (${left} day${left === 1 ? '' : 's'} left once someone else moves in)`;
+  const d = w.clock.dateOf(st.stay.leaveDay);
+  return left === 0 ? `${t}: heads home today` : `${t}: heads home on Day ${d.day}, Month ${d.month} (${left} day${left === 1 ? '' : 's'} left)`;
+}
+
+// --- ?debug=1 "Spawn all 60" (Milestone 9) -----------------------------------------------------------------------------
+// A test home in place of the campaign's (never saved, autosave off): every resident not in it comes in as a guest
+// (ignoring rooms and capacity), walks to a spot, and each card is opened once and drawn. Then the test home clears
+// and the campaign comes back as it was. Result: window.__cw.spawnReport and a sheet.
+const SPAWN_WALK_SEC = 1.5; // walking before the cards
+const SPAWN_CARD_FRAMES = 3; // frames each card stays open (it is drawn)
+function startSpawnCheck() {
+  if (!open || spawn) return;
+  sheet.close();
+  homeScreen.selection.clear();
+  const real = open.world;
+  const world = createHomeWorld({ founderId: open.data.facility.founder?.id, seed: 'spawn-check' });
+  const guests = world.spawnGuests();
+  const people = world.residents;
+  spawn = { real, world, ids: people.map((p) => p.id), starts: new Map(people.map((p) => [p.id, { x: p.agent.x, y: p.agent.y }])), i: 0, t: 0, frames: 0, phase: 'walk', errors: [], cards: 0, guests: guests.length, started: performance.now() };
+  open.world = world;
+  homeScreen.enter(); // the home screen now draws and moves the test home (same slot: the view is kept)
+  assets.startTracking();
+  debug.log(`spawn check: ${people.length} residents in the test home`);
+}
+function tickSpawnCheck(dt) {
+  const s = spawn;
+  if (!s) return;
+  s.t += dt;
+  if (s.phase === 'walk') {
+    if (s.t >= SPAWN_WALK_SEC) s.phase = 'cards';
+    return;
+  }
+  if (s.phase === 'cards') {
+    if (s.frames === 0) {
+      const id = s.ids[s.i];
+      const it = s.world.byId(id);
+      try {
+        if (!it) throw new Error('not in the test home');
+        residentSections(s.world, it); // the card's content builds without an error
+        homeScreen.selection.select(it);
+        openHomeSheet(id);
+        s.cards++;
+      } catch (err) {
+        s.errors.push(`${id}: ${err.message}`);
+      }
+    }
+    if (++s.frames >= SPAWN_CARD_FRAMES) {
+      s.frames = 0;
+      if (++s.i >= s.ids.length) finishSpawnCheck();
+    }
+  }
+}
+function finishSpawnCheck() {
+  const s = spawn;
+  const track = assets.trackingReport();
+  assets.stopTracking();
+  const moved = s.world.residents.filter((p) => {
+    const a = s.starts.get(p.id);
+    return p.agent.state !== 'walking' || Math.hypot(p.agent.x - a.x, p.agent.y - a.y) > 1;
+  }).length;
+  const defs = s.ids.map((id) => s.world.byId(id)?.def).filter(Boolean);
+  const artDrawn = defs.filter((d) => assets.has(d.art) && track?.drawn[d.art] && !track.fallbacks[d.art]).length;
+  const missingArt = defs.filter((d) => !(assets.has(d.art) && track?.drawn[d.art] && !track.fallbacks[d.art])).map((d) => d.id);
+  sheet.close();
+  homeScreen.selection.clear();
+  s.world.clearGuests();
+  open.world = s.real;
+  spawn = null;
+  homeScreen.enter(); // back to the campaign's own home
+  const report = { residents: s.ids.length, guests: s.guests, cards: s.cards, artDrawn, missingArt, walked: moved, errors: s.errors, seconds: +((performance.now() - s.started) / 1000).toFixed(1), ok: s.ids.length === RESIDENTS.length && s.cards === s.ids.length && artDrawn === s.ids.length && moved === s.ids.length && !s.errors.length };
+  if (window.__cw) window.__cw.spawnReport = report;
+  debug.log(`spawn check: ${report.cards}/${report.residents} cards, ${report.artDrawn} portraits, ${report.errors.length} errors`);
+  sheet.open(() => ({
+    title: 'Spawn check',
+    subtitle: report.ok ? `All ${report.residents} residents spawned, walked, drew their portrait and card` : 'Problems found',
+    accent: report.ok ? COL.good : COL.bad,
+    sections: [
+      { lines: [`Residents in the test home: ${report.residents} of ${RESIDENTS.length}`, `Cards opened and drawn: ${report.cards}`, `Portraits drawn: ${report.artDrawn}`, `Walked to a spot: ${report.walked}`, `Took ${report.seconds} s · the test home is cleared, your home is as it was`, ...report.errors.map((e) => ({ text: e, color: COL.bad })), ...(report.missingArt.length ? [{ text: `Art not drawn: ${report.missingArt.join(', ')}`, color: COL.bad }] : [])] },
+      { columns: 1, buttons: [{ id: 'spawn:close', label: 'Close', accent: COL.progress, onTap: () => sheet.close() }] },
+    ],
+  }));
+}
+
 // --- a resident's card (Milestones 2–6) --------------------------------------------------------------------------------
 // What they are doing now, their six needs and five outcomes as bars, today's log and their likes; who helps with each
 // step (a picker, which since Milestone 4 pins that step's task); the Care Plan section (six rows, each opening its
@@ -810,8 +923,10 @@ function residentSections(w, it) {
   const likes = [pick('prefer').length && `Enjoys: ${pick('prefer').join(', ')}`, pick('dislike').length && `Would rather not: ${pick('dislike').join(', ')}`, pick('refuse').length && `Says no to: ${pick('refuse').join(', ')}`].filter(Boolean);
   const bell = w.bellFor(it.id);
   const they = theirOf(it.id) === 'her' ? 'she' : 'he';
+  const room = st.room ? `Room ${ROOM_IDS.indexOf(st.room) + 1}` : 'No room (test home)';
   return [
-    { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `Room ${ROOM_IDS.indexOf(st.room) + 1} · Support Level ${supportLevel(it.def)} · ${it.def.stay}`] },
+    { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `${room} · Support Level ${supportLevel(it.def)}`, { text: stayLine(w, it), color: st.stay ? COL.actionDark : COL.textMuted }] },
+    { title: 'Life story', lines: [it.def.story, { text: (st.tags?.length ? st.tags : it.def.tags).join(' · '), color: COL.actionDark }, ...(st.returning ? [{ text: 'Returning: stayed here before', color: COL.good }] : [])] },
     planSection(w, it),
     { title: 'Tasks today', lines: taskLines(w, it) },
     { title: 'Call bells', lines: bellLines(w, it, they) },
@@ -1061,6 +1176,14 @@ function openHomeSheet(id, from = null) {
 }
 // Leaving the home for the Main Menu: save the run first; a reload after this opens the menu again.
 async function leaveHome() {
+  if (spawn) {
+    // (a spawn check under way: the campaign's own home comes back first)
+    assets.stopTracking();
+    spawn.world.clearGuests();
+    open.world = spawn.real;
+    spawn = null;
+    homeScreen.enter();
+  }
   rememberHome(null);
   router.go('menu');
   await autosave.flush();
@@ -1123,7 +1246,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

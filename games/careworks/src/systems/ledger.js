@@ -8,14 +8,15 @@
 //   ledger.monthLines(month) → that close's lines · ledger.lastClose → the newest close's month label (or null)
 //   ledger.forecast({ fromDay, toDay, day, residents, staff }) → this month so far: income earned, wages due
 //   ledger.serialize()
-//     residents: [{ id, name, support level, admittedDay }]   staff: [{ id, name, salary }]
+//     residents: [{ id, name, support level, admittedDay, leftDay (Milestone 9: went home) }]   staff: [{ id, name, salary }]
 import { EconomySystem } from '../../../../core/EconomySystem.js';
 import { FEES, LEDGER } from '../../data/balance.js';
 
 const CAT = LEDGER.categories;
 
 // Days a resident lived here in [fromDay, toDay) (they pay for those days only).
-export const daysHere = (r, fromDay, toDay) => Math.max(0, toDay - Math.max(fromDay, r.admittedDay ?? fromDay));
+// Milestone 9: someone who went home (leftDay) pays up to that day.
+export const daysHere = (r, fromDay, toDay) => Math.max(0, Math.min(toDay, r.leftDay ?? toDay) - Math.max(fromDay, r.admittedDay ?? fromDay));
 
 // The lines one month's close brings: fees and funding per resident, wages per team member.
 // len = the whole month in days (a forecast passes the days so far as toDay but the full month as len).

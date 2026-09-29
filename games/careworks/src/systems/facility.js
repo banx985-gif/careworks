@@ -17,13 +17,16 @@
 //                             the Home wing, no floats, an RN on call at night, no coverage history yet
 //                             v7 (Milestone 7) had no plan reviews: every plan keeps its options and counts as reviewed
 //                             on the load day (not stale); option preferences come from data
+//                             v8 (Milestone 8) had no stays, tags or returning residents: nothing to move — its
+//                             residents keep staying (no timer), their tags come from data when the home opens
 import { founderById, paletteById, ROLES, FOUNDER_FLAG } from '../../data/setup.js';
 import { residentById } from '../../data/residents.js';
 import { RESIDENT, HOME, HELP_SPOTS, HELP_SPOTS_2, SEATS, POSTS } from '../../data/home.js';
 import { ROUTINE } from '../../data/routine.js';
 import { ECONOMY_START } from '../../data/balance.js';
 import { makeClock, buildGrid, spotTile } from './homeWorld.js';
-import { newResidentState } from './residentNeeds.js';
+import { newResidentState, newStay } from './residentNeeds.js';
+import { stayLengthFor } from './admissions.js';
 import { newStaffState } from './staffTeam.js';
 import { ensureRosterState } from './roster.js';
 import { ensureCoverageState } from './coverage.js';
@@ -32,6 +35,13 @@ import { newCareState } from './careTasks.js';
 import { ensurePlan } from '../../data/carePlans.js';
 
 const freshResidents = () => [newResidentState(residentById(RESIDENT.id), { room: RESIDENT.room })];
+// Milestone 9: a new home's Arthur is on his respite stay from day 0 (an older save's Arthur keeps staying).
+function newGameResidents(seed) {
+  const [arthur] = freshResidents();
+  const def = residentById(RESIDENT.id);
+  arthur.stay = { ...newStay(def, stayLengthFor(def, seed, 0), 0), opening: true, paused: 0 }; // (never home while he is the only resident)
+  return [arthur];
+}
 const dateOf = (clock) => ({ year: clock.year, month: clock.month, day: clock.day });
 
 // The campaign save written by START FACILITY. setup = { facility, director, palette, founder }.
@@ -39,6 +49,7 @@ export function newCampaign(setup, now = Date.now()) {
   const founder = founderById(setup.founder);
   if (!founder) throw new Error(`Unknown founder ${setup.founder}`);
   const clock = makeClock().serialize();
+  const seed = `careworks-${now}`;
   return {
     facility: {
       name: setup.facility,
@@ -47,10 +58,10 @@ export function newCampaign(setup, now = Date.now()) {
       founder: { id: founder.id, [FOUNDER_FLAG]: true }, // history counters (bible §3.5.5) join in later milestones
       createdAt: now,
     },
-    seed: `careworks-${now}`, // the run's seed: the residents' daily yes / no answers (a reload never rerolls them)
+    seed, // the run's seed: the residents' daily yes / no answers (a reload never rerolls them)
     clock,
     date: dateOf(clock),
-    residents: freshResidents(),
+    residents: newGameResidents(seed),
     staff: newStaffState(founder.id), // Milestone 3: the opening team, the Founder's flag / perk / history, the shift
     care: newCareState(), // Milestone 4: the day's care tasks, call-bell records, Familiar Care (the plan is on each resident)
     economy: { ...ECONOMY_START }, // Milestone 5: shown in the top bar (the economy is Milestone 22)
@@ -205,6 +216,7 @@ export const SAVE_MIGRATIONS = {
   5: (record) => ({ ...record, data: upgradeV5(record.data) }),
   6: (record) => ({ ...record, data: upgradeV6(record.data) }),
   7: (record) => ({ ...record, data: upgradeV7(record.data) }),
+  8: (record) => record, // (Milestone 9: nothing to move; new data only reaches new admissions)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

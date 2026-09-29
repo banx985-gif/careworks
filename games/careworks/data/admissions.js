@@ -16,4 +16,11 @@ export const ADMISSION = {
   assessmentDays: 1,
   needVariation: 8, // ± points on each need at admission (inside 0–100)
   outcomeVariation: 5, // ± points on each outcome
+  // Milestone 9: the pool is every resident not in the home (all 60). At most maxBlocked applicants whose hard
+  // prerequisite the home can't meet yet stand on the board at once (they show, greyed with the reason, but never
+  // crowd out people who can come in). A resident who went home (respite / short stay) may apply again after
+  // returnAfterDays, tagged Returning, with their Familiar Care kept.
+  maxBlocked: 1,
+  returnAfterDays: 28,
+  homeGoingsKept: 40, // the last few who went home (the ledger's partial months, a later quality score)
 };

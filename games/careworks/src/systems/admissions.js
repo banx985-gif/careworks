@@ -13,12 +13,18 @@
 //                                                   (ctx = { roles, freeRooms: [room ids], day, paused (Milestone 7: the reason admissions are paused, or null) })
 //   board.admit(id, ctx) → { ok, reason, applicant }   takes them off the board (the world gives them the room)
 //   board.waitlist(id, day) · board.decline(id, day) · board.requestAssessment(id, day) → { ok, reason }
+//   board.wentHome(record) → a resident who went home (Milestone 9): away for returnAfterDays, then may apply again
+//                            as Returning; record = { id, name, level, admittedDay, leftDay, stay }
+//   board.homeGoings        the last few who went home (newest last) · board.timesHome(id)
 //   board.serialize()
 // An applicant: { id (resident id), status 'board' | 'wait', arrived (day), leaveDay, needs, outcomes, assessed (bool),
-// assessReady (day or null), rolls (variation rolls so far) }.
+// assessReady (day or null), rolls (variation rolls so far), stayDays (Milestone 9: their stay's length in days, null =
+// Long Term), returning (Milestone 9: they have been here before and went home) }.
+// Milestone 9: the pool is all 60 residents not in the home; with a prerequisite context on tick (ctx.roles /
+// ctx.placeable) at most ADMISSION.maxBlocked applicants the home can't take yet stand on the board at once.
 import { Rng } from '../../../../core/Rng.js';
 import { ADMISSION as A } from '../../data/admissions.js';
-import { RESIDENTS, NEEDS, OUTCOMES, ROOM_TEMPLATES } from '../../data/residents.js';
+import { RESIDENTS, NEEDS, OUTCOMES, ROOM_TEMPLATES, stayRule } from '../../data/residents.js';
 import { ROLES } from '../../data/roles.js';
 
 const clamp = (x) => Math.max(0, Math.min(100, Math.round(x)));
@@ -29,6 +35,15 @@ export function varied(def, seed, roll) {
   const needs = Object.fromEntries(NEEDS.map((n) => [n.id, clamp(def.needs[n.id] + rng.int(-A.needVariation, A.needVariation))]));
   const outcomes = Object.fromEntries(OUTCOMES.map((o) => [o.id, clamp(def.outcomes[o.id] + rng.int(-A.outcomeVariation, A.outcomeVariation))]));
   return { needs, outcomes };
+}
+
+// Milestone 9: the length of their stay (days; null = Long Term), rolled on the run's seed when they apply (Respite is
+// a range; Rehab / Short Stay and a row's own stayDays are fixed).
+export function stayLengthFor(def, seed, roll) {
+  const rule = stayRule(def);
+  if (rule == null) return null;
+  if (!Array.isArray(rule)) return rule;
+  return new Rng(`${seed}:stay:${def.id}:${roll}`).int(rule[0], rule[1]);
 }
 
 // What a resident's hard prerequisites say, against the home: { ok, text ('Ready' / 'Needs: …'), reason (plain words) }.
@@ -56,8 +71,12 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
     away: {}, // resident id → the day they may apply again
     nextArrival: null, // the day the next applicant arrives (set on the first tick)
     arrivals: 0,
+    wentHome: {}, // Milestone 9: resident id → times they went home (a Returning applicant)
+    homeGoings: [], // Milestone 9: [{ id, name, level, admittedDay, leftDay, stay }] newest last
     ...(saved ?? {}),
   };
+  s.wentHome = { ...(s.wentHome ?? {}) };
+  s.homeGoings = [...(s.homeGoings ?? [])];
   s.applicants = (s.applicants ?? []).filter((a) => defs.has(a.id)).map((a) => ({ ...a }));
   s.away = { ...(s.away ?? {}) };
 
@@ -68,13 +87,18 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
 
   // Someone not in the home, not already applying and not away: picked by the run's seed (a reload never changes it).
   function arrive(day, ctx) {
-    const pool = residents.filter((r) => !ctx.inHome.has(r.id) && !get(r.id) && !(s.away[r.id] > day));
+    let pool = residents.filter((r) => !ctx.inHome.has(r.id) && !get(r.id) && !(s.away[r.id] > day));
+    // Milestone 9: never more than maxBlocked applicants the home can't take yet (when the home's context is given)
+    if (ctx.roles) {
+      const blocked = (r) => !prereqOf(r, ctx).ok;
+      if (onBoard().filter((a) => blocked(defOf(a))).length >= A.maxBlocked) pool = pool.filter((r) => !blocked(r));
+    }
     if (!pool.length) return null;
     const rng = new Rng(`${seed}:arrive:${s.arrivals}`);
     const def = pool[rng.int(0, pool.length - 1)];
     const roll = s.arrivals;
     s.arrivals++;
-    const app = { id: def.id, status: 'board', arrived: day, leaveDay: day + A.boardDays, ...varied(def, seed, roll), assessed: false, assessReady: null, rolls: [roll] };
+    const app = { id: def.id, status: 'board', arrived: day, leaveDay: day + A.boardDays, ...varied(def, seed, roll), assessed: false, assessReady: null, rolls: [roll], stayDays: stayLengthFor(def, seed, roll), returning: !!s.wentHome[def.id] };
     s.applicants.push(app);
     return app;
   }
@@ -171,6 +195,18 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
       return { ok: true, reason: null };
     },
     daysLeft: (app, day) => Math.max(0, app.leaveDay - day),
+    // Milestone 9: they went home at the end of their stay (a good outcome). Their room is already free; they may
+    // apply again after returnAfterDays, as a Returning applicant.
+    wentHome(record) {
+      s.wentHome[record.id] = (s.wentHome[record.id] ?? 0) + 1;
+      s.away[record.id] = record.leftDay + A.returnAfterDays;
+      s.homeGoings.push({ ...record });
+      if (s.homeGoings.length > A.homeGoingsKept) s.homeGoings.shift();
+    },
+    get homeGoings() {
+      return s.homeGoings;
+    },
+    timesHome: (id) => s.wentHome[id] ?? 0,
     serialize: () => JSON.parse(JSON.stringify(s)),
   };
   return board;
