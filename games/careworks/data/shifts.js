@@ -9,8 +9,8 @@
 //   settling, Night = the Night band)
 //   demand     the shift's demand factor: × each resident's Support Level weight = the Safe Coverage Points it needs
 //   peaks      its demand profile: the task types (data/tasks.js) that peak on it (shown on the roster sheet)
-//   clinical   rn: a Registered Nurse must be on it · onCall: …or an RN on call (the roster's on-call flag, with an RN
-//              on the team) will do
+//   clinical   rn: a Registered Nurse must be on it · onCall: …or an RN on call (the roster's on-call switch for that
+//              shift, with an RN on the team) will do while the home is small (data/balance.js ON_CALL)
 export const SHIFT_TEMPLATES = {
   morning: {
     name: 'Morning',
@@ -28,7 +28,7 @@ export const SHIFT_TEMPLATES = {
     bands: ['afternoon', 'evening'],
     demand: 0.9,
     peaks: ['activity', 'observation', 'meal', 'settle'],
-    clinical: { rn: true, onCall: false },
+    clinical: { rn: true, onCall: true }, // (Milestone 10 fix: on call while the home is small — data/balance.js ON_CALL)
   },
   night: {
     name: 'Night',
@@ -46,7 +46,7 @@ export const OFF = 'off'; // the roster's Off column: on the team, on no shift (
 // Wings (bible §14 "staff to wings/zones"). One for now; Milestone 24 adds more. rooms: the room ids in it (data/home.js
 // ROOM_IDS). A staff member assigned to a wing (and not a float) counts as "assigned to" every resident living in it
 // for the task AI's second rule (bible §15).
-export const WINGS = [{ id: 'home', name: 'Home', rooms: ['RM01', 'SR2', 'SR3', 'SR4'] }];
+export const WINGS = [{ id: 'home', name: 'Home', rooms: 'all' }]; // (Milestone 10: every room, wherever it is built)
 export const DEFAULT_WING = 'home';
 
 // Safe Coverage Points (bible §14).
@@ -90,6 +90,7 @@ export const AGENCY = {
 };
 
 // A new home's roster (the opening team is three: bible §3.5.4): the Registered Nurse and the Care Worker on Morning
-// (wake-ups, breakfast, the medicine round), everyone else on Afternoon, nobody on Night (an RN on call). With one RN
-// the Afternoon's RN rule can't be met: agency cover fills it until Milestone 11 brings recruitment.
-export const DEFAULT_ROSTER = { byRole: { RN: 'morning', CW: 'morning' }, others: 'afternoon', onCall: true };
+// (wake-ups, breakfast, the medicine round), everyone else on Afternoon, nobody on Night. Milestone 10 fix: the nurse on
+// call starts on for Night (onCall) and Afternoon (onCallAfternoon), so while the home is small (data/balance.js ON_CALL)
+// every shift is safe and no agency is hired unless the player changes something.
+export const DEFAULT_ROSTER = { byRole: { RN: 'morning', CW: 'morning' }, others: 'afternoon', onCall: true, onCallAfternoon: true };

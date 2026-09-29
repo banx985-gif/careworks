@@ -49,7 +49,7 @@ const overlaps = (a, b) => a.start < b.end && b.start < a.end;
 export function newRosterState(team) {
   const shifts = {};
   for (const m of team) shifts[m.id] = DEFAULT_ROSTER.byRole[m.role] ?? DEFAULT_ROSTER.others;
-  return { shifts, wings: Object.fromEntries(team.map((m) => [m.id, DEFAULT_WING])), floats: {}, onCall: DEFAULT_ROSTER.onCall, cover: {}, agency: [] };
+  return { shifts, wings: Object.fromEntries(team.map((m) => [m.id, DEFAULT_WING])), floats: {}, onCall: DEFAULT_ROSTER.onCall, onCallAfternoon: DEFAULT_ROSTER.onCallAfternoon, cover: {}, agency: [] };
 }
 // An older save's roster (Milestones 3–6 had { shifts } only, everyone on the one Morning shift): they stay on Morning.
 export function ensureRosterState(saved, ids) {
@@ -61,6 +61,7 @@ export function ensureRosterState(saved, ids) {
     wings: { ...Object.fromEntries(ids.map((id) => [id, DEFAULT_WING])), ...(r.wings ?? {}) },
     floats: { ...(r.floats ?? {}) },
     onCall: r.onCall ?? DEFAULT_ROSTER.onCall,
+    onCallAfternoon: r.onCallAfternoon ?? DEFAULT_ROSTER.onCallAfternoon, // (Milestone 10 fix: older saves get it on too)
     cover: Object.fromEntries(Object.entries(r.cover ?? {}).map(([k, v]) => [k, [...v]])),
     agency: (r.agency ?? []).map((a) => ({ ...a, model: a.model ? { ...a.model } : null })),
   };
@@ -99,10 +100,12 @@ export function createRoster(state, { abs = () => 0 } = {}) {
       const w = R().wings[id];
       return w === undefined ? DEFAULT_WING : w; // (null: tied to no wing)
     },
-    wingOfRoom: (roomId) => WINGS.find((w) => w.rooms.includes(roomId))?.id ?? null,
+    wingOfRoom: (roomId) => (roomId ? WINGS.find((w) => w.rooms === 'all' || w.rooms.includes(roomId))?.id ?? null : null),
     get onCall() {
       return !!R().onCall;
     },
+    // Milestone 10 fix: the nurse-on-call switch by shift ('night' is the M7 flag above)
+    onCallFor: (shiftId) => (shiftId === 'night' ? !!R().onCall : shiftId === 'afternoon' ? !!R().onCallAfternoon : false),
     onShift: (id) => !!workingAt(id, abs()),
     workingShift: (id) => workingAt(id, abs()),
     workingAt,
@@ -159,8 +162,9 @@ export function createRoster(state, { abs = () => 0 } = {}) {
       R().wings[id] = wingId;
       return true;
     },
-    setOnCall(on) {
-      R().onCall = !!on;
+    setOnCall(on, shiftId = 'night') {
+      if (shiftId === 'afternoon') R().onCallAfternoon = !!on;
+      else R().onCall = !!on;
     },
     // Old cover lists and finished agency hires fall away (keeps the save small).
     prune(t) {

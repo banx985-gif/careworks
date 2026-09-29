@@ -1,6 +1,8 @@
 // CAREWORKS image list: key → path (relative to index.html). Batch art is added here milestone by milestone; anything
 // missing draws the placeholder box, never crashes.
-import { PLACED, PROPS } from './home.js';
+import { PLACED, PROPS, STAGES } from './home.js';
+import { ROOMS } from './rooms.js';
+import { BUILDABLE_FACILITIES } from './facilities.js';
 import { BOTTOM_SLOTS, TOP_ICONS, CARE_ICONS } from './bars.js';
 import { CARE_POPS } from './pops.js';
 import { RESIDENTS } from './residents.js';
@@ -14,6 +16,10 @@ export const ASSETS = {
   // Milestone 1, the small home: the placed station / lounge / room, Arthur, and every Founder (the worker is the run's
   // Founder).
   ...Object.fromEntries(PLACED.map((p) => art(p.kind === 'room' ? 'rooms' : 'facilities', p.art))),
+  // Milestone 10: every room and facility Build Mode can place (not the two secret ones), and the stage pictures
+  ...Object.fromEntries(ROOMS.map((r) => art('rooms', r.art))),
+  ...Object.fromEntries(BUILDABLE_FACILITIES.map((f) => art('facilities', f.art))),
+  ...Object.fromEntries(STAGES.filter((s) => s.art).map((s) => art('events', s.art))),
   ...Object.fromEntries(RESIDENTS.map((r) => art('residents', r.art))),
   ...Object.fromEntries(FOUNDERS.map((f) => art('staff', f.art))),
   // Milestone 3: every staff portrait on the roster data and the five role badges (staff cards).

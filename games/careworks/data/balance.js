@@ -37,7 +37,7 @@ export const FEES = {
   careSupportFundingByLevel: { 1: 150, 2: 300, 3: 450, 4: 600, 5: 750 }, // Credits a month by Support Level
 };
 export const LEDGER = {
-  categories: { opening: 'Opening balance', fees: 'Accommodation fees', funding: 'Care Support Funding', wages: 'Wages', agency: 'Agency cover', careRecovery: 'Care recovery' },
+  categories: { opening: 'Opening balance', fees: 'Accommodation fees', funding: 'Care Support Funding', wages: 'Wages', agency: 'Agency cover', careRecovery: 'Care recovery', build: 'Building', sell: 'Sold (50% back)' },
   maxLines: 400, // older lines fold into one (core/EconomySystem)
 };
 
@@ -53,6 +53,23 @@ export const LEDGER = {
 //   when the ledger can't pay agency, the unsafe shift's missed essential tasks cost 35 each: one or two a day is
 //   980–1,960 Credits a month, and the unsafe-shift counter goes up (quality scores read it in Milestone 26)
 // So the cheapest safe roster always beats running short.
+// Milestone 10 fix: a small home's nurse on call (bible §14 "RN or on-call"). A brand-new home (Arthur and the three-
+// person opening team) must not bleed agency fees the player never chose. The roster's "nurse on call" switch, one per
+// shift that allows it (data/shifts.js clinical.onCall), stands in for an RN on shift — and adds coverPoints of Safe
+// Coverage — while the home is small and nobody on it needs much clinical care:
+//   clinicalNeedAbove   a resident whose assessed Clinical/Nursing need (their profile, data/residents.js) is above this
+//                       needs a real RN on every shift (Clinical Support and High Care are 55; everyone else 36 or less)
+//   maxResidents        per shift: the switch only covers while the home has at most this many residents (Afternoon:
+//                       the card's 4; Night: no limit — the coverPoints then run out for a bigger home by themselves)
+//   coverPoints         Safe Coverage Points the nurse on call is worth: 4 low-support residents at Night need 0.4 ×
+//                       (1+2+2+2) = 2.8, so Night is covered for them; a bigger or needier home is not, and must staff
+//                       it (or pay agency) — the M7 rule that under-staffing never saves money still holds there
+export const ON_CALL = {
+  clinicalNeedAbove: 45,
+  maxResidents: { afternoon: 4, night: Infinity },
+  coverPoints: 3.2,
+};
+
 export const SHORT_STAFFING = {
   agencyFeePerShift: 120, // Credits, each agency worker, each shift
   careRecoveryPerMissed: 35, // Credits per missed essential task

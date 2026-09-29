@@ -6,6 +6,7 @@
 //                        seconds = 1.5, fadeIn = 0.25, fadeOut = 0.4, waitForArt = 2.5, bg = '#000' })
 //     key        the logo's asset key (drawn as large as fits the screen width, centred)
 //     prepare    loads the logo; the timer starts once it is in. No logo after waitForArt s (or it failed): skipped.
+//   The time counts update(dt) — frames actually drawn — so a launch stall (art decoding) never eats the logo unseen.
 //   A router screen: enter · update · render · onTap · onBack. Read-only extras: shown (the logo is up), done.
 
 export function createStudioSplash({ renderer, assets, key, prepare = async () => {}, drawNext = null, onDone, seconds = 1.5, fadeIn = 0.25, fadeOut = 0.4, waitForArt = 2.5, bg = '#000' }) {
@@ -44,7 +45,7 @@ export function createStudioSplash({ renderer, assets, key, prepare = async () =
         });
     },
     update(dt) {
-      t += Math.min(dt, 0.1); // a long first frame never eats the whole splash
+      t += dt; // the fixed-step loop's dt (it already caps a long frame)
       if (done) return;
       if (outAt == null && shownAt == null && t > waitForArt) leave(); // the logo is taking too long: straight on
       if (outAt == null && shownAt != null && t - shownAt >= fadeIn + seconds) leave();

@@ -3,8 +3,11 @@
 //
 //   staffPoints(model, energy?) → points     (five stats + the primary stat again) / statsPerPoint × Energy factor
 //   requiredPoints(shiftId, levels) → points  Σ Support Level weight × the shift's demand
-//   assess({ shiftId, staff: [{ id, role, stats, energy }], levels, onCall, teamHasRN })
-//     → { shift, required, provided, pct, rnOn, rnOk, onCallUsed, safe, colour ('good' | 'amber' | 'red'), reasons }
+//   assess({ shiftId, staff: [{ id, role, stats, energy }], levels, onCall, teamHasRN, clinicalHigh })
+//     → { shift, required, provided, pct, rnOn, rnOk, onCallUsed, onCallOk, onCallPoints, safe, colour, reasons }
+//     Milestone 10 fix: onCallOk = the shift's nurse-on-call switch is on, it allows one, there is an RN on the team,
+//     the home is small enough (ON_CALL.maxResidents = levels.length) and nobody needs much clinical care
+//     (clinicalHigh). Then the RN rule is met without an RN on shift and the call adds ON_CALL.coverPoints.
 //
 //   createCoverage({ state, roster, team, levels, ledger, abs, hire, log, bus })
 //     state   the run's staff state (its coverage part: newCoverageState)
@@ -16,7 +19,7 @@
 //   coverage.warnings() → the shifts short now or about to start short (the banner, Staff's red badge)
 //   coverage.admissionsPaused() → reason | null · coverage.skipsActivity(day) → bool (the Cards activity)
 //   coverage.recordMissed(n) · coverage.dayEnd(day)   care recovery: missed essential tasks, posted each day
-import { SHIFTS, STAFF_BALANCE, SHORT_STAFFING } from '../../data/balance.js';
+import { SHIFTS, STAFF_BALANCE, SHORT_STAFFING, ON_CALL } from '../../data/balance.js';
 import { SHIFT_IDS, COVERAGE as C, FALLBACK, AGENCY } from '../../data/shifts.js';
 import { ROLES, STAT_IDS } from '../../data/roles.js';
 import { BANDS, ROUTINE } from '../../data/routine.js';
@@ -34,18 +37,20 @@ export function staffPoints(model, energy = model.energy) {
 export const requiredPoints = (shiftId, levels) => levels.reduce((t, l) => t + (C.supportWeight[l] ?? l), 0) * SHIFTS[shiftId].demand;
 export const colourOf = (pct) => (pct >= C.good ? 'good' : pct >= C.amber ? 'amber' : 'red');
 
-export function assess({ shiftId, staff, levels, onCall = false, teamHasRN = false }) {
+export function assess({ shiftId, staff, levels, onCall = false, teamHasRN = false, clinicalHigh = false }) {
   const t = SHIFTS[shiftId];
   const required = requiredPoints(shiftId, levels);
-  const provided = staff.reduce((s, m) => s + staffPoints(m, m.energy), 0);
+  const onCallOk = !!t.clinical?.onCall && !!onCall && teamHasRN && !clinicalHigh && levels.length <= (ON_CALL.maxResidents[shiftId] ?? Infinity);
+  const onCallPoints = onCallOk ? ON_CALL.coverPoints : 0;
+  const provided = staff.reduce((s, m) => s + staffPoints(m, m.energy), 0) + onCallPoints;
   const pct = required > 0 ? (provided / required) * 100 : 100;
   const rnOn = staff.some((m) => m.role === 'RN');
-  const onCallUsed = !rnOn && !!t.clinical?.onCall && onCall && teamHasRN;
+  const onCallUsed = !rnOn && onCallOk;
   const rnOk = !t.clinical?.rn || rnOn || onCallUsed;
   const reasons = [];
   if (pct < C.minimumPct) reasons.push(`${Math.round(pct)}% of the Safe Coverage Points it needs`);
-  if (!rnOk) reasons.push(t.clinical?.onCall ? 'no Registered Nurse on shift or on call' : 'no Registered Nurse');
-  return { shift: shiftId, required: round1(required), provided: round1(provided), pct: Math.round(pct), rnOn, rnOk, onCallUsed, safe: !reasons.length, colour: colourOf(pct), reasons };
+  if (!rnOk) reasons.push(t.clinical?.onCall ? (clinicalHigh ? 'no Registered Nurse on shift (a resident needs clinical care)' : 'no Registered Nurse on shift or on call') : 'no Registered Nurse');
+  return { shift: shiftId, required: round1(required), provided: round1(provided), pct: Math.round(pct), rnOn, rnOk, onCallUsed, onCallOk, onCallPoints, safe: !reasons.length, colour: colourOf(pct), reasons };
 }
 
 export function newCoverageState() {
@@ -66,7 +71,7 @@ export function warnLead(shiftId) {
 }
 const ACTIVITY_AT = ROUTINE.find((s) => s.activity)?.at ?? 13.5;
 
-export function createCoverage({ state, roster, team, levels, ledger, abs, hire, log: logLine = null, bus = null }) {
+export function createCoverage({ state, roster, team, levels, clinicalHigh = () => false, ledger, abs, hire, log: logLine = null, bus = null }) {
   const cs = state.coverage;
   const B = STAFF_BALANCE.energy;
   const dayOf = (t) => Math.floor(t / 24);
@@ -91,7 +96,8 @@ export function createCoverage({ state, roster, team, levels, ledger, abs, hire,
       .map(person)
       .filter(Boolean)
       .map((p) => ({ id: p.id, role: p.role, stats: p.model.stats, energy: energyAt(p, inst, projected) }));
-    return { ...assess({ shiftId: inst.shift, staff, levels: levels(), onCall: roster.onCall, teamHasRN: teamHasRN() }), staff: staff.map((s) => s.id), inst };
+    const onCall = roster.onCallFor ? roster.onCallFor(inst.shift) : roster.onCall;
+    return { ...assess({ shiftId: inst.shift, staff, levels: levels(), onCall, teamHasRN: teamHasRN(), clinicalHigh: clinicalHigh() }), staff: staff.map((s) => s.id), inst };
   }
   const shiftName = (sid) => SHIFTS[sid].name;
   const warnFrom = (inst) => inst.start - warnLead(inst.shift);

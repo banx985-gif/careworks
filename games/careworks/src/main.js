@@ -20,6 +20,10 @@
 // Milestone 9: all 60 residents. Applicant and resident cards show the stay type and its length (Respite / Rehab end
 // with "Arthur heads home", the room freed), a Returning tag, the life-story line and tags. ?debug=1 adds "Spawn all 60"
 // under Care: a test home (never saved) where every resident comes in, walks to a spot and has their card opened once.
+// Milestone 10: Develop opens Build Mode (rooms and facilities: place, move, sell for 50% back) and the home's stage
+// (S2 "Locked — needs Rank D"; ?debug=1 upgrades now, and unlocks every room and facility). The Build list is a sheet
+// of every room and facility with its picture, cost and effect (locked ones greyed with the reason; the two secret
+// ones never listed). Selling asks first. Growing to Stage 2 plays the big "Expanded Care Home" moment.
 // Add ?debug=1 for the FPS/state overlay, ?screen=test for the scaling / tap / asset-loader test screen.
 import { THEME, font } from '../../../core/Theme.js';
 import { EventBus } from '../../../core/EventBus.js';
@@ -53,10 +57,12 @@ import { DataValidator } from '../../../core/DataValidator.js';
 import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
 import { ROLES, STATS, TIERS } from '../data/roles.js';
 import { TRAITS, STAFF, validateStaff } from '../data/staff.js';
-import { SHIFTS, FEES, SHORT_STAFFING } from '../data/balance.js';
+import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL } from '../data/balance.js';
 import { SHIFT_IDS, OFF, WINGS } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
-import { ROOM_IDS } from '../data/home.js';
+import { STAGES } from '../data/home.js';
+import { ROOMS } from '../data/rooms.js';
+import { BUILDABLE_FACILITIES } from '../data/facilities.js';
 import { FOUNDERS } from '../data/setup.js';
 import { DOMAINS, CARE_OPTIONS, optionById, optionsFor, validateCarePlans, OPTION_PREF_MOOD } from '../data/carePlans.js';
 import { TASK_TYPES, BELL } from '../data/tasks.js';
@@ -116,6 +122,7 @@ const loop = new FixedStepLoop({
     vfx.update(dt); // real seconds: pops keep their pace at any game speed
     carePops.update(dt);
     dayBeat.update(dt);
+    if (bigBeat && (bigBeat.age += dt) >= BIG_BEAT_LIFE) bigBeat = null;
     autosave.tick(dt);
     dialog.update(dt);
     sheet.update(dt);
@@ -124,6 +131,7 @@ const loop = new FixedStepLoop({
     const ctx = renderer.begin(COL.bg);
     router.render(ctx, alpha);
     sheet.render(ctx);
+    if (router.currentName === 'home') drawBigBeat(ctx);
     dialog.render(ctx);
     if (onTestScreen()) drawButton(ctx, pauseButton(), loop.paused ? 'RESUME' : 'PAUSE', { selected: loop.paused });
     if (loop.paused) drawPaused(ctx);
@@ -216,7 +224,8 @@ let spawn = null; // Milestone 9: ?debug=1 "Spawn all 60" while it runs: { real 
 function openRun(n, data) {
   const clock = makeClock(bus);
   if (data.clock) clock.load(data.clock);
-  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, residents: data.residents, staff: data.staff, care: data.care, seed: data.seed, bus, admissions: data.admissions, ledger: data.ledger, startCredits: data.economy?.credits ?? ECONOMY_START.credits });
+  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, residents: data.residents, staff: data.staff, care: data.care, seed: data.seed, bus, admissions: data.admissions, ledger: data.ledger, layout: data.layout, startCredits: data.economy?.credits ?? ECONOMY_START.credits });
+  if (world.fixedUp.length) debug.log(`layout fix-up: ${world.fixedUp.map((m) => m.id).join(', ')} moved`);
   if (debug.enabled && PARAMS.get('paused') === '1') clock.speed = 0; // ?debug=1&paused=1: open exactly as saved (tests)
   data.economy ??= { ...ECONOMY_START };
   open = { n, data, world, seenMissed: new Set() };
@@ -237,7 +246,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage'],
   save: () => saveRun(),
   stamp: () => (open && !spawn ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && !spawn && router.currentName === 'home' && !open.world.clock.paused,
@@ -456,7 +465,7 @@ const bottomBar = createBottomBar({
 });
 const vfx = new VfxSystem({ assets, width: W, height: renderer.height, font: THEME.family, maxTexts: 4, maxEffects: 16 });
 const dayBeat = createDayBeat();
-const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster() });
+const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it) });
 const carePops = createCarePops({ bus, world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused });
 // The end of each day: the medium beat ("Day 3 — all routine care done" / "2 tasks missed").
 bus.on('care:dayEnd', (summary) => {
@@ -484,6 +493,7 @@ function openBottom(id) {
   if (r.sheet === 'residents') openResidents();
   else if (r.sheet === 'roster') openRoster();
   else if (r.slot.id === 'business') openBusiness();
+  else if (r.slot.id === 'develop') openDevelop();
   else openPlaceholder(r.slot);
   lastRoute = r.sheet;
 }
@@ -605,7 +615,8 @@ function openRoster() {
     const detail = status.map((a) => {
       const T = SHIFTS[a.shift];
       const rn = a.rnOn ? 'RN on shift' : a.onCallUsed ? 'RN on call' : T.clinical?.rn ? 'no RN' : 'no RN needed';
-      return { text: `${T.name}: needs ${a.required.toFixed(1)} points, has ${a.provided.toFixed(1)} · ${rn} · busiest with ${T.peaks.map((k) => PEAK_WORDS[k] ?? k).join(', ')}`, color: a.safe ? COL.textMuted : COL.bad };
+      const call = a.onCallPoints ? ` (${a.onCallPoints.toFixed(1)} from the nurse on call)` : '';
+      return { text: `${T.name}: needs ${a.required.toFixed(1)} points, has ${a.provided.toFixed(1)}${call} · ${rn} · busiest with ${T.peaks.map((k) => PEAK_WORDS[k] ?? k).join(', ')}`, color: a.safe ? COL.textMuted : COL.bad };
     });
     const teamRows = [];
     for (const p of w.team) {
@@ -631,12 +642,19 @@ function openRoster() {
         { title: 'Safe Coverage', bars, lines: detail },
         { title: 'Team', columns: 2, buttons: teamRows },
         {
-          title: 'Night',
+          title: 'Nurse on call',
+          lines: [{ text: `While the home is small and nobody needs much clinical care, a Registered Nurse on call covers the RN rule and adds cover. Afternoon: up to ${ON_CALL.maxResidents.afternoon} residents.`, color: COL.textMuted }],
           columns: 1,
-          buttons: [{ id: 'onCall', label: `RN on call at night: ${r.onCall ? 'On' : 'Off'}`, sub: r.onCall ? 'A Registered Nurse on the team answers the phone at night' : 'Night then needs an RN on shift', accent: r.onCall ? COL.good : COL.progress, onTap: () => {
-            w.setOnCall(!r.onCall);
-            autosave.request('roster');
-          } }],
+          buttons: [
+            { id: 'onCall', label: `RN on call at night: ${r.onCall ? 'On' : 'Off'}`, sub: r.onCall ? 'A Registered Nurse on the team answers the phone at night' : 'Night then needs an RN on shift', accent: r.onCall ? COL.good : COL.progress, onTap: () => {
+              w.setOnCall(!r.onCall);
+              autosave.request('roster');
+            } },
+            { id: 'onCallAfternoon', label: `RN on call in the afternoon: ${r.onCallFor('afternoon') ? 'On' : 'Off'}`, sub: r.onCallFor('afternoon') ? 'Covers the Afternoon while the home is small' : 'The Afternoon then needs an RN on shift', accent: r.onCallFor('afternoon') ? COL.good : COL.progress, onTap: () => {
+              w.setOnCall(!r.onCallFor('afternoon'), 'afternoon');
+              autosave.request('roster');
+            } },
+          ],
         },
         { title: 'Coverage log', lines: log.length ? [...hist, ...log] : [{ text: 'Nothing yet: every shift so far started safe.', color: COL.textMuted }] },
       ],
@@ -644,6 +662,129 @@ function openRoster() {
   });
 }
 // Develop / Quality: what will live there.
+// --- Develop and Build Mode (Milestone 10) -----------------------------------------------------------------------------
+const stageOf = (n) => STAGES[n - 1];
+// Develop: Build Mode, the home's stage and capacity, and (?debug=1) the upgrade and the unlock-all switch.
+function openDevelop() {
+  const slot = BOTTOM_SLOTS.find((s) => s.id === 'develop');
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const st = w.stage;
+    const next = stageOf(st.n + 1);
+    const stageRows = [{ id: 'dev:build', label: 'Build Mode', sub: 'Place, move and sell rooms and facilities (50% back when you sell)', icon: slot.icon, accent: COL.action, onTap: () => {
+      sheet.close();
+      homeScreen.setBuildMode(true);
+    } }];
+    if (next) stageRows.push({ id: 'dev:stage', label: `Stage ${next.n}: ${next.name}`, sub: `Locked — needs Rank ${next.unlock.value} · room for ${next.capacity} residents and more floor`, disabled: true, accent: COL.progress });
+    const dbg = debug.enabled
+      ? [{ title: 'Debug', columns: 1, buttons: [
+        ...(next ? [{ id: 'dev:upgrade', label: `Upgrade to Stage ${next.n} now (debug)`, sub: 'Skips the Rank D rule for testing', accent: COL.progress, onTap: () => upgradeStage() }] : []),
+        { id: 'dev:unlock', label: `Unlock all rooms and facilities (debug): ${w.layout.debugUnlock ? 'On' : 'Off'}`, sub: 'For testing (the two secret facilities stay hidden)', accent: w.layout.debugUnlock ? COL.good : COL.progress, onTap: () => {
+          w.build.setDebugUnlock(!w.layout.debugUnlock);
+          autosave.request('debug');
+        } },
+      ] }]
+      : [];
+    return {
+      title: slot.title,
+      subtitle: `Stage ${st.n}: ${st.name} · ${w.rooms.length} of ${st.capacity} rooms`,
+      art: slot.icon,
+      accent: accentNow(),
+      sections: [
+        { lines: [`Residents live one to a room: ${w.rooms.length} rooms built, ${w.freeRooms().length} free. Stage ${st.n} holds up to ${st.capacity}.`], columns: 1, buttons: stageRows },
+        ...dbg,
+      ],
+    };
+  });
+}
+// The Build list: every room and facility (not the two secret ones) with its picture, cost, what it does or why it is
+// locked. Tap one to place it (a ghost in the home).
+function openBuildList() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const row = (d, kind) => {
+      const u = w.layout.unlock(d.id);
+      const afford = w.ledger.balance >= d.cost;
+      const full = kind === 'room' && w.rooms.length >= w.stage.capacity;
+      const why = !u.ok ? u.reason : full ? `Stage ${w.stage.n} holds ${w.stage.capacity} residents` : !afford ? 'Not enough Credits' : null;
+      const what = kind === 'room' ? `${d.bestFor} · ${d.effect.text}` : d.effect.text;
+      return { id: `buy:${d.id}`, label: `${d.name} · ${credits(d.cost)}`, sub: why ? `${why} · ${what}` : what, icon: d.art, disabled: !!why, accent: kind === 'room' ? COL.action : COL.progress, onTap: () => {
+        sheet.close();
+        homeScreen.startPlacing(d.id);
+      } };
+    };
+    return {
+      title: 'Build',
+      subtitle: `${credits(w.ledger.balance)} Credits · Stage ${w.stage.n}: ${w.rooms.length} of ${w.stage.capacity} rooms`,
+      art: 'care_ui_03',
+      accent: accentNow(),
+      sections: [
+        { title: 'Rooms', columns: 1, buttons: ROOMS.map((d) => row(d, 'room')) },
+        { title: 'Facilities', columns: 1, buttons: BUILDABLE_FACILITIES.map((d) => row(d, 'facility')) },
+      ],
+    };
+  });
+}
+// Selling asks first (50% back); a room with a resident, or the home's only Dining Room / Nurse Station …, can't go.
+function confirmSell(it) {
+  const w = open?.world;
+  if (!w) return;
+  const can = w.build.canSell(it.uid);
+  if (!can.ok) return;
+  dialog.confirm({
+    title: `Sell the ${it.def.name}?`,
+    body: `You get ${credits(can.refund)} Credits back (half its price).`,
+    art: it.def.art,
+    yes: 'Sell',
+    danger: true,
+    onYes: () => {
+      const r = w.build.sell(it.uid);
+      if (r.ok) {
+        homeScreen.pick(null);
+        homeScreen.build.message = { text: `Sold: ${it.def.name} (+${credits(r.refund)} Credits)`, good: true };
+        autosave.request('sell');
+      }
+    },
+  });
+}
+// Stage 1 → 2 (debug for now): the floor grows, nothing moves, and the big moment.
+function upgradeStage() {
+  const w = open?.world;
+  if (!w) return;
+  const r = w.build.upgrade();
+  if (!r.ok) return;
+  sheet.close();
+  bigBeat = { title: r.stage.name, text: `Stage ${r.stage.n}: more floor and room for ${r.stage.capacity} residents`, art: r.stage.art, age: 0 };
+  autosave.request('stage');
+}
+// The big feedback beat (style guide: big moments get a picture): shown over the home for a few seconds, tap to close.
+let bigBeat = null;
+const BIG_BEAT_LIFE = 4.5;
+function drawBigBeat(ctx) {
+  const b = bigBeat;
+  if (!b) return;
+  const H = renderer.height;
+  const k = Math.min(1, b.age / 0.35) * Math.min(1, (BIG_BEAT_LIFE - b.age) / 0.5);
+  ctx.save();
+  ctx.globalAlpha = Math.max(0, k);
+  ctx.fillStyle = 'rgba(30, 24, 18, 0.55)';
+  ctx.fillRect(0, 0, W, H);
+  const w = Math.min(W - 120, 820);
+  const h = w / assets.aspect(b.art);
+  const x = (W - w) / 2;
+  const y = H / 2 - h / 2 - 120;
+  assets.draw(ctx, b.art, x, y, w, h);
+  ctx.fillStyle = '#FFFFFF';
+  ctx.textAlign = 'center';
+  ctx.font = font(THEME.size.major, true);
+  ctx.fillText(b.title, W / 2, y + h + 110);
+  ctx.font = font(THEME.size.body, false);
+  ctx.fillText(b.text, W / 2, y + h + 190);
+  ctx.restore();
+}
+
 function openPlaceholder(slot) {
   sheet.open(() => ({ title: slot.title, subtitle: slot.text, art: slot.icon, accent: accentNow(), sections: [] }));
 }
@@ -736,7 +877,7 @@ function openAdmissions() {
     const free = w.freeRooms().length;
     return {
       title: 'Admissions',
-      subtitle: `${free} of ${w.rooms.length} Standard Rooms free · new applicants every few days`,
+      subtitle: `${free} of ${w.rooms.length} rooms free (Stage ${w.stage.n} holds ${w.stage.capacity}) · new applicants every few days`,
       art: CARE_ICONS.admissions,
       accent: accentNow(),
       sections: [
@@ -763,7 +904,7 @@ function openApplicant(id) {
     const level = supportLevel(def);
     const days = adm.daysLeft(app, ctx.day);
     const wait = app.status === 'wait';
-    const nextRoom = w.freeRooms()[0];
+    const nextRoom = w.roomsFor(id)[0];
     const act = (fn, ok) => {
       const r = fn();
       if (!r.ok) {
@@ -798,7 +939,7 @@ function openApplicant(id) {
         {
           columns: 1,
           buttons: [
-            { id: 'act:admit', label: 'Admit now', sub: can.ok ? `Room ${ROOM_IDS.indexOf(nextRoom?.id) + 1} · walks in now, joins the routine from the next band` : can.reason, disabled: !can.ok, accent: COL.good, onTap: () => act(() => w.admit(id), () => {
+            { id: 'act:admit', label: 'Admit now', sub: can.ok ? `Room ${w.roomNumber(nextRoom?.id)} · walks in now, joins the routine from the next band` : can.reason, disabled: !can.ok, accent: COL.good, onTap: () => act(() => w.admit(id), () => {
               sheet.close();
               const person = w.residentById(id);
               if (person) homeScreen.selection.select(person);
@@ -923,7 +1064,7 @@ function residentSections(w, it) {
   const likes = [pick('prefer').length && `Enjoys: ${pick('prefer').join(', ')}`, pick('dislike').length && `Would rather not: ${pick('dislike').join(', ')}`, pick('refuse').length && `Says no to: ${pick('refuse').join(', ')}`].filter(Boolean);
   const bell = w.bellFor(it.id);
   const they = theirOf(it.id) === 'her' ? 'she' : 'he';
-  const room = st.room ? `Room ${ROOM_IDS.indexOf(st.room) + 1}` : 'No room (test home)';
+  const room = st.room ? `Room ${w.roomNumber(st.room)}` : 'No room (test home)';
   return [
     { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `${room} · Support Level ${supportLevel(it.def)}`, { text: stayLine(w, it), color: st.stay ? COL.actionDark : COL.textMuted }] },
     { title: 'Life story', lines: [it.def.story, { text: (st.tags?.length ? st.tags : it.def.tags).join(' · '), color: COL.actionDark }, ...(st.returning ? [{ text: 'Returning: stayed here before', color: COL.good }] : [])] },
@@ -1166,11 +1307,15 @@ function openHomeSheet(id, from = null) {
     const sections = [{ lines }];
     if (it.kind === 'room') {
       const who = it.residentId ? w.byId(it.residentId) : null;
-      const n = ROOM_IDS.indexOf(it.id) + 1;
+      const n = w.roomNumber(it.id);
       sub = who ? `Room ${n} · ${who.name}'s room` : `Room ${n} · Empty`;
       lines.unshift(who ? `Resident: ${who.name} (${who.def.support})` : 'Empty: ready for a new resident. Admit one from Care → Admissions.');
       if (!who) sections.push({ columns: 1, buttons: [{ id: 'room:admissions', label: 'Admissions', sub: `${w.admissions.board.length} applying`, icon: CARE_ICONS.admissions, accent: COL.action, onTap: () => openAdmissions() }] });
     }
+    sections.push({ columns: 1, buttons: [{ id: 'place:build', label: 'Move or sell in Build Mode', sub: it.def.effect ? `${it.def.effect.text}${it.def.effect.wired ? '' : ' (its system comes later)'}` : '', accent: COL.progress, onTap: () => {
+      homeScreen.setBuildMode(true);
+      homeScreen.pick(it);
+    } }] });
     return { title: it.def.name, subtitle: sub, art: it.def.art, accent, sections };
   });
 }
@@ -1246,7 +1391,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

@@ -17,6 +17,11 @@
 // Milestone 8: all 48 plan options with eligibility (world.eligibility / planCtx), option preferences (a disliked
 // option costs a little Mood when chosen; a refused one's tasks are refused and logged as they come up), the plan
 // review / stale flag (world.stalePlans, world.reviewPlan) and a new resident's first plan from their primary support.
+// Milestone 10: the home's layout is live (src/systems/homeLayout.js on core/FacilitySystem): rooms and facilities
+// can be placed, moved and sold in Build Mode (world.build), each piece's seats, posts and walls move with it, and the
+// home can grow to Stage 2. After any change the grid is rebuilt, people standing where a piece now stands step to
+// the nearest open tile, residents in a moved room move with it, and everyone walking finds a new way. Admissions give
+// a free room of the right kind (Memory Support / High-Care residents need theirs) up to the stage's capacity.
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
@@ -45,19 +50,24 @@
 //   world.staleOf(residentId) → [{ key, text }] · world.stalePlans() → [{ resident, reasons }] · world.reviewPlan(residentId)
 //   world.coverage (src/systems/coverage.js) · world.team (the staff without agency workers)
 //   world.moveStaff(id, shiftId | 'off') · world.setFloat(id, on) · world.setOnCall(on)
-//   world.serialize() → { clock, residents, staff, care, admissions, ledger }   (the run save; the page keeps the rest)
+//   world.layout (src/systems/homeLayout.js) · world.floor · world.stage · world.roomNumber(id) · world.spotTile(ref)
+//   world.build.place(defId, col, row) / move(uid, col, row) / sell(uid) / upgrade() / check(…) → { ok, reason, … }
+//   world.serialize() → { clock, residents, staff, care, admissions, ledger, layout }   (the run save; the page keeps the rest)
 import { Grid } from '../../../../core/Grid.js';
 import { Agent } from '../../../../core/Agent.js';
 import { Clock } from '../../../../core/Clock.js';
 import { findPath } from '../../../../core/Pathing.js';
 import { AssignmentSystem } from '../../../../core/AssignmentSystem.js';
 import { StaffModel } from '../../../../core/StaffModel.js';
-import { HOME, WALLS, PLACED, PROPS, RESIDENT, SPOTS, SEATS, HELP_POOLS, helpSpotsFor, ROOM_IDS, ENTRANCE } from '../../data/home.js';
+import { HOME, RESIDENT, ENTRANCE, MAX_FLOOR } from '../../data/home.js';
+import { createLayout } from './homeLayout.js';
+import { roomById } from '../../data/rooms.js';
+import { facilityById } from '../../data/facilities.js';
 import { residentById, NEEDS, supportLevel, RESIDENTS, STAY_LEAVE_HOUR } from '../../data/residents.js';
 import { Rng } from '../../../../core/Rng.js';
 import { DAY, ROUTINE } from '../../data/routine.js';
 import { BELL } from '../../data/tasks.js';
-import { ECONOMY_START, STAFF_BALANCE } from '../../data/balance.js';
+import { ECONOMY_START, STAFF_BALANCE, ON_CALL } from '../../data/balance.js';
 import { AGENCY } from '../../data/shifts.js';
 import { ensureResidentState, newResidentState, newStay, stayDaysLeft, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog } from './residentNeeds.js';
 import { ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar } from './careTasks.js';
@@ -71,38 +81,18 @@ import { createCrew } from './staffCrew.js';
 import { createAdmissions, stayLengthFor, varied } from './admissions.js';
 import { createLedger } from './ledger.js';
 
+// The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
+// own live layout; these are for older saves' upgrades and the tests.
+let defaultLayout = null;
+const DEFAULT = () => (defaultLayout ??= createLayout());
 // Every wall tile (doorways left out).
-export function wallTiles() {
-  const out = [];
-  for (const w of WALLS) {
-    for (let i = 0; i < w.len; i++) {
-      if (w.gaps.includes(i)) continue;
-      out.push(w.dir === 'row' ? { col: w.col + i, row: w.row, wall: w.id } : { col: w.col, row: w.row + i, wall: w.id });
-    }
-  }
-  return out;
-}
-
-// The home's grid: inside walls, placed things (a walk-in room only where its furniture stands) and the props.
-export function buildGrid() {
-  const grid = new Grid({ cols: HOME.cols, rows: HOME.rows, tileSize: HOME.cellSize });
-  for (const t of wallTiles()) grid.setBlocked(t.col, t.row, true);
-  for (const def of PLACED) {
-    if (def.walkIn) for (const b of def.blockedInside ?? []) grid.blockRect(b.col, b.row, b.w, b.h, true);
-    else grid.blockRect(def.fp.col, def.fp.row, def.fp.w, def.fp.h, true);
-  }
-  for (const p of PROPS) grid.setBlocked(p.col, p.row, true);
-  return grid;
-}
-
+export const wallTiles = () => DEFAULT().wallTiles().map((t) => ({ col: t.col, row: t.row, wall: t.wall }));
+// The home's grid (MAX_FLOOR in size; the floor beyond the stage is blocked): walls, pieces (a room only where its
+// furniture and walls stand) and the props.
+export const makeGrid = () => new Grid({ cols: MAX_FLOOR.cols, rows: MAX_FLOOR.rows, tileSize: HOME.cellSize });
+export const buildGrid = () => DEFAULT().buildGrid(makeGrid());
 // 'F05.resident' or 'hall.cwPost' → the tile.
-export function spotTile(ref) {
-  if (SPOTS[ref]) return SPOTS[ref];
-  const [id, name] = ref.split('.');
-  const t = PLACED.find((p) => p.id === id)?.spots?.[name];
-  if (!t) throw new Error(`No spot ${ref}`);
-  return t;
-}
+export const spotTile = (ref) => DEFAULT().spotTile(ref);
 
 export function makeClock(bus = null) {
   const clock = new Clock({ bus, secondsPerDay: DAY.secondsPerDay, daysPerMonth: DAY.daysPerMonth, monthsPerYear: DAY.monthsPerYear, speeds: DAY.speeds });
@@ -120,12 +110,33 @@ const ARTHUR = RESIDENT.id;
 // A resident's pronoun for the card lines (Milestone 9: story data on each row, data/lifeStories.js).
 export const theirOf = (id) => (residentById(id)?.pronoun === 'she' ? 'her' : 'his');
 
-export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, residents: savedResidents = null, staff = null, care: careSaved = null, seed = 'careworks', bus = null, admissions: admissionsSaved = null, ledger: ledgerSaved = null, startCredits = ECONOMY_START.credits, shortStaffing = true } = {}) {
+export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, residents: savedResidents = null, staff = null, care: careSaved = null, seed = 'careworks', bus = null, admissions: admissionsSaved = null, ledger: ledgerSaved = null, layout: layoutSaved = null, startCredits = ECONOMY_START.credits, shortStaffing = true } = {}) {
   clock ??= makeClock();
-  const grid = buildGrid();
-  const placed = PLACED.map((def) => ({ kind: def.kind, id: def.id, def, fp: def.fp, residentId: null }));
-  const props = PROPS.map((def) => ({ kind: 'prop', id: def.id, def, fp: { col: def.col, row: def.row, w: 1, h: 1 } }));
-  const rooms = ROOM_IDS.map((id) => placed.find((p) => p.id === id));
+  // --- the layout (Milestone 10) --------------------------------------------------------------------------------
+  const layout = createLayout({ saved: layoutSaved, bus });
+  // An older save's layout that fails the access check gets a one-time fix-up (each piece in the way moves to the
+  // nearest spot where everything passes). A Milestone 1–9 save has the default layout, which passes.
+  const fixedUp = layoutSaved && layout.problems().length ? layout.fixUp() : [];
+  const grid = layout.buildGrid(makeGrid());
+  const spot = (ref) => layout.spotTile(ref);
+  // The placed things as the home screen and the sheets see them: { kind 'room' | 'station', id, uid, def (name, art,
+  // text, …), fp (its picture), box (its whole footprint), residentId (a room's resident) }. Kept object for object
+  // across layout changes (the selection holds them).
+  const placed = [];
+  const props = [];
+  function syncPlaced() {
+    const keep = new Map(placed.map((x) => [x.id, x]));
+    const next = layout.pieces.map((pc) => {
+      const d = roomById(pc.defId) ?? facilityById(pc.defId);
+      const it = keep.get(pc.id) ?? { kind: pc.kind, id: pc.id, residentId: null };
+      Object.assign(it, { uid: pc.uid, defId: pc.defId, def: { ...pc, ...d, name: d.name, art: d.art, text: pc.kind === 'room' ? d.bestFor : d.text, template: pc.kind === 'room' ? pc.defId : undefined }, fp: pc.fp, box: pc.box });
+      return it;
+    });
+    placed.splice(0, placed.length, ...next);
+    props.splice(0, props.length, ...layout.props().map((def) => ({ kind: 'prop', id: def.id, def, fp: { col: def.col, row: def.row, w: 1, h: 1 } })));
+  }
+  syncPlaced();
+  const roomList = () => placed.filter((x) => x.kind === 'room');
   const hourNow = () => clock.dayProgress * 24;
   let band = bandAt(hourNow());
 
@@ -138,21 +149,34 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // Milestone 7: agency workers hired for a shift still under way come back with the save (their model is kept there)
   for (const a of staffState.roster.agency) if (a.model && !sys.get(a.id)) sys.add(StaffModel.fromJSON(a.model));
   staffState.roster.agency = staffState.roster.agency.filter((a) => sys.get(a.id));
-  const crew = createCrew({ grid, state: staffState, sys, perks, roster, spotTile, hourNow, bandNow: () => bandAt(hourNow()), bus });
+  const crew = createCrew({ grid, state: staffState, sys, perks, roster, spotTile: spot, hourNow, bandNow: () => bandAt(hourNow()), bus });
 
   // --- the residents ---------------------------------------------------------------------------------------------
   // A resident's person: { kind: 'resident', id, name, art, line, def, state (their saved state), agent }.
   const residents = [];
   const byResident = (id) => residents.find((p) => p.id === id) ?? null;
-  const seatOf = (p) => Math.max(0, ROOM_IDS.indexOf(p.state.room));
+  // Milestone 10: a resident's seat follows their room number (room 1 → seat 1 …): four seats a Dining Room / Activity
+  // Lounge, the next four at the next one built, and round again when there are more residents than seats.
+  const PLACE_DEF = { dining: 'F03', lounge: 'F05' };
+  const seatOf = (p) => Math.max(0, layout.roomNumber(p.state.room) - 1);
+  const seatPiece = (p, place) => {
+    const list = layout.ofDef(PLACE_DEF[place]);
+    if (!list.length) return null;
+    return list[Math.floor(seatOf(p) / 4) % list.length];
+  };
   // Where a resident goes for a place: their room's inside spot, or their seat at the Dining Room / lounge.
-  const placeRef = (p, place) => (place === 'room' ? `${p.state.room}.inside` : SEATS[place][seatOf(p)] ?? SEATS[place][0]);
-  const placeTile = (p, place) => spotTile(placeRef(p, place));
+  const placeRef = (p, place) => {
+    if (place === 'room') return `${p.state.room}.inside`;
+    const pc = seatPiece(p, place);
+    const seats = facilityById(PLACE_DEF[place]).seats;
+    return `${pc?.id ?? PLACE_DEF[place]}.${seats[seatOf(p) % seats.length]}`;
+  };
+  const placeTile = (p, place) => spot(placeRef(p, place));
   function addResident(st, { atEntrance = false } = {}) {
     const def = residentById(st.id);
     const p = { kind: 'resident', id: def.id, name: def.name, art: def.art, line: `${def.support} · age ${def.age}`, def, state: st };
     p.agent = new Agent({ id: def.id, name: def.name, speed: RESIDENT.speed, noPathTeleportSec: 3 });
-    const room = placed.find((r) => r.id === st.room);
+    const room = roomList().find((r) => r.id === st.room);
     if (room && !st.leaving && !st.guest) room.residentId = def.id; // the room knows its resident (not one going home)
     if (st.pos) {
       p.agent.x = st.pos.x;
@@ -182,8 +206,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   } else if (!listSaved && !byResident(ARTHUR)) addResident(newResidentState(residentById(ARTHUR), { room: RESIDENT.room }));
   // (a saved resident without a room — never expected — gets the first free one)
   for (const p of residents) {
-    if (p.state.leaving || placed.find((r) => r.id === p.state.room)) continue;
-    const free = rooms.find((r) => !r.residentId);
+    if (p.state.leaving || roomList().find((r) => r.id === p.state.room)) continue;
+    const free = roomList().find((r) => !r.residentId);
     if (free) {
       p.state.room = free.id;
       free.residentId = p.id;
@@ -229,11 +253,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // The spots a helper may use beside this resident at a place: in their room its two; at a shared place the pool,
   // nearest their seat first.
   function helpPool(p, place) {
-    const pool = helpSpotsFor(place, p.state.room);
-    if (place === 'room') return pool;
+    if (place === 'room') return [`${p.state.room}.help`, `${p.state.room}.help2`];
+    const pc = seatPiece(p, place);
+    const pool = [1, 2, 3, 4, 5, 6].map((n) => `${pc?.id ?? PLACE_DEF[place]}.help${n}`);
     const seat = placeTile(p, place);
     const d = (ref) => {
-      const t = spotTile(ref);
+      const t = spot(ref);
       return Math.abs(t.col - seat.col) + Math.abs(t.row - seat.row);
     };
     return [...pool].sort((a, b) => d(a) - d(b));
@@ -255,7 +280,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   };
   const tilesBetween = (q, ref) => {
     const from = grid.worldToTile(q.agent.x, q.agent.y);
-    const to = spotTile(ref);
+    const to = spot(ref);
     const path = from && findPath(grid, from, to);
     return path ? path.length : from ? Math.abs(from.col - to.col) + Math.abs(from.row - to.row) : 0;
   };
@@ -573,10 +598,20 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const admissions = createAdmissions({ saved: admissionsSaved, seed });
   const ledger = createLedger({ saved: ledgerSaved, bus, now: () => clock.totalDays, startCredits });
   const inHome = () => new Set(residents.map((p) => p.id));
-  const freeRooms = () => rooms.filter((r) => !r.residentId);
+  const freeRooms = () => roomList().filter((r) => !r.residentId);
+  // Milestone 10: the free rooms a resident may have, best first — one of the template they need (Memory Support,
+  // High-Care), else a general room, the kind they would like first.
+  function roomsFor(def) {
+    const need = def.requires?.room;
+    const free = freeRooms();
+    if (need) return free.filter((r) => r.defId === need);
+    const general = free.filter((r) => roomById(r.defId)?.general);
+    return [...general.filter((r) => r.defId === def.room), ...general.filter((r) => r.defId !== def.room)];
+  }
+  const roomTemplatesHere = () => new Set(roomList().map((r) => r.defId));
   const team = () => crew.people.filter((q) => !q.agency);
   const teamRoles = () => new Set(team().map((q) => q.role));
-  const admitCtx = () => ({ roles: teamRoles(), freeRooms: freeRooms().map((r) => r.id), day: clock.totalDays, placeable: new Set(['RM01']), paused: coverage.admissionsPaused() });
+  const admitCtx = () => ({ roles: teamRoles(), freeRooms: freeRooms().map((r) => r.id), freeRoomsFor: (def) => roomsFor(def).map((r) => r.id), day: clock.totalDays, placeable: roomTemplatesHere(), buildable: (id) => layout.unlock(id).ok, paused: coverage.admissionsPaused() });
   const monthRange = (endDay = null) => {
     const len = clock.daysPerMonth;
     const toDay = endDay ?? (Math.floor(clock.totalDays / len) + 1) * len;
@@ -589,8 +624,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   ];
   const payroll = () => team().map((q) => ({ id: q.id, name: q.name, salary: q.model.salary })); // agency is paid per shift
   // --- care-plan rules (Milestone 8) -------------------------------------------------------------------------------
-  const PLACEABLE_ROOMS = new Set(['RM01']); // room templates the home can place (Build Mode, Milestone 10)
-  const facilityIds = () => new Set(placed.filter((x) => x.kind !== 'room').map((x) => x.id));
+  const facilityIds = () => new Set(placed.filter((x) => x.kind !== 'room').map((x) => x.defId)); // (Milestone 10: by facility, F01 …)
   // What an option's eligibility rule reads: the resident, the team and roster, the rooms / facilities / programs.
   function planCtx(p) {
     const shiftRoles = Object.fromEntries(SHIFT_IDS.map((sid) => [sid, new Set()]));
@@ -601,7 +635,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       shiftRoles[sid].add(q.role);
       shiftCounts[sid]++;
     }
-    return { name: p.name, needs: p.state.needs, level: supportLevel(p.def), support: p.def.support, stay: p.def.stay, visitors: p.def.visitors, teamRoles: teamRoles(), shiftRoles, shiftCounts, rooms: PLACEABLE_ROOMS, facilities: facilityIds(), programs: new Set() };
+    return { name: p.name, needs: p.state.needs, level: supportLevel(p.def), support: p.def.support, stay: p.def.stay, visitors: p.def.visitors, teamRoles: teamRoles(), shiftRoles, shiftCounts, rooms: roomTemplatesHere(), facilities: facilityIds(), programs: new Set() };
   }
   // End of a day: who had essential care missed (a run of such days makes their plan stale).
   function noteMissed(day) {
@@ -613,7 +647,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // A plan never reviewed on this save (a new game, or an M7-era save): reviewed as of now, not stale.
   for (const p of residents) if (p.state.review == null) markReviewed(p.state, clock.totalDays);
   const tickAdmissions = (day) => {
-    const r = admissions.tick(day, { inHome: inHome(), roles: teamRoles(), placeable: PLACEABLE_ROOMS });
+    const r = admissions.tick(day, { inHome: inHome(), roles: teamRoles(), placeable: roomTemplatesHere() });
     if (r.left.length || r.arrived.length) bus?.emit('admissions:change', { day, left: r.left.map((a) => a.id), arrived: r.arrived.map((a) => a.id) });
     return r;
   };
@@ -669,6 +703,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     roster,
     team: () => crew.people,
     levels: () => residents.filter((p) => !p.state.leaving && !p.state.guest).map((p) => supportLevel(p.def)),
+    // Milestone 10 fix: anyone here whose assessed clinical need is above the line needs a real RN on shift
+    clinicalHigh: () => residents.some((p) => !p.state.leaving && !p.state.guest && (p.def.needs?.clinical ?? 0) > ON_CALL.clinicalNeedAbove),
     ledger,
     abs: absTime,
     hire,
@@ -680,8 +716,23 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     grid,
     placed,
     props,
-    rooms,
+    get rooms() {
+      return roomList();
+    },
     residents,
+    // --- Milestone 10 -----------------------------------------------------------------------------------------
+    layout,
+    fixedUp,
+    get floor() {
+      return layout.floor;
+    },
+    get stage() {
+      return layout.stageDef;
+    },
+    roomNumber: (id) => layout.roomNumber(id),
+    spotTile: spot,
+    roomsFor: (residentId) => roomsFor(residentById(residentId)),
+    build: null, // (below)
     people: [...residents, ...crew.people],
     staff: crew.people,
     get team() {
@@ -887,16 +938,18 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (p.kind === 'staff') {
         const hit = placed.find((s) => Object.values(s.def.spots ?? {}).some((x) => x.col === t?.col && x.row === t?.row));
         if (hit && hit.kind !== 'room') return hit.id;
-        if (p.mode === 'resting') return 'F08'; // the Staff Room's rest spots
+        if (p.mode === 'resting') return layout.ofDef('F08')[0]?.id ?? 'F08'; // the Staff Room's rest spots
         const ref = p.task?.spot;
-        if (ref && HELP_POOLS.dining.includes(ref)) return 'F03';
-        if (ref && HELP_POOLS.lounge.includes(ref)) return 'F05';
+        const pc = ref && ref.includes('.help') ? layout.byId(ref.split('.')[0]) : null;
+        if (pc && (pc.defId === 'F03' || pc.defId === 'F05')) return pc.id;
+        if (ref === 'help.dining' || ref?.startsWith('help.dining')) return layout.ofDef('F03')[0]?.id ?? 'F03';
+        if (ref === 'help.lounge' || ref?.startsWith('help.lounge')) return layout.ofDef('F05')[0]?.id ?? 'F05';
         if (hit) return hit.id;
         return t && t.row >= 11 && t.col <= 11 ? 'F05' : null; // anywhere in the lounge
       }
       const place = residentPlace(p);
       if (place === 'room') return p.state.room;
-      return SEATS[place][0].split('.')[0];
+      return placeRef(p, place).split('.')[0];
     },
     byId: (id) => world.people.find((p) => p.id === id) ?? placed.find((s) => s.id === id) ?? null,
     // How a day went (Milestone 5's end-of-day beat): care tasks done and missed that day, every resident (bells not
@@ -912,7 +965,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return roster.move(id, shiftId) ? { ok: true, reason: null } : { ok: false, reason: 'No such shift.' };
     },
     setFloat: (id, on) => ({ ok: roster.setFloat(id, on), reason: null }),
-    setOnCall: (on) => roster.setOnCall(on),
+    setOnCall: (on, shiftId = 'night') => roster.setOnCall(on, shiftId),
     // The task AI's second rule: their key worker, or staff on the resident's wing (not floats, not agency).
     assignedTo: (staffId, residentId) => !!byResident(residentId) && assignedTo(staffId, byResident(residentId)),
     // --- Milestone 9 ------------------------------------------------------------------------------------------
@@ -925,7 +978,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     spawnGuests(ids = RESIDENTS.map((r) => r.id)) {
       const rng = new Rng(`${seed}:spawn`);
       const open = [];
-      for (let r = 0; r < HOME.rows; r++) for (let c = 0; c < HOME.cols; c++) if (!grid.isBlocked(c, r)) open.push({ col: c, row: r });
+      for (let r = 0; r < MAX_FLOOR.rows; r++) for (let c = 0; c < MAX_FLOOR.cols; c++) if (layout.isOpen(c, r)) open.push({ col: c, row: r });
       const out = [];
       ids.forEach((id, i) => {
         const def = residentById(id);
@@ -960,7 +1013,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (!r.ok) return r;
       const app = r.applicant;
       const def = residentById(app.id);
-      const room = freeRooms()[0];
+      const room = roomList().find((r) => r.id === roomsFor(def)[0]?.id);
       const st = newResidentState(def, { room: room.id });
       st.needs = { ...app.needs };
       st.outcomes = { ...app.outcomes };
@@ -978,7 +1031,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       world.people.splice(residents.length - 1, 0, p); // residents first, then the staff
       const t = placeTile(p, 'room');
       p.agent.walkTo(grid, t.col, t.row);
-      addLog(st, logDay(), now(), `Moved in to room ${ROOM_IDS.indexOf(room.id) + 1}`);
+      addLog(st, logDay(), now(), `Moved in to room ${layout.roomNumber(room.id)}`);
       bus?.emit('care:admit', { resident: p.id, name: p.name, room: room.id });
       return { ok: true, reason: null, resident: p };
     },
@@ -1001,8 +1054,103 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         }
       }
       const copy = (x) => JSON.parse(JSON.stringify(x));
-      return { clock: clock.serialize(), residents: residents.filter((p) => !p.state.guest).map((p) => copy(p.state)), staff: copy(staffState), care: copy(care), admissions: admissions.serialize(), ledger: ledger.serialize() };
+      return { clock: clock.serialize(), residents: residents.filter((p) => !p.state.guest).map((p) => copy(p.state)), staff: copy(staffState), care: copy(care), admissions: admissions.serialize(), ledger: ledger.serialize(), layout: layout.serialize() };
     },
   };
+  // --- Build Mode (Milestone 10) ------------------------------------------------------------------------------------
+  // After any layout change: the grid again, the placed list, who lives where; anyone standing where a piece now
+  // stands steps to the nearest open tile; residents in a moved room move with it; everyone walking finds a new way.
+  function relayout({ moved = null } = {}) {
+    layout.buildGrid(grid);
+    syncPlaced();
+    for (const r of roomList()) r.residentId = residents.find((p) => p.state.room === r.id && !p.state.leaving && !p.state.guest)?.id ?? null;
+    const tileOf = (a) => grid.worldToTile(a.x, a.y);
+    for (const q of world.people) {
+      const a = q.agent;
+      let t = tileOf(a);
+      if (moved && t && t.col >= moved.from.col && t.col < moved.from.col + moved.box.w && t.row >= moved.from.row && t.row < moved.from.row + moved.box.h) {
+        const dc = moved.to.col - moved.from.col;
+        const dr = moved.to.row - moved.from.row;
+        a.x += dc * HOME.cellSize;
+        a.y += dr * HOME.cellSize;
+        t = tileOf(a);
+      }
+      if (!t || grid.isBlocked(t.col, t.row)) {
+        let best = null;
+        let bestD = Infinity;
+        for (let r = 0; r < MAX_FLOOR.rows; r++) for (let c = 0; c < MAX_FLOOR.cols; c++) {
+          if (grid.isBlocked(c, r)) continue;
+          const d = Math.abs(c - (t?.col ?? 0)) + Math.abs(r - (t?.row ?? 0));
+          if (d < bestD) [best, bestD] = [{ col: c, row: r }, d];
+        }
+        if (best) a.placeAtTile(grid, best.col, best.row);
+      }
+      // a walk under way: the same destination by a new path (a spot that moved: its new tile)
+      if (a.state === 'walking' && a.goal) a.walkTo(grid, a.goal.col, a.goal.row, a._onArrive);
+    }
+    for (const q of crew.people) if (q.task?.spot) crew.retarget(q.id, q.task.spot);
+    for (const p of residents) {
+      const st = p.state;
+      if (st.leaving || st.guest || !st.step || !(st.step.status === 'walking' || st.step.status === 'waiting')) continue;
+      const step = routineStep(st.step.id);
+      if (step) walkResident(p, step, st.step.day);
+    }
+    bus?.emit('home:layout', { version: layout.version });
+  }
+  const pay = (amount, reason, category) => ledger.economy.add('credits', amount, reason, category);
+  const occupant = (pieceId) => {
+    const p = residents.find((x) => x.state.room === pieceId && !x.state.guest && !x.state.leaving);
+    return p ? p.name : null;
+  };
+  world.build = {
+    // Can this go here? (plus the money and the lock) → { ok, reason }
+    check(defId, col, row, uid = null) {
+      if (uid == null) {
+        const u = layout.unlock(defId);
+        if (!u.ok) return u;
+        const cost = layout.costOf(defId);
+        if (ledger.balance < cost) return { ok: false, reason: `Not enough Credits: it costs ${cost.toLocaleString('en-GB')}` };
+      }
+      return layout.check(defId, col, row, uid);
+    },
+    place(defId, col, row) {
+      const c = world.build.check(defId, col, row);
+      if (!c.ok) return c;
+      const r = layout.place(defId, col, row);
+      if (!r.ok) return r;
+      const cost = layout.costOf(defId);
+      pay(-cost, `Build: ${r.piece.name}`, 'build');
+      relayout();
+      bus?.emit('home:built', { id: r.piece.id, def: defId, cost });
+      return { ...r, cost };
+    },
+    move(uid, col, row) {
+      const r = layout.move(uid, col, row);
+      if (!r.ok) return r;
+      relayout({ moved: { from: r.from, to: { col, row }, box: r.piece.box } });
+      bus?.emit('home:moved', { id: r.piece.id });
+      return r;
+    },
+    canSell: (uid) => layout.canSell(uid, { occupied: occupant }),
+    sell(uid) {
+      const r = layout.sell(uid, { occupied: occupant, day: clock.totalDays });
+      if (!r.ok) return r;
+      pay(r.refund, `Sold: ${r.piece.name} (50% back)`, 'sell');
+      relayout();
+      bus?.emit('home:sold', { id: r.piece.id, refund: r.refund });
+      return r;
+    },
+    // Stage 1 → 2 (Rank D; no Rank yet, so only the debug path calls it). The floor grows forward; nothing moves.
+    upgrade() {
+      const r = layout.upgrade();
+      if (!r.ok) return r;
+      relayout();
+      bus?.emit('home:stage', { stage: r.stage.n, name: r.stage.name });
+      return r;
+    },
+    findSpot: (defId, near, uid) => layout.findSpot(defId, near, uid),
+    setDebugUnlock: (on) => layout.setDebugUnlock(on),
+  };
+  if (fixedUp.length) relayout();
   return world;
 }

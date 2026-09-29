@@ -47,14 +47,17 @@ export function stayLengthFor(def, seed, roll) {
 }
 
 // What a resident's hard prerequisites say, against the home: { ok, text ('Ready' / 'Needs: …'), reason (plain words) }.
-//   ctx.roles = Set of the roles on the team; ctx.placeable = Set of room templates the home can have (Standard only
-//   until Milestone 10)
+//   ctx.roles = Set of the roles on the team; ctx.placeable = Set of room templates the home has (Milestone 10: a room
+//   of that kind is built — free or not); ctx.buildable(templateId) → can Build Mode place one now
 export function prereqOf(def, ctx) {
   const need = def.requires ?? {};
   if (need.room) {
     const room = ROOM_TEMPLATES[need.room];
     const has = ctx.placeable?.has(need.room) ?? room.placeable;
-    if (!has) return { ok: false, text: `Needs: ${room.name}`, reason: `${first(def)} needs a ${room.name}. The home has none yet (it arrives with ${room.unlock}).` };
+    if (!has) {
+      const how = ctx.buildable?.(need.room) ? 'build one in Build Mode' : `it arrives with ${room.unlock}`;
+      return { ok: false, text: `Needs: ${room.name}`, reason: `${first(def)} needs a ${room.name}. The home has none yet (${how}).` };
+    }
   }
   if (need.role && !ctx.roles?.has(need.role)) {
     const name = ROLES[need.role].name;
@@ -158,8 +161,10 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
       const p = prereqOf(defOf(app), ctx);
       if (!p.ok) return { ok: false, reason: p.reason };
       if (app.assessReady != null && ctx.day < app.assessReady) return { ok: false, reason: `Their assessment update is under way: ready on day ${app.assessReady + 1}.` };
-      const room = defOf(app).room;
-      if (!ctx.freeRooms?.length) return { ok: false, reason: `No free ${ROOM_TEMPLATES[room].name}: every room has a resident.` };
+      // Milestone 10: a free room of the kind they need (their template), else any free general room
+      const def = defOf(app);
+      const free = ctx.freeRoomsFor ? ctx.freeRoomsFor(def) : ctx.freeRooms;
+      if (!free?.length) return { ok: false, reason: def.requires?.room ? `No free ${ROOM_TEMPLATES[def.requires.room].name}: build another in Build Mode.` : `No free ${ROOM_TEMPLATES[def.room].name}: every room has a resident.` };
       return { ok: true, reason: null };
     },
     admit(id, ctx) {

@@ -14,18 +14,22 @@ import { THEME, font } from '../../../../core/Theme.js';
 import { CARE_POPS, POPS_MAX_LIVE, DAY_BEAT } from '../../data/pops.js';
 import { ROUTINE } from '../../data/routine.js';
 import { HOME, PLACED } from '../../data/home.js';
+// (Milestone 10: the pieces move — the live one from the world when there is one)
 
 const NEAR = 150; // world px: a pop never starts this close to one still showing
 const LIFT = { pair: 235, place: 190 }; // world px above the floor: over the pair's heads; over the middle of a room's art
 const stepOf = (id) => ROUTINE.find((s) => s.id === id) ?? null;
 const popKindOfStep = (step) => (step?.activity ? 'activity' : step?.place === 'dining' ? 'meal' : null);
 // The middle of a placed thing's footprint (its art rises from there): the lounge, the Dining Room.
+let liveWorld = null;
 const placeCentre = (id) => {
-  const fp = PLACED.find((p) => p.id === id).fp;
+  const it = liveWorld?.() ?? null;
+  const fp = (it?.placed.find((p) => p.id === id || p.defId === id) ?? PLACED.find((p) => p.id === id)).fp;
   return { x: (fp.col + fp.w / 2) * HOME.cellSize, y: (fp.row + fp.h / 2) * HOME.cellSize };
 };
 
 export function createCarePops({ bus, world: getWorld, vfx, screen, isVisible }) {
+  liveWorld = getWorld;
   const pops = []; // live: { key, x, y, left }
   const since = {}; // kind → real seconds since it last showed
   const log = []; // shown pops (tests / debug): { kind, spot, t }

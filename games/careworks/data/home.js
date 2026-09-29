@@ -1,3 +1,5 @@
+import { ROOM_SHAPE, roomById } from './rooms.js';
+import { facilityById } from './facilities.js';
 // The small home (Milestone 1, bible §4): one residential home on a hidden grid, seen in the 3/4 dollhouse view.
 // Plain data only. Columns run along the right-hand back wall, rows along the left-hand one; (0, 0) is the far corner.
 // Milestone 6 grew it to 24 × 16 so four Standard Rooms stand side by side along the back wall (a room's art rises
@@ -12,6 +14,10 @@
 //                        the Dining Room (cols 10-12) in the middle, their seats in front, so a resident's walk to a meal
 //                        is about the same from every room (~1.5 game hours, as Arthur's was in Milestone 5)
 //   cols 16-23, rows 9-15  the Central Nurse Station (cols 17-19, rows 9-11), beside the lounge's side door (row 13)
+// Milestone 10: this is the default layout. Every room and facility is a piece that Build Mode can move, sell or add
+// (src/systems/homeLayout.js): DEFAULT_LAYOUT says where each stands in a new home, and a piece's spots and walls are
+// data relative to it (data/rooms.js ROOM_SHAPE, data/facilities.js spots). PLACED, WALLS, ROOM_IDS, SEATS … below are
+// the default layout written out as tiles (older saves' upgrades and the Milestone 1–9 tests read them).
 // Walls are blocked tiles, so the A* paths (core/Pathing) can only pass through the doorways. Nothing that has art may
 // stand in the two or three rows just behind a facility (its art would hide them): the M5 tests check the posts.
 
@@ -39,15 +45,16 @@ export const ROOM_IDS = ROOM_COLS.map((r) => r.id);
 
 // Inside walls as runs of blocked tiles: { col, row, len, dir: 'col' (along a column, rows grow) | 'row' (along a row) }.
 // gaps = doorway tiles left open in the run. (Arthur's room keeps its Milestone 1 ids, roomSide / roomFront.)
-export const WALLS = [
-  ...ROOM_COLS.flatMap((r, i) => [
-    { id: i ? `${r.id}Side` : 'roomSide', col: r.col + 5, row: 0, len: 6, dir: 'col', gaps: [] },
-    { id: i ? `${r.id}Front` : 'roomFront', col: r.col, row: 5, len: 5, dir: 'row', gaps: [2] },
-  ]),
+// Milestone 10: the fixed walls are the building's (the lounge); a room's own walls come with the room (ROOM_SHAPE).
+export const FIXED_WALLS = [
   { id: 'lounge', col: 4, row: 10, len: 11, dir: 'row', gaps: [4, 5, 9, 10] },
   { id: 'loungeLeft', col: 3, row: 10, len: 6, dir: 'col', gaps: [] },
   { id: 'loungeRight', col: 15, row: 10, len: 6, dir: 'col', gaps: [3] }, // a side door at row 13, from the Nurse Station
 ];
+// A room's walls at (col, row), with its Milestone 1–9 ids (Arthur's are roomSide / roomFront).
+export const roomWalls = (id, col, row) =>
+  ROOM_SHAPE.walls.map((w, i) => ({ id: id === 'RM01' ? ['roomSide', 'roomFront'][i] : `${id}${['Side', 'Front'][i]}`, col: col + w.col, row: row + w.row, len: w.len, dir: w.dir, gaps: [...w.gaps] }));
+export const WALLS = [...ROOM_COLS.flatMap((r) => roomWalls(r.id, r.col, 0)), ...FIXED_WALLS];
 
 // Floor areas (drawn by code): where each floor finish goes. Later areas paint over earlier ones.
 export const FLOORS = [
@@ -57,43 +64,44 @@ export const FLOORS = [
   { id: 'lounge', col: 4, row: 11, w: 11, h: 5, look: 'lounge' },
 ];
 
-// A Standard Room at column c: walkable inside except the bed, drawers and chair; inside = where its resident stands,
-// help / help2 = where helpers stand beside them.
-const standardRoom = ({ id, col: c }) => ({
-  id, kind: 'room', template: 'RM01', name: 'Standard Room', art: 'room_rm01', fp: { col: c, row: 0, w: 4, h: 4 },
-  text: 'A private room for general long-term care',
-  walkIn: true, // the art is the room itself: drawn under the people, and its floor stays walkable
-  blockedInside: [{ col: c, row: 0, w: 4, h: 3 }], // the bed, the drawers and the chair
-  spots: { inside: { col: c + 2, row: 4 }, doorway: { col: c + 2, row: 5 }, help: { col: c + 3, row: 4 }, help2: { col: c + 1, row: 4 } },
-});
-
-// Everything placed on the grid (Milestone 10 builds more). fp = footprint in tiles (blocked for walking, except a
-// walk-in room's). spots = named tiles people stand on. text = the one line on its sheet (what it is for).
-// Milestone 6: the Dining Room and the Activity Lounge have four seats each (seat 1 keeps its Milestone 2-5 name).
-export const PLACED = [
-  {
-    id: 'F01', kind: 'station', name: 'Central Nurse Station', art: 'facility_f01', fp: { col: 17, row: 9, w: 3, h: 3 },
-    text: 'Coordinates shifts, care rounds and handovers',
-    spots: { staff: { col: 18, row: 12 } },
-  },
-  {
-    id: 'F05', kind: 'station', name: 'Activity Lounge', art: 'facility_f05', fp: { col: 5, row: 11, w: 3, h: 3 },
-    text: 'Group activities and a comfortable place to relax',
-    spots: { resident: { col: 5, row: 14 }, seat2: { col: 6, row: 14 }, seat3: { col: 7, row: 14 }, seat4: { col: 8, row: 13 }, staff: { col: 8, row: 12 } },
-  },
-  standardRoom(ROOM_COLS[0]),
-  {
-    id: 'F03', kind: 'station', name: 'Dining Room', art: 'facility_f03', fp: { col: 10, row: 11, w: 3, h: 3 },
-    text: 'Shared meals at the table, with a choice of seats',
-    spots: { dining: { col: 10, row: 14 }, seat2: { col: 11, row: 14 }, seat3: { col: 12, row: 14 }, seat4: { col: 13, row: 13 } },
-  },
-  {
-    id: 'F08', kind: 'station', name: 'Staff Room', art: 'facility_f08', fp: { col: 0, row: 7, w: 3, h: 3 },
-    text: 'Where staff rest and recover between shifts',
-    spots: { rest: { col: 3, row: 8 } },
-  },
-  ...ROOM_COLS.slice(1).map(standardRoom),
+// Milestone 10: where each piece stands in a new home (and in every Milestone 1–9 save). id = the piece's own id (older
+// saves and spot names use these: 'F03.dining', 'SR2.inside'); def = its room template or facility. Order = the order
+// they were built (room numbers and seat numbers follow it).
+export const DEFAULT_LAYOUT = [
+  { id: 'F01', def: 'F01', col: 17, row: 9 },
+  { id: 'F05', def: 'F05', col: 5, row: 11 },
+  { id: 'RM01', def: 'RM01', col: 0, row: 0 },
+  { id: 'F03', def: 'F03', col: 10, row: 11 },
+  { id: 'F08', def: 'F08', col: 0, row: 7 },
+  ...ROOM_COLS.slice(1).map((r) => ({ id: r.id, def: 'RM01', col: r.col, row: 0 })),
 ];
+const shift = (t, col, row) => ({ col: t.col + col, row: t.row + row });
+// One piece written out as tiles (the home world and the drawing use the same shape).
+//   kind 'room' | 'station', fp = where its picture stands, box = its whole footprint, spots = named tiles,
+//   blocked = rects nobody walks through, walls (rooms only)
+export function pieceTiles({ id, def: defId, col, row }) {
+  const room = roomById(defId);
+  if (room) {
+    const S = ROOM_SHAPE;
+    return {
+      id, kind: 'room', template: defId, name: room.name, art: room.art, text: room.bestFor,
+      fp: { col: col + S.art.col, row: row + S.art.row, w: S.art.w, h: S.art.h }, box: { col, row, w: S.w, h: S.h },
+      walkIn: true, // the art is the room itself: drawn under the people, and its floor stays walkable
+      blockedInside: S.blocked.map((b) => ({ ...shift(b, col, row), w: b.w, h: b.h })),
+      spots: Object.fromEntries(Object.entries(S.spots).map(([k, t]) => [k, shift(t, col, row)])),
+      walls: roomWalls(id, col, row),
+    };
+  }
+  const f = facilityById(defId);
+  return {
+    id, kind: 'station', facility: defId, name: f.name, art: f.art, text: f.text,
+    fp: { col, row, w: f.w, h: f.h }, box: { col, row, w: f.w, h: f.h },
+    spots: Object.fromEntries(Object.entries(f.spots ?? {}).map(([k, t]) => [k, shift(t, col, row)])),
+    walls: [],
+  };
+}
+// The default layout as tiles (Milestones 1–9 had exactly this; older saves' upgrades and tests read it).
+export const PLACED = DEFAULT_LAYOUT.map(pieceTiles);
 
 // Drawing: every placed picture at one scale. width = the footprint's diamond width × this; drop = how far (in tile
 // heights) its base sits below the footprint's front corner. Walk-in rooms fill their footprint a little more.
@@ -102,7 +110,7 @@ export const ART_DRAW = { station: { width: 1.05, drop: 0.25 }, room: { width: 1
 // Milestone 5: the five early props. Decoration only: never tapped, each on one tile out of every walkway (the tile is
 // blocked, so nobody walks through it and Build Mode never offers it). flip: drawn mirrored.
 export const PROPS = [
-  { id: 'P1', name: 'Walking frame', art: 'care_prop_early_01', col: 4, row: 1 }, // beside Arthur's bed
+  { id: 'P1', name: 'Walking frame', art: 'care_prop_early_01', col: 4, row: 1, attach: { piece: 'RM01', col: 4, row: 1 } }, // beside Arthur's bed (Milestone 10: it moves with his room)
   { id: 'P2', name: 'Wheelchair', art: 'care_prop_early_02', col: 0, row: 11 }, // parked by the Staff Room
   { id: 'P3', name: 'Activity trolley', art: 'care_prop_early_03', col: 14, row: 15 }, // in the lounge's front corner
   { id: 'P4', name: 'Dining trolley', art: 'care_prop_early_04', col: 16, row: 15, flip: true }, // outside the lounge
@@ -115,6 +123,14 @@ export const WINDOWS = [
   { side: 'left', from: 11.9, to: 13.4 },
   { side: 'left', from: 13.8, to: 15.3 },
 ];
+// Milestone 10: the home's physical stages (bible §24; S3–S5 are Milestone 24). capacity = most residents (one to a
+// room); the floor grows forward, away from the two back walls, so every piece stays exactly where it was. zone = the
+// new floor as a core/FacilitySystem expansion. S2 unlocks at Rank D (no Rank yet: ?debug=1 upgrades).
+export const STAGES = [
+  { id: 'S1', n: 1, name: 'Small Residential Home', capacity: 16, cols: 24, rows: 16, unlock: { type: 'start', text: 'Start' } },
+  { id: 'S2', n: 2, name: 'Expanded Care Home', capacity: 24, cols: 24, rows: 32, unlock: { type: 'rank', value: 'D', text: 'Needs Rank D' }, zone: { id: 'S2', col: 0, row: 16, w: 24, h: 16 }, art: 'care_event_06' },
+];
+export const MAX_FLOOR = { cols: 24, rows: 32 };
 // Milestone 6: new residents come in through the front entrance, the open end of the corridor (Reception is not placed
 // yet), and walk to their room.
 export const ENTRANCE = { col: 23, row: 7 };

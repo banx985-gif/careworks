@@ -18,6 +18,7 @@
 import { DOMAINS, optionById, PLAN_PREF_KEYS, OPTION_PREFS_BY_PERSONALITY } from './carePlans.js';
 import { LIFE_STORIES, LIFE_TAGS, TAGS_PER_RESIDENT } from './lifeStories.js';
 import { FACILITIES } from './facilities.js';
+import { ROOMS } from './rooms.js';
 import { ROLE_IDS } from './roles.js';
 import { ADMISSION } from './admissions.js';
 
@@ -64,15 +65,10 @@ export const STAY_LEAVE_HOUR = 10; // they go home mid-morning, after breakfast
 export const URGENCY = ['Low', 'Medium', 'High'];
 // Room templates (bible §10), all seven in v1. Only the Standard Room can be placed until Milestone 10; unlock = how the
 // home gets one (shown in plain words). None is secret, so a prerequisite may point at any of them.
-export const ROOM_TEMPLATES = {
-  RM01: { name: 'Standard Room', placeable: true, unlock: 'Start' },
-  RM02: { name: 'Garden Room', placeable: false, unlock: 'Rank D' },
-  RM03: { name: 'Premium Suite', placeable: false, unlock: 'Rank C' },
-  RM04: { name: 'High-Care Room', placeable: false, unlock: 'Rank B' },
-  RM05: { name: 'Memory Support Room', placeable: false, unlock: 'the Memory Wing' },
-  RM06: { name: 'Rehabilitation Room', placeable: false, unlock: 'the Rehab Wing' },
-  RM07: { name: 'Palliative Suite', placeable: false, unlock: 'the Palliative Program' },
-};
+// Milestone 10: the rows live in data/rooms.js (cost, effect, unlock rule); this is the short view admissions read —
+// placeable = buildable from the start, unlock = what brings it, in plain words.
+const UNLOCK_WORDS = { rank: (v) => `Rank ${v}`, wing: (v) => (v === 'memory' ? 'the Memory Wing' : 'the Rehab Wing'), program: () => 'the Palliative Program', start: () => 'Start' };
+export const ROOM_TEMPLATES = Object.fromEntries(ROOMS.map((r) => [r.id, { name: r.name, placeable: r.unlock.type === 'start', unlock: UNLOCK_WORDS[r.unlock.type](r.unlock.value), general: r.general }]));
 export const supportLevel = (def) => SUPPORT_LEVELS[def.support] ?? 1;
 
 // Starting needs and plan by primary support (story seeds, no clinical detail). Outcomes start in the 60s–70s.
