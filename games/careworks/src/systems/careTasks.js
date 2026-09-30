@@ -356,13 +356,14 @@ const newRelation = (residentId, staffId, day = null) => ({ resident: residentId
 export const relationOf = (care, residentId, staffId) => care.relations[famKey(residentId, staffId)] ?? null;
 export const familiarityOf = (care, residentId, staffId) => relationOf(care, residentId, staffId)?.familiarity ?? 0;
 // A task done together: familiarity +n (capped), one more task, the day they last worked together (and first met).
-// light (Milestone 15): a light task (a stop on a drinks round) — counted in light as well as tasks.
-export function addFamiliarity(care, residentId, staffId, n = FAMILIARITY.perTask, day = null, light = false) {
+// light (Milestone 15/16): the share of a whole task this contact did not bring (a drinks-round stop 0.75, a meal served 0.5),
+// added to r.light — so familiarity = tasks − light when nothing has faded.
+export function addFamiliarity(care, residentId, staffId, n = FAMILIARITY.perTask, day = null, light = 0) {
   const k = famKey(residentId, staffId);
   const r = (care.relations[k] ??= newRelation(residentId, staffId, day));
   r.familiarity = Math.min(FAMILIARITY.cap, Math.round((r.familiarity + n) * 100) / 100);
   r.tasks++;
-  if (light) r.light = (r.light ?? 0) + 1;
+  if (light) r.light = Math.round(((r.light ?? 0) + light) * 100) / 100;
   if (day != null) {
     r.firstDay ??= day;
     r.lastDay = day;

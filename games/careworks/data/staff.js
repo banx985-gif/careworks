@@ -127,6 +127,8 @@ export const namedTrait = (def) => def.traits.find((t) => TRAITS[t]?.signature) 
 //     { kind: 'shift', pct }                      their preferred shift lifts Morale pct% more
 //     { kind: 'diet', diets: [diet id], pct }     Milestone 15: they can make these special menus (data/dining.js DIETS),
 //                                                 and a resident on one of them is pct% more satisfied when they cook it
+//     { kind: 'rehab', pct, goals? }              Milestone 16: rehab goals move pct% more in sessions they lead (only
+//                                                 these goals, if given)
 //     { kind: 'dining', pct }                     Milestone 15: meals they serve lift Social Connection pct% more, and
 //                                                 dining satisfaction a little (data/dining.js SATISFACTION.host)
 //   or pendingSystem: 'Mnn'  the effect needs a system built in that milestone: stored and shown, a no-op until then
@@ -165,9 +167,9 @@ export const TRAITS = {
   communityLink: later('Community Link', 'Brings visitors and volunteers in', 'M14', { communityEventPct: 8 }),
   quietConnector: live('Quiet Connector', 'Reaches the residents who keep to themselves', match(['visit'])),
   balanceCoach: live('Balance Coach', 'Walking practice builds confidence', task(['mobility'], 8)),
-  rehabPlanner: later('Rehab Planner', 'Rehabilitation plans work a little faster', 'M16', { rehabSpeedPct: 8 }),
+  rehabPlanner: live('Rehab Planner', 'Rehab goals move a little faster in their sessions', { kind: 'rehab', pct: 8 }), // (Milestone 16)
   fallsWatch: live('Falls Watch', 'Spots a fall risk early: keen on room checks and walks', match(['roomCheck', 'mobility'])),
-  independenceFirst: later('Independence First', 'Helps residents do more for themselves', 'M16', { independenceGainPct: 8 }),
+  independenceFirst: live('Independence First', 'Helps residents do more for themselves: transfers and daily living', { kind: 'rehab', pct: 12, goals: ['transfer', 'dailyLiving'] }),
   comfortFood: live('Comfort Food', 'Meals go further', task(['meal'], 8)),
   // (Milestone 15: the dining traits are live — src/systems/dining.js)
   textureExpert: live('Texture Expert', 'Can make the soft menu, and soft meals are nicer', { kind: 'diet', diets: ['texture'], pct: 10 }),
@@ -181,7 +183,7 @@ export const TRAITS = {
   eventLeader: live('Event Leader', 'Leads activities: they go further and they seek them out', task(['activity'], 12), match(['activity'])),
   memoryMaker: later('Memory Maker', 'Life-story and memory sessions go further', 'M17', { memorySessionPct: 12 }),
   mobilityMentor: live('Mobility Mentor', 'Mobility support goes much further', task(['mobility'], 12)),
-  reablementLead: later('Reablement Lead', 'Rehabilitation stays end sooner and better', 'M16', { rehabDischargePct: 12 }),
+  reablementLead: live('Reablement Lead', 'Rehab goals move faster in their sessions: home sooner', { kind: 'rehab', pct: 12 }),
   kitchenMentor: live('Kitchen Mentor', 'Meals and drinks go further', task(['meal', 'hydration'], 10)),
   nutritionLead: live('Nutrition Lead', 'Can make every special menu; diet plans and reviews go further', { kind: 'diet', diets: ['diabetes', 'texture', 'smallFrequent', 'highProtein'], pct: 12 }, task(['hydration'], 5)),
   // Legendary signatures (SEC-STAFF-L1–L5)
@@ -197,7 +199,7 @@ export const TRAITS = {
   perfectPath: sig('Perfect Path', 'Every resident walks a little further', 'M16', 'perfectPath', { independencePct: 20 }),
   homeFeast: sig('Home Feast', 'A monthly feast lifts the whole home', 'M15', 'homeFeast', { feastMood: 10 }),
 };
-export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift', 'diet', 'dining'];
+export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift', 'diet', 'dining', 'rehab'];
 
 // Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator; taskTypes = data/tasks.js
 // TASK_TYPES ids (optional: the trait task checks).

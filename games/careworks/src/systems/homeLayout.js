@@ -302,7 +302,7 @@ export function createLayout({ saved = null, bus = null } = {}) {
       openCache.clear();
       openV = fs.version;
     }
-    const cook = dot > 0 && /^cook([0-9]?)$/.exec(ref.slice(dot + 1));
+    const cook = dot > 0 && /^(?:cook|therapy)([0-9]?)$/.exec(ref.slice(dot + 1)); // (Milestone 16: therapy spots beside the gym / physio space too)
     if (cook) {
       const p = byId(ref.slice(0, dot)) ?? firstOf(ref.slice(0, dot));
       if (p) {

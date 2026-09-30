@@ -99,4 +99,7 @@ export const WAKE = {
 // Afternoon slot's do: that one is the M2 'cards' step). ALL_STEPS is every step in day order (the routine's order
 // checks use it).
 export const MORNING_ACTIVITY_STEP = { id: 'morningActivity', name: 'Morning activity', at: 10, place: 'lounge', optional: true, activity: true, roles: ['LC'], task: 'run the morning activity', log: 'Morning activity', doing: 'At the morning activity', going: 'Walking to the morning activity', drops: { social: 15 } };
-export const ALL_STEPS = [ROUTINE[0], ROUTINE[1], MORNING_ACTIVITY_STEP, ...ROUTINE.slice(2)];
+// Milestone 16: the daily therapy step — only for a resident working on rehab goals (data/mobility.js). place 'therapy':
+// the Rehabilitation Gym (F18), else the Basic Physio Space (F07), else their own room (a Rehabilitation Room counts).
+export const THERAPY_STEP = { id: 'therapy', name: 'Therapy', at: 15.25, place: 'therapy', roles: ['AH'], task: 'run the therapy session', log: 'Therapy', doing: 'At therapy', going: 'Walking to therapy', drops: { mobility: 15 } };
+export const ALL_STEPS = [ROUTINE[0], ROUTINE[1], MORNING_ACTIVITY_STEP, ROUTINE[2], ROUTINE[3], ROUTINE[4], THERAPY_STEP, ROUTINE[5], ROUTINE[6]];

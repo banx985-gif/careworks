@@ -24,5 +24,7 @@ export const shiftPct = (traits) => sum(effectsOf(traits, 'shift'), 'pct');
 export const dietSkillsOf = (traits) => new Set(effectsOf(traits, 'diet').flatMap((fx) => fx.diets));
 export const dietPct = (traits, diet) => sum(effectsOf(traits, 'diet').filter((fx) => fx.diets.includes(diet)), 'pct');
 export const diningPct = (traits) => sum(effectsOf(traits, 'dining'), 'pct');
+// Milestone 16: % more on a rehab goal in a session they lead ('rehab')
+export const rehabPct = (traits, goal) => sum(effectsOf(traits, 'rehab').filter((fx) => !fx.goals || fx.goals.includes(goal)), 'pct');
 export const isLive = (id) => !!TRAITS[id]?.live;
 export const pendingOf = (id) => TRAITS[id]?.pendingSystem ?? null;

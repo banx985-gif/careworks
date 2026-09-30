@@ -11,6 +11,7 @@
 //     residents: [{ id, name, support level, admittedDay, leftDay (Milestone 9: went home) }]   staff: [{ id, name, salary }]
 import { EconomySystem } from '../../../../core/EconomySystem.js';
 import { FEES, LEDGER } from '../../data/balance.js';
+import { REHAB_FUNDING } from '../../data/mobility.js';
 
 const CAT = LEDGER.categories;
 
@@ -26,7 +27,12 @@ export function monthLinesFor({ fromDay, toDay, residents, staff, len = toDay - 
     const d = daysHere(r, fromDay, toDay);
     if (!d) continue;
     out.push({ category: 'fees', amount: Math.round((FEES.accommodationPerMonth * d) / len), reason: `${CAT.fees}: ${r.name}${d < len ? ` (${d} days)` : ''}` });
-    out.push({ category: 'funding', amount: Math.round((FEES.careSupportFundingByLevel[r.level] * d) / len), reason: `${CAT.funding}: ${r.name} (level ${r.level})` });
+    // Milestone 16: a rehab resident ready to go home brings the "ready" rate of funding for those days, and rehab
+    // funding (§27) only for the days they were working on their goals
+    const ready = r.readyDay != null ? daysHere({ admittedDay: Math.max(r.admittedDay ?? fromDay, r.readyDay), leftDay: r.leftDay }, fromDay, toDay) : 0;
+    const working = d - ready;
+    out.push({ category: 'funding', amount: Math.round((FEES.careSupportFundingByLevel[r.level] * (working + ready * REHAB_FUNDING.readyFundingPct)) / len), reason: `${CAT.funding}: ${r.name} (level ${r.level})${ready ? ` (${ready} days ready to go home)` : ''}` });
+    if (r.rehab && working > 0) out.push({ category: 'rehabFunding', amount: Math.round((REHAB_FUNDING.perMonth * working) / len), reason: `${CAT.rehabFunding}: ${r.name}` });
   }
   for (const s of staff) out.push({ category: 'wages', amount: -s.salary, reason: `${CAT.wages}: ${s.name}` });
   return out;

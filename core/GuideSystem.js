@@ -12,16 +12,23 @@
 //     block: true|false,                            true: only the target (and the box) can be tapped
 //     restartAt: 'stepId',                           after a reload, go back to this step instead
 //     skipAlso: ['stepId', …],                       skipping this step also skips these (they can't show without it)
-//     skipIf: 'bus:event' }                           the player already did it on their own: the step counts as done
+//     skipIf: 'bus:event',                            the player already did it on their own: the step counts as done
+//     group: 'name',                                 (BOTWORKS M26b, optional) steps that belong together, e.g. a tour:
+//                                                    skipGroup(name) / restartGroup(name) / groupDone(name)
+//     when: 'name',                                  (optional) the game's applies(step) says if it makes sense now; if
+//                                                    not, it counts as done when its turn comes (e.g. a replayed tour)
+//     tip: true }                                    (optional) a light one-time tip: never pauses, never blocks a tap
 //
 // The game supplies:
 //   targetRect(name) → { x, y, w, h } in screen units, or null when it is not on screen
 //   screen() → current screen name;  canShow() → false while something bigger is on screen
-//   pause() → true if it paused the game (so it knows to resume);  resume()
+//   pause(step) → true if it paused the game (so it knows to resume);  resume()
+//   applies(step) → false when a step with `when` makes no sense right now (optional, default: always)
 // Progress (done / seen / events seen / off) is plain data for the game's save: serialize() / load().
-// Emits 'guide:show' ({ step }), 'guide:done' ({ step, skipped }), 'guide:change'.
+// Emits 'guide:show' ({ step }), 'guide:done' ({ step, skipped }), 'guide:change', and (M26b) 'guide:next' ({ step }) as
+// soon as a step becomes the one waiting — before it can show — so the game can get its screen ready (open a menu…).
 export class GuideSystem {
-  constructor({ steps, bus, targetRect, screen, canShow = () => true, pause = () => false, resume = () => {} }) {
+  constructor({ steps, bus, targetRect, screen, canShow = () => true, pause = () => false, resume = () => {}, applies = () => true }) {
     this.steps = steps;
     this.bus = bus;
     this.targetRect = targetRect;
@@ -29,6 +36,7 @@ export class GuideSystem {
     this.canShow = canShow;
     this.pause = pause;
     this.resume = resume;
+    this.applies = applies;
     this.byId = Object.fromEntries(steps.map((s) => [s.id, s]));
     this.current = null; // step being shown (or waiting to be shown again, e.g. after a screen change)
     this.shownAt = 0;
@@ -80,6 +88,10 @@ export class GuideSystem {
     const t = s.trigger ?? {};
     if (t.after && !st.done.includes(t.after)) return false;
     if (t.event && !st.events.includes(t.event)) return false;
+    if (s.when && !this.applies(s)) {
+      st.done.push(s.id); // it makes no sense now (e.g. a replayed tour with a robot already building): move on
+      return false;
+    }
     return true;
   }
 
@@ -108,6 +120,7 @@ export class GuideSystem {
       const next = this.steps.find((s) => this._ready(s));
       if (!next) return;
       this.current = next;
+      this.bus.emit('guide:next', { step: next });
     }
     if (this.visible) {
       if (!this.state.seen.includes(this.current.id)) {
@@ -115,7 +128,7 @@ export class GuideSystem {
         this._changed();
       }
       if (!this._paused && this.shownId !== this.current.id) {
-        this._paused = this.pause();
+        this._paused = this.current.tip ? false : this.pause(this.current); // a tip never stops the game
         this.shownId = this.current.id;
         this.shownAt = performance.now();
         this.bus.emit('guide:show', { step: this.current });
@@ -139,6 +152,35 @@ export class GuideSystem {
     const also = this.current?.skipAlso ?? [];
     for (const id of also) if (!this.state.done.includes(id)) this.state.done.push(id);
     this.complete(true);
+  }
+
+  // --- groups (M26b): a tour that can be skipped as a whole or played again ----------------------------------------------
+  groupSteps(group) {
+    return this.steps.filter((s) => s.group === group);
+  }
+
+  groupDone(group) {
+    return this.groupSteps(group).every((s) => this.state.done.includes(s.id));
+  }
+
+  // Every step of the group counts as done (the current one too, if it is one of them).
+  skipGroup(group) {
+    for (const s of this.groupSteps(group)) if (!this.state.done.includes(s.id)) this.state.done.push(s.id);
+    if (this.current?.group === group) return this.complete(true);
+    this._changed();
+    this.update();
+  }
+
+  // Play the group again from its first step (the guide is switched on if it was off).
+  restartGroup(group) {
+    const ids = new Set(this.groupSteps(group).map((s) => s.id));
+    this.state.done = this.state.done.filter((id) => !ids.has(id));
+    this.current = null; // a tip that was waiting comes back later, in its turn
+    this.shownId = null;
+    this._finishPause();
+    this.state.off = false;
+    this._changed();
+    this.update();
   }
 
   // Turn the whole guide off (Help can turn it back on).
@@ -170,6 +212,15 @@ export class GuideSystem {
   handleInput(hook, p, where) {
     if (!this.active) return false;
     const s = this.current;
+    if (s.tip) {
+      // A tip never blocks: its close button and its box take the tap; everything else goes on to the game.
+      if (hook !== 'onTap') return false;
+      if (where === 'close' || where === 'skip') return this.complete(true), true;
+      if (where === 'next') return this.complete(false), true;
+      if (where === 'box') return true;
+      if (where === 'target' && s.advance?.tap) this.complete(false);
+      return false;
+    }
     if (hook === 'onTap') {
       if (performance.now() - this.shownAt < 300) return true; // ignore a stray tap as it appears
       if (where === 'next') return this.complete(false), true;

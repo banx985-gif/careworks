@@ -71,11 +71,12 @@ const FIRST_OPTIONS = [
     changes: [],
   },
   {
-    id: 'MO02', domain: 'MO', name: 'Walking Aid Support', roles: ['AH', 'CW', 'RN'], minutesPerDay: 50,
-    text: 'He walks with his frame, and staff walk alongside him twice a day.',
+    id: 'MO02', domain: 'MO', name: 'Walking Aid Support', roles: ['AH', 'CW', 'RN'], minutesPerDay: 60,
+    text: 'He walks with his aid, staff walk alongside him twice a day, and his aid is checked each morning.',
     tasks: [
       { type: 'mobility', name: 'Walk with his frame', at: 10, band: 'morning', roles: ['AH', 'CW', 'RN'], minutes: 25, place: 'resident', drops: { mobility: 15 }, outcomes: { independence: 1 } },
       { type: 'mobility', name: 'Afternoon walk with his frame', at: 15.5, band: 'afternoon', roles: ['AH', 'CW', 'RN'], minutes: 25, place: 'resident', drops: { mobility: 12 }, outcomes: { independence: 1 } },
+      { type: 'mobility', name: 'Walking-aid check', at: 9, band: 'morning', roles: ['AH', 'CW'], minutes: 10, place: 'resident', drops: { mobility: 4 }, outcomes: { safety: 1 } }, // (Milestone 16)
     ],
     changes: [],
   },
@@ -263,7 +264,7 @@ const NEW_OPTIONS = [
   }),
   opt({
     id: 'MO04', domain: 'MO', name: 'Transfer Assist', roles: ['CW', 'AH'],
-    text: 'Help moving from bed to chair and back, three times a day.',
+    text: 'Help moving from bed to chair and back, three times a day (with two staff when moving is hard).',
     tasks: [
       t('mobility', 'Morning transfer', 7.5, 'morning', ['CW', 'AH'], 15, { mobility: 10 }, { safety: 1 }),
       t('mobility', 'Midday transfer', 13, 'afternoon', ['CW', 'AH'], 15, { mobility: 8 }, { safety: 1 }),
@@ -290,10 +291,9 @@ const NEW_OPTIONS = [
   }),
   opt({
     id: 'MO07', domain: 'MO', name: 'Rehabilitation Plan', roles: ['AH'],
-    text: 'Daily therapy with Allied Health, working towards going home.',
+    text: 'Daily therapy with Allied Health, working towards going home.', // (Milestone 16: the afternoon session is the therapy step every rehab resident has)
     tasks: [
       t('mobility', 'Therapy session', 10, 'morning', ['AH'], 40, { mobility: 20 }, { independence: 3 }),
-      t('mobility', 'Afternoon therapy', 15, 'afternoon', ['AH'], 30, { mobility: 12 }, { independence: 2 }),
     ],
     eligibility: [
       { type: 'roleOnTeam', role: 'AH', reason: 'Needs an Allied Health worker on the roster' },

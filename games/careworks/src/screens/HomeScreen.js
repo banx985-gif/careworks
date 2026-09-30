@@ -665,6 +665,12 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     const ch = PERSON.height * 0.52;
     const cw = cart ? ch * assets.aspect(cart) : 0;
     const cx = f.x + (m.flip ? -1 : 1) * r.w * 0.58 - cw / 2;
+    // Milestone 16: a resident's walking frame or wheelchair beside them where they sit
+    const aid = p.kind === 'resident' && poseAgent.state !== 'walking' ? world.aidPropOf?.(p) : null;
+    const ah = PERSON.height * 0.42;
+    const aw = aid ? ah * assets.aspect(aid) : 0;
+    const ax = f.x + (m.flip ? 1 : -1) * r.w * 0.5 - aw / 2;
+    if (aid) assets.draw(ctx, aid, ax, f.y - ah, aw, ah);
     drawCharacter(ctx, assets, p.art, f.x, f.y, r.w, r.h, pose);
     if (cart) assets.draw(ctx, cart, cx, f.y - ch, cw, ch);
   }

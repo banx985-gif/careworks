@@ -15,6 +15,8 @@ export const MEALS = [
 ];
 export const mealById = (id) => MEALS.find((m) => m.id === id) ?? null;
 export const mealOfStep = (stepId) => MEALS.find((m) => m.step === stepId) ?? null;
+// Milestone 16 (fix first): which shift serves which meal (the roster sheet warns when a shift has nobody to serve it).
+export const MEAL_SHIFTS = { morning: ['breakfast'], afternoon: ['lunch', 'dinner'] };
 
 // The kitchens (the best one placed counts). quality: meal-quality points (§25 "Meal quality +8%", "Meal production
 // +15%"); prepRate: × how fast prep goes there. Without either, meals come late from the Dining Room hatch.
@@ -71,6 +73,7 @@ export const HYDRATION = {
   ],
   roles: ['HN', 'CW'], minutes: 5, drops: { nutrition: 8 }, dueAfter: 1.5, gapHours: 6,
   stopShare: 0.25, // one resident's stop on the round: a quarter of a whole task's Energy / Morale and Familiar Care
+  serveShare: 0.5, // (Milestone 16) serving a meal at the table or a tray: half a task's Familiar Care (a short contact)
 };
 
 // The trolleys: staff push the dining trolley to a tray and the Hydration Cart on a drinks round (drawn beside them while

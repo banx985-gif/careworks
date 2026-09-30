@@ -79,6 +79,7 @@ import { CONTINUITY, FRIENDSHIP, ACTIVITY_GROUPS } from '../data/relationships.j
 import { ACTIVITIES, SCHEDULABLE, activityById, TIMETABLE, COMMUNITY_EVENTS } from '../data/activities.js';
 import { facilityById } from '../data/facilities.js';
 import { DIETS, dishById, dishesOf, mealById, SAT_REASONS, HYDRATION, KITCHENS, TROLLEYS } from '../data/dining.js';
+import { AIDS, GOALS, DISCHARGE, REHAB_FUNDING } from '../data/mobility.js';
 import { yearsEmployed } from './systems/staffTeam.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
@@ -264,7 +265,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left', 'care:birthday'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left', 'care:birthday', 'care:ready', 'care:discharge', 'care:aid'],
   save: () => saveRun(),
   stamp: () => (open && !spawn ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && !spawn && router.currentName === 'home' && !open.world.clock.paused,
@@ -459,7 +460,7 @@ const topBar = createTopBar({
   },
   onStats: () => openLedger(),
   onInbox: () => openInbox(),
-  inboxCount: () => open?.world?.activities?.notices().length ?? 0, // (Milestone 14: community notices waiting)
+  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0), // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home)
   onHelp: () => openTopSheet('help'),
   onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_LOCKED, accent: COL.progress, sections: [] })),
 });
@@ -500,7 +501,8 @@ bus.on('care:admit', ({ name }) => {
 });
 
 // Milestone 9: a respite / short-stay resident heads home at the end of their stay — a good outcome (medium beat).
-bus.on('care:leaving', ({ name }) => {
+bus.on('care:leaving', ({ name, discharge }) => {
+  if (discharge) return; // (Milestone 16: a discharge has its own beat)
   if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} heads home`, true);
   debug.log(`went home: ${name}`);
 });
@@ -517,6 +519,15 @@ bus.on('care:birthday', ({ names, first: isFirst, art }) => {
   const who = names.map((n) => first(n)).join(' and ');
   dayBeat.showText(`Happy birthday, ${who}!`, true);
   if (isFirst && art) bigBeat = { title: 'A first birthday', text: `${who}'s birthday tea in the lounge`, art, age: 0 };
+});
+// Milestone 16: ready to go home (an Inbox item) and a successful discharge (the big beat the first time, then medium)
+bus.on('care:ready', ({ name }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} is ready to go home`, true);
+});
+bus.on('care:discharge', ({ resident, name, first: isFirst, art }) => {
+  if (!open || router.currentName !== 'home') return;
+  dayBeat.showText(`${first(name)} goes home with family: rehab complete`, true);
+  if (isFirst && art) bigBeat = { title: 'A first rehab discharge', text: `${first(name)} is back on ${theirOf(resident)} feet and home with family`, art, age: 0 };
 });
 bus.on('care:notice', () => {
   if (open && router.currentName === 'home' && !dayBeat.current && !bigBeat) dayBeat.showText('A notice in the Inbox', false);
@@ -597,6 +608,12 @@ function openResidents() {
 const shiftTime = (sid) => `${clockText(SHIFTS[sid].from)}–${clockText(SHIFTS[sid].to)}`;
 const COVER_COLOUR = { good: COL.good, amber: COL.gold, red: COL.bad };
 const PREF_WORD = { morning: 'Morning', afternoon: 'Afternoon', night: 'Night' };
+// "Afternoon: nobody to serve lunch or the evening meal (no Hospitality worker; carers serve when they are free)"
+function mealCoverText(m) {
+  const names = m.meals.map((id) => mealById(id).name.toLowerCase());
+  const meals = names.length > 1 ? `${names.slice(0, -1).join(', ')} or the ${names[names.length - 1]}` : names[0];
+  return m.level === 'none' ? `${SHIFTS[m.shift].name}: nobody to serve ${meals}` : `${SHIFTS[m.shift].name}: nobody to serve ${meals} (no Hospitality worker; carers serve when they are free)`;
+}
 const PEAK_WORDS = { wake: 'wake-ups', meal: 'meals', meds: 'medicine rounds', personal: 'personal care', activity: 'activities', observation: 'health checks', settle: 'settling', bell: 'call bells', roomCheck: 'room checks' };
 let rosterPick = null; // the team member picked to move
 function openRoster() {
@@ -614,6 +631,8 @@ function openRoster() {
     const lines = [];
     if (message) lines.push({ text: message, color: COL.bad });
     for (const a of warns) lines.push({ text: `${SHIFTS[a.shift].name} ${a.running ? 'is running short' : `starts short at ${clockText(SHIFTS[a.shift].from)}`}: ${a.reasons.join(', ')}.`, color: COL.bad });
+    // Milestone 16 (fix first): a shift with nobody to serve its meal (amber, like the coverage warnings; no automatic fix)
+    for (const m of w.mealCover()) lines.push({ text: mealCoverText(m), color: COL.warn });
     lines.push({ text: picked ? `Moving ${first(picked.name)}: tap Morning, Afternoon, Night or Off.` : 'Tap someone, then a shift (or Off), to move them. Off shift they rest in the Staff Room.', color: COL.textMuted });
     // One card per person working (or rostered on) each shift; agency workers and float cover for the shift now / next.
     const card = (p, sid) => {
@@ -825,6 +844,8 @@ function openInbox() {
     const notices = w.activities.notices();
     const sections = [];
     if (message) sections.push({ lines: [{ text: message, color: COL.bad }] });
+    // Milestone 16: residents ready to go home — send them home now, or it happens on its own
+    for (const r of w.readyToGoHome()) sections.push(readyNotice(w, r, 'inbox'));
     for (const n of notices) {
       const can = w.activities.canAccept(n.uid);
       sections.push({ title: n.def.name, lines: [n.def.text, { text: `${dayName(w, n.day)} afternoon (in ${n.day - w.clock.totalDays} day${n.day - w.clock.totalDays === 1 ? '' : 's'}) · runs as ${activityById(n.def.activity).name.toLowerCase()} with a bigger lift`, color: COL.actionDark }], columns: 2, buttons: [
@@ -997,6 +1018,52 @@ function openDishPicker(dow) {
       ],
     };
   });
+}
+// --- Milestone 16: mobility, rehab goals, falls risk, discharge ----------------------------------------------------------
+const REHAB_COLOUR = { 'Ready to go home': COL.good, 'On track': COL.good, Slow: COL.warn, 'Just started': COL.actionDark };
+function readyNotice(w, r, from) {
+  const left = r.autoDay - w.clock.totalDays;
+  return { title: `${first(r.name)} is ready to go home`, lines: [
+    { text: 'Every rehab goal is met. Keeping them longer brings nothing extra: their funding drops to the ready-to-go-home rate.', color: COL.actionDark },
+    { text: r.kept ? 'Kept on for now: no extra funding or reward while they stay.' : left > 0 ? `They go home on their own in ${left} day${left === 1 ? '' : 's'} if you don't send them sooner.` : 'They go home today.', color: r.kept ? COL.warn : COL.textMuted },
+  ], columns: 2, buttons: [
+    { id: `discharge:${from}:${r.id}`, label: 'Send home now', sub: `With family · +${DISCHARGE.rewards.reputation} Reputation, +${DISCHARGE.rewards.research} Research`, accent: COL.good, onTap: () => {
+      const res = w.discharge(r.id);
+      if (res.ok) autosave.request('discharge');
+      if (from === 'card') sheet.close();
+    } },
+    { id: `keep:${from}:${r.id}`, label: r.kept ? 'Kept on' : 'Keep for now', sub: 'Brings nothing extra', disabled: !!r.kept, accent: COL.progress, onTap: () => {
+      w.keepForNow(r.id);
+      autosave.request('discharge');
+    } },
+  ] };
+}
+function rehabSections(w, it) {
+  const st = it.state;
+  const out = [];
+  const m = st.mobility;
+  if (m) {
+    const f = w.fallsOf(it.id);
+    const mods = (f?.parts ?? []).filter((x) => x.key !== 'level' && x.key !== 'aid').map((x) => `${x.text} ${x.value > 0 ? '+' : ''}${Math.round(x.value)}`);
+    out.push({ title: 'Mobility', lines: [
+      { text: `${AIDS[m.aid].name}${m.aid === 'none' ? '' : ` · walks at ${Math.round(AIDS[m.aid].speed * 100)}% of the usual pace`}`, color: COL.actionDark },
+      { text: `Falls risk ${f.risk} (${f.band})${mods.length ? ` · ${mods.join(' · ')}` : ''}`, color: f.band === 'High' ? COL.warn : COL.textMuted },
+      { text: 'Stored for the care team; falls themselves are not in the game yet.', color: COL.textMuted },
+    ], bars: [{ label: 'Mobility level', value: m.level, color: COL.progress }] });
+  }
+  const r = st.rehab;
+  if (r?.active) {
+    const status = w.rehabStatus(it.id);
+    const lines = [
+      { text: status, color: REHAB_COLOUR[status] ?? COL.actionDark },
+      { text: `Therapy at ${w.therapySpaceOf(it.id)} · ${r.sessions} session${r.sessions === 1 ? '' : 's'}${r.missed ? ` · ${r.missed} missed` : ''} · the marks are ${theirOf(it.id)} targets`, color: COL.textMuted },
+    ];
+    if (st.outcomes.mood < 40) lines.push({ text: 'Low Mood is slowing progress', color: COL.warn });
+    if (st.needs.nutrition > 60) lines.push({ text: 'Not eating well: progress is slower', color: COL.warn });
+    out.push({ title: 'Rehab goals', lines, bars: GOALS.map((g) => ({ label: g.name, value: r.goals[g.id], tick: r.targets[g.id], color: r.goals[g.id] >= r.targets[g.id] ? COL.good : COL.progress, text: `${Math.round(r.goals[g.id])}/${r.targets[g.id]}` })) });
+    if (r.readyDay != null && !st.leaving) out.push(readyNotice(w, { id: it.id, name: it.name, readyDay: r.readyDay, autoDay: r.readyDay + DISCHARGE.autoDays, kept: !!r.kept }, 'card'));
+  }
+  return out;
 }
 // Milestone 13: pin a team member to a small group of residents (tap to add / remove; up to CONTINUITY.maxResidents).
 function openContinuity(staffId) {
@@ -1210,6 +1277,12 @@ function openLedger() {
       { lines: [{ text: `Balance: ${credits(b)} Credits`, color: b < 0 ? COL.bad : COL.actionDark }, ...(b < 0 ? [{ text: 'Below zero. There is no debt system yet: the home carries on.', color: COL.bad }] : [])] },
       { title: `This month so far (Month ${c.month}, Year ${c.year})`, lines: [{ text: 'Paid at the month\'s close: fees and funding for each resident\'s days here, wages in full.', color: COL.textMuted }, ...ledgerLines(soFar)] },
       { title: 'Short staffing this month (paid as it happens)', lines: shortLines },
+      // Milestone 16: the care-outcome counters (Reputation and Research Points are spent in later updates)
+      { title: 'Care outcomes', lines: [
+        { text: `Successful discharges: ${w.rewards.positiveOutcomes}${w.rewards.discharges.length ? ` (last: ${first(w.rewards.discharges.at(-1).name)})` : ''}`, color: COL.actionDark },
+        `Reputation: ${w.rewards.reputation} · Research Points: ${w.rewards.research}`,
+        { text: `Rehab funding: ${REHAB_FUNDING.perMonth} Credits a month for each resident working on their goals (paid at the close)`, color: COL.textMuted },
+      ] },
       last ? { title: `Last close: ${last.month}`, lines: ledgerLines(last.lines) } : { title: 'Last close', lines: [{ text: 'No month has closed yet.', color: COL.textMuted }] },
       { columns: 1, buttons: [{ id: 'ledger:back', label: '‹ Back to Business', accent: COL.progress, onTap: () => openBusiness() }] },
     ];
@@ -1333,7 +1406,8 @@ function stayWords(def, days, long = false) {
 function stayLine(w, it) {
   const st = it.state;
   const t = STAYS[it.def.stay]?.text ?? it.def.stay;
-  if (st.leaving) return `${t}: the stay is over, heading home today`;
+  if (st.leaving) return st.rehab?.dischargedDay != null ? `${t}: rehab complete, heading home with family` : `${t}: the stay is over, heading home today`;
+  if (st.rehab?.active) return st.rehab.readyDay != null ? `${t}: ready to go home` : `${t}: goes home when ${theirOf(it.id)} rehab goals are met`; // (Milestone 16)
   if (!st.stay) return `${t}: no set end`;
   const left = w.stayDaysLeft(it.id);
   if (st.stay.opening && !w.residents.some((q) => q !== it && !q.state.leaving && !q.state.guest)) return `${t}: stays on while ${theirOf(it.id) === 'her' ? 'she is' : 'he is'} the only resident (${left} day${left === 1 ? '' : 's'} left once someone else moves in)`;
@@ -1590,6 +1664,7 @@ function residentSections(w, it) {
     friendsSection(w, it),
     activitySection(w, it),
     mealsSection(w, it),
+    ...rehabSections(w, it),
     { title: 'Needs', lines: [{ text: `How much support ${they} needs right now`, color: COL.textMuted }], bars: NEEDS.map((n) => ({ label: n.name, value: st.needs[n.id], color: COL.progress })) },
     { title: 'Outcomes', bars: OUTCOMES.map((o) => ({ label: o.name, value: st.outcomes[o.id], color: COL.good })) },
     { title: 'Today', lines: log.length ? log : ['Nothing yet today'] },

@@ -34,6 +34,7 @@ export const ROUTINE_TASKS = {
   cards: { type: 'activity', band: 'afternoon', minutes: 20, lead: 0.5 },
   dinner: { type: 'meal', band: 'evening', minutes: 8, lead: 0.5 },
   morningActivity: { type: 'activity', band: 'morning', minutes: 45, lead: 0.5 }, // (Milestone 14: the Morning activity slot)
+  therapy: { type: 'mobility', band: 'afternoon', minutes: 30, lead: 0.5 }, // (Milestone 16: the rehab therapy step)
   settle: { type: 'settle', band: 'evening', minutes: 20, lead: 0.5 },
 };
 

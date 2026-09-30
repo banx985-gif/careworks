@@ -11,6 +11,7 @@ import { STAFF } from './staff.js';
 import { ROLES } from './roles.js';
 import { ACTIVITIES, BIRTHDAY } from './activities.js';
 import { TROLLEYS } from './dining.js';
+import { DISCHARGE } from './mobility.js';
 
 const art = (folder, key) => [key, `assets/images/${folder}/${key}.png`];
 
@@ -39,6 +40,8 @@ export const ASSETS = {
   ...Object.fromEntries([art('events', BIRTHDAY.firstArt)]),
   // Milestone 15: the Hydration Cart on the drinks rounds (the dining trolley is one of the early props)
   ...Object.fromEntries([art('equipment', TROLLEYS.round)]),
+  // Milestone 16: the First Rehab Discharge picture (the aid props are early props, listed above)
+  ...Object.fromEntries([art('events', DISCHARGE.firstArt)]),
   // Milestone 0 loader test (?screen=test): the placeholder PWA icon as a real image, and one deliberately missing file.
   m0Real: 'assets/branding/pwa/icon-192.png',
   m0Missing: 'assets/m0-missing-test.png',

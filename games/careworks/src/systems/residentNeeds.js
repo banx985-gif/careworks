@@ -49,6 +49,9 @@ export function newResidentState(def, { room = null } = {}) {
     diet: null, // Milestone 15: their menu tag from the Nutrition plan (data/dining.js DIETS; src/systems/dining.js dietOf)
     dining: null, // Milestone 15: { avg, n, last, favDay } — their dining satisfaction
     hydration: null, // Milestone 15: { last } — the game hour of their last drink
+    mobility: null, // Milestone 16: { base, level, aid, avgNeed } (src/systems/mobility.js; null: from their profile)
+    rehab: null, // Milestone 16: their rehab goals while in rehab (null: none)
+    falls: null, // Milestone 16: { risk, band, parts } — stored and shown (falls themselves: Milestone 25)
     needs: { ...def.needs },
     outcomes: { ...def.outcomes },
     prefs: { ...def.prefs },
@@ -84,6 +87,9 @@ export function ensureResidentState(saved, def, { room = null } = {}) {
   out.favourite = saved.favourite ?? null;
   out.dining = saved.dining ? { ...saved.dining } : null; // (Milestone 15; an M14 save: none yet)
   out.hydration = saved.hydration ? { ...saved.hydration } : null;
+  out.mobility = saved.mobility ? { ...saved.mobility } : null; // (Milestone 16; an M15 save: from their profile)
+  out.rehab = saved.rehab ? { ...saved.rehab, start: { ...saved.rehab.start }, goals: { ...saved.rehab.goals }, targets: { ...saved.rehab.targets }, hist: [...(saved.rehab.hist ?? [])] } : null;
+  out.falls = saved.falls ? { ...saved.falls, parts: [...(saved.falls.parts ?? [])] } : null;
   out.room = saved.room ?? room;
   out.log = Array.isArray(saved.log) ? saved.log : [];
   return out;

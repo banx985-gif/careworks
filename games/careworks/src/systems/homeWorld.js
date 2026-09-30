@@ -26,6 +26,9 @@
 // task at the Kitchen for a Hospitality worker), servers bring the dining trolley and serve the residents at their seats
 // in turn, and anyone who can't come has a tray brought to their room; drinks rounds morning and afternoon; each meal's
 // quality, each resident's diet match, favourite dish and dining satisfaction (Mood and the Nutrition need).
+// Milestone 16: mobility and rehab (src/systems/mobility.js): each resident's own mobility level and aid (walking speed
+// follows it), MO04 two-person transfers, a daily therapy step and four rehab goals for anyone in rehab, the stored
+// falls-risk number, and a successful discharge (ready to go home → confirmed, or after three days) with its rewards.
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
@@ -94,9 +97,11 @@ import { taskPct, matchesTask, familiarPct } from './traitEffects.js';
 import { compatibility, addFriendship, areFriends, topFriends, groupMembers, favouriteOf, familiarEffects, friendshipOf } from './relationships.js';
 import { FRIENDSHIP, CONTINUITY, ACTIVITY_GROUPS, SEATING } from '../../data/relationships.js';
 import { FOUNDER_FLAG } from '../../data/setup.js';
-import { MEALS, mealById, mealOfStep, KITCHENS, KITCHEN_IDS, PREP, TRAY, HYDRATION, TROLLEYS, DIET_OFFICE, FAVOURITES, FOOD_COST, SATISFACTION, DIETS, dishById } from '../../data/dining.js';
+import { MEAL_SHIFTS, MEALS, mealById, mealOfStep, KITCHENS, KITCHEN_IDS, PREP, TRAY, HYDRATION, TROLLEYS, DIET_OFFICE, FAVOURITES, FOOD_COST, SATISFACTION, DIETS, dishById } from '../../data/dining.js';
 import { createDining, dietOf, favouritesOf, skillsOf, canMake, dietWords, mealQuality, satisfaction, nutritionMult, moodFrom, noteMeal, avgOf } from './dining.js';
-import { dietPct as traitDietPct, diningPct } from './traitEffects.js';
+import { dietPct as traitDietPct, diningPct, rehabPct } from './traitEffects.js';
+import { AIDS, TWO_PERSON, GOAL_TASKS, THERAPY_PLACES, THERAPY_NO_SPACE, GOALS, DISCHARGE, REHAB_FUNDING } from '../../data/mobility.js';
+import { newMobility, driftMobility, noteMobilityNeed, aidSpeed, inRehab, newRehab, gainMult, addGain, missTherapy, endRehabDay, isReady, rehabStatus, rehabRise, rehabProgress, fallsRisk } from './mobility.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
 // own live layout; these are for older saves' upgrades and the tests.
@@ -195,7 +200,21 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     return list[Math.floor(seatOf(p, place) / SEATING.perRoom) % list.length];
   };
   // Where a resident goes for a place: their room's inside spot, or their seat at the Dining Room / lounge.
+  // Milestone 16: where therapy happens — the Rehabilitation Gym, else the Basic Physio Space (beside it), else their room.
+  const therapySpace = (p) => {
+    for (const tp of THERAPY_PLACES) {
+      if (tp.kind === 'facility') {
+        const pc = layout.ofDef(tp.id)[0];
+        if (pc) return { ...tp, piece: pc };
+      } else if (roomList().find((r) => r.id === p.state.room)?.defId === tp.id) return { ...tp, piece: null };
+    }
+    return { ...THERAPY_NO_SPACE, piece: null };
+  };
   const placeRef = (p, place) => {
+    if (place === 'therapy') {
+      const sp = therapySpace(p);
+      return sp.piece ? `${sp.piece.id}.therapy` : `${p.state.room}.inside`;
+    }
     if (place === 'room') return `${p.state.room}.inside`;
     const pc = seatPiece(p, place);
     const seats = facilityById(PLACE_DEF[place]).seats;
@@ -241,8 +260,14 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function addResident(st, { atEntrance = false } = {}) {
     const def = residentById(st.id);
     const p = { kind: 'resident', id: def.id, name: def.name, art: def.art, line: `${def.support} · age ${def.age}`, def, state: st };
-    // (Milestone 14: everyone walks WALK.speedMultiplier faster; a walking frame or wheelchair a little slower than others)
-    p.agent = new Agent({ id: def.id, name: def.name, speed: RESIDENT.speed * WALK.speedMultiplier * (WALK.aids[WALK.aidBySupport[def.support]] ?? 1), noPathTeleportSec: 3 });
+    // Milestone 16: their own mobility level and aid (an older save: from their profile and current Mobility need), and
+    // rehab goals for anyone in rehab (an M15-era rehab resident: from their current needs)
+    if (!st.guest) {
+      st.mobility ??= newMobility(def, st);
+      if (!st.rehab && !st.leaving && inRehab(def, st)) st.rehab = newRehab(def, st, clock.totalDays);
+    }
+    // (Milestone 14: everyone walks WALK.speedMultiplier faster; Milestone 16: × their own aid's speed — the M14 numbers)
+    p.agent = new Agent({ id: def.id, name: def.name, speed: RESIDENT.speed * WALK.speedMultiplier * aidSpeed(st.mobility?.aid ?? 'none'), noPathTeleportSec: 3 });
     const room = roomList().find((r) => r.id === st.room);
     if (room && !st.leaving && !st.guest) room.residentId = def.id; // the room knows its resident (not one going home)
     if (st.pos) {
@@ -334,11 +359,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const stepsCache = new Map();
   const clearSteps = () => stepsCache.clear();
   function stepsForState(st, day) {
-    const key = `${st.wakeAt}:${day}`;
+    const therapy = !!st.rehab?.active && st.rehab.readyDay == null; // (Milestone 16: the therapy step while working on goals)
+    const key = `${st.wakeAt}:${day}:${therapy ? 1 : 0}`;
     if (stepsCache.has(key)) return stepsCache.get(key);
     const base = routineFor(st);
     const out = [];
     for (const def of ALL_STEPS) {
+      if (def.id === 'therapy') {
+        if (therapy) out.push(def);
+        continue;
+      }
       const slot = SLOT_OF[def.id];
       if (!slot) {
         out.push(base.find((x) => x.id === def.id));
@@ -382,6 +412,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // The spots a helper may use beside this resident at a place: in their room its two; at a shared place the pool,
   // nearest their seat first.
   function helpPool(p, place) {
+    if (place === 'therapy') {
+      const sp = therapySpace(p);
+      if (sp.piece) return [`${sp.piece.id}.therapy2`, `${sp.piece.id}.therapy3`];
+      place = 'room';
+    }
     if (place === 'room') return [`${p.state.room}.help`, `${p.state.room}.help2`];
     const pc = seatPiece(p, place);
     const pool = [1, 2, 3, 4, 5, 6].map((n) => `${pc?.id ?? PLACE_DEF[place]}.help${n}`);
@@ -516,6 +551,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         applyEffects(p, t, helper);
         if (t.type === 'bell') bellState(care, t.resident).cooldownUntil = absNow() + BELL.cooldownHours;
         if (t.type === 'hydration') p.state.hydration = { last: absNow() }; // (Milestone 15: their last drink)
+        const kind = goalKind(t);
+        if (kind) rehabSession(p, kind, helper); // (Milestone 16: therapy, walks and transfers move rehab goals)
         else log(p, `${t.name} (with ${helperName(helper)})`);
       }
     }
@@ -525,7 +562,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     // agency workers build no Familiar Care (bible §14); Milestone 12: a 'familiar' trait builds it faster
     // (Milestone 15: one stop on a drinks round is light work — a share of the Familiar Care, Energy and Morale)
     const share = t.source === 'round' ? HYDRATION.stopShare : 1;
-    if (!q.agency) addFamiliarity(care, t.resident, helper, FAMILIARITY.perTask * share * (1 + familiarPct(q.model.traits) / 100), clock.totalDays, share < 1);
+    const famShare = t.source === 'routine' && mealOfStep(t.stepId) ? HYDRATION.serveShare : share; // (Milestone 16: an 8-minute serve is a short contact)
+    if (!q.agency) addFamiliarity(care, t.resident, helper, FAMILIARITY.perTask * famShare * (1 + familiarPct(q.model.traits) / 100), clock.totalDays, 1 - famShare);
     crew.finishTask(helper, share);
     bus?.emit('care:task', { id: t.id, type: t.type, status: 'done', staff: helper, resident: t.resident });
   }
@@ -553,6 +591,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (step.activity && step.slot) activityOutcome(p, step, day);
     }
     if (served) afterMeal(p, served, day);
+    if (step.id === 'therapy') rehabSession(p, helper ? 'therapy' : 'self', helper); // (Milestone 16)
     bus?.emit('care:step', { resident: st.id, step: step.id, status: 'done', helper, ...(served ? { sat: served.sat, tray: served.tray } : {}) });
   }
   // --- Milestone 15: the meal service -----------------------------------------------------------------------------------
@@ -660,6 +699,63 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const wake = routineTask(p, 'wake', s.day);
     const coming = wake && (wake.status === 'claimed' || wake.status === 'working'); // (someone is on the way to get them up: breakfast at the table)
     if (t && isOpen(t) && !t.tray && !coming && absNow() >= absHour(s.day, at) + TRAY.afterWaking) toTray(p, t, 'still in bed');
+  }
+  // --- Milestone 16: mobility and rehab ------------------------------------------------------------------------------------
+  const goalKind = (t) => (t.source !== 'plan' ? null : Object.keys(GOAL_TASKS).find((k) => GOAL_TASKS[k].includes(t.name)) ?? null);
+  // A session done (or a therapy step managed alone): their goals move by the session, the place, the plan, their Mood
+  // and eating, and the helper's rehab traits.
+  function rehabSession(p, kind, helper) {
+    const rh = p.state.rehab;
+    if (!rh?.active || rh.readyDay != null) return;
+    const mult = gainMult({ placeMult: kind === 'therapy' || kind === 'self' ? therapySpace(p).mult : 1, plan: p.state.plan, mood: p.state.outcomes.mood, nutritionNeed: p.state.needs.nutrition });
+    const traits = helper ? crew.byId(helper)?.model.traits ?? [] : [];
+    addGain(rh, kind, mult, (g) => rehabPct(traits, g));
+  }
+  // MO04 Transfer Assist with a high Mobility need: a second helper for each transfer (the M8 PC04 two-person pattern).
+  function secondHelpers(p, added) {
+    if ((p.state.needs.mobility ?? 0) < TWO_PERSON.needAt) return added;
+    const extra = [];
+    for (const t of added ?? []) {
+      if (t.optionId !== 'MO04' || t.optionRefused || !GOAL_TASKS.transfer.includes(t.name)) continue;
+      extra.push(addTask(care, { resident: p.id, day: t.day, band: t.band, type: 'mobility', name: TWO_PERSON.name, source: 'plan', optionId: 'MO04', domain: 'MO', second: t.id, at: t.at, place: 'resident', roles: [...TWO_PERSON.roles], minutes: t.minutes, drops: { mobility: 4 }, outcomes: { safety: 1 }, opens: t.opens, due: t.due }));
+    }
+    return [...(added ?? []), ...extra];
+  }
+  // The falls-risk number and its modifiers (stored for the save and shown on the card; no falls yet — M25).
+  const fallsStaffOn = () => onShiftNow().some((q) => specialtiesOf(q.id).includes('falls'));
+  function updateFalls(p) {
+    const st = p.state;
+    if (!st.mobility) return null;
+    st.falls = fallsRisk({ level: st.mobility.level, aid: st.mobility.aid, plan: st.plan ?? {}, fallsStaff: fallsStaffOn(), lab: layout.ofDef('F19').length > 0 });
+    return st.falls;
+  }
+  function setSpeed(p) {
+    p.agent.speed = RESIDENT.speed * WALK.speedMultiplier * aidSpeed(p.state.mobility?.aid ?? 'none');
+  }
+  // The end of a day: rehab progress, the mobility level drifts (the aid may change), ready to go home, the auto
+  // discharge after DISCHARGE.autoDays.
+  function mobilityDay(day) {
+    for (const p of inSession()) {
+      const st = p.state;
+      if (st.rehab?.active) endRehabDay(st.rehab);
+      if (st.mobility) {
+        const before = st.mobility.aid;
+        if (driftMobility(st, rehabRise(st.rehab))) {
+          setSpeed(p);
+          log(p, st.mobility.aid === 'none' ? `Walking unaided now (was using a ${AIDS[before].short.toLowerCase()})` : `Now using a ${AIDS[st.mobility.aid].short.toLowerCase()}`);
+          bus?.emit('care:aid', { resident: p.id, aid: st.mobility.aid, from: before });
+        }
+      }
+      if (st.rehab?.active && st.rehab.readyDay == null && isReady(st.rehab)) {
+        st.rehab.readyDay = day;
+        clearSteps();
+        log(p, 'Ready to go home: every rehab goal met');
+        bus?.emit('care:ready', { resident: p.id, name: p.name, day });
+      }
+      if (st.rehab?.readyDay != null && !st.rehab.kept && day - st.rehab.readyDay >= DISCHARGE.autoDays && !st.leaving) world.discharge(p.id, { auto: true });
+      if (st.rehab?.kept && st.rehab.readyDay != null) log(p, 'Ready to go home: staying on brings nothing extra'); // (the daily reminder)
+      updateFalls(p);
+    }
   }
   // --- kitchen prep, drinks rounds (planned with the band's tasks) ---
   function planKitchen(inst, at) {
@@ -789,6 +885,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       s.status = 'missed';
       s.helper = null;
       log(p, `Missed: ${step.name} (no help came)`);
+      if (s.id === 'therapy') missTherapy(p.state.rehab); // (Milestone 16: a missed session knocks their confidence)
       return;
     }
     if (t && isOpen(t)) finish(t, 'self');
@@ -935,7 +1032,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       dining.prune(clock.totalDays);
       planKitchen(inst, at); // (Milestone 15: kitchen prep for the band's meals, and each resident's drinks rounds)
       for (const p of residents) if (inCare(p)) planRounds(p, inst, at);
-      for (const p of residents) if (inCare(p)) logRefused(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p), steps: stepsFor(p, inst.day) }));
+      for (const p of residents) if (inCare(p)) logRefused(p, secondHelpers(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p), steps: stepsFor(p, inst.day) })));
     }
     for (const p of residents) {
       if (!inCare(p)) continue;
@@ -957,6 +1054,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       finish(t, missed ? 'missed' : 'unstaffed');
       const p = byResident(t.resident);
       if (missed && p) log(p, `Missed: ${t.name}`);
+      if (missed && p && goalKind(t) === 'therapy') missTherapy(p.state.rehab); // (Milestone 16)
     }
     // work under way
     for (const t of care.tasks) {
@@ -1032,8 +1130,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // moves his go-home day back one (the countdown pauses), and it carries on once someone else has been admitted.
   const othersHere = (p) => residents.some((q) => q !== p && !q.state.leaving && !q.state.guest);
   const aloneOpening = (p) => !!p.state.stay?.opening && !othersHere(p);
-  const due = (p) => !aloneOpening(p) && (clock.totalDays > p.state.stay.leaveDay || (clock.totalDays === p.state.stay.leaveDay && hourNow() >= STAY_LEAVE_HOUR));
-  function startLeaving(p) {
+  // (Milestone 16: someone in rehab goes home when their goals are met — a discharge — not after a set length)
+  const due = (p) => !p.state.rehab?.active && !aloneOpening(p) && (clock.totalDays > p.state.stay.leaveDay || (clock.totalDays === p.state.stay.leaveDay && hourNow() >= STAY_LEAVE_HOUR));
+  function startLeaving(p, { discharge = false } = {}) {
     const st = p.state;
     for (const t of care.tasks) if (t.resident === p.id && isOpen(t)) finish(t, 'gone');
     st.leaving = true;
@@ -1042,7 +1141,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const room = placed.find((r) => r.id === st.room);
     if (room?.residentId === p.id) room.residentId = null;
     st.leftDay = clock.totalDays;
-    admissions.wentHome({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: st.admittedDay ?? 0, leftDay: clock.totalDays, stay: st.stay?.type ?? p.def.stay });
+    admissions.wentHome({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: st.admittedDay ?? 0, leftDay: clock.totalDays, stay: st.stay?.type ?? p.def.stay, rehab: !!st.rehab?.active, readyDay: st.rehab?.readyDay ?? null, discharged: discharge });
     noteLeft(care, { residentId: p.id }, clock.totalDays); // (Milestone 12: their Familiar Care records stay, marked)
     // Milestone 13: their friends here miss them (a small, one-off Mood dip that drifts back)
     for (const q of seated()) {
@@ -1050,8 +1149,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       q.state.outcomes.mood = clamp(q.state.outcomes.mood + FRIENDSHIP.friendLeftMood);
       log(q, `Misses ${first(p.name)}, who has gone home`);
     }
-    addLog(st, logDay(st), now(), 'Heading home: the stay is over');
-    bus?.emit('care:leaving', { resident: p.id, name: p.name, stay: st.stay?.type ?? p.def.stay });
+    addLog(st, logDay(st), now(), discharge ? 'Heading home with family: rehab complete' : 'Heading home: the stay is over');
+    bus?.emit('care:leaving', { resident: p.id, name: p.name, stay: st.stay?.type ?? p.def.stay, discharge });
     walkOut(p);
   }
   function walkOut(p) {
@@ -1106,8 +1205,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   };
   // Milestone 9: plus who went home (they pay for their days here: admittedDay → leftDay)
   const payers = () => [
-    ...residents.filter((p) => !p.state.leaving && !p.state.guest).map((p) => ({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: p.state.admittedDay ?? 0 })),
-    ...admissions.homeGoings.map((h) => ({ id: h.id, name: h.name, level: h.level, admittedDay: h.admittedDay ?? 0, leftDay: h.leftDay })),
+    // (Milestone 16: rehab residents bring rehab funding; once ready to go home, their funding drops — data/mobility.js)
+    ...residents.filter((p) => !p.state.leaving && !p.state.guest).map((p) => ({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: p.state.admittedDay ?? 0, rehab: !!p.state.rehab?.active, readyDay: p.state.rehab?.readyDay ?? null })),
+    ...admissions.homeGoings.map((h) => ({ id: h.id, name: h.name, level: h.level, admittedDay: h.admittedDay ?? 0, leftDay: h.leftDay, rehab: !!h.rehab, readyDay: h.readyDay ?? null })),
   ];
   const payroll = () => team().map((q) => ({ id: q.id, name: q.name, salary: q.model.salary })); // agency is paid per shift
   // --- care-plan rules (Milestone 8) -------------------------------------------------------------------------------
@@ -1227,6 +1327,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         st.wouldEnjoy = SCHEDULABLE.map((a) => ({ a, f: feelingOf(p.def, st, a) })).sort((x, y) => (y.f === 'love') - (x.f === 'love') || (y.f === 'like') - (x.f === 'like'))[0]?.a.id ?? null;
       }
     }
+    mobilityDay(day); // (Milestone 16: rehab progress, mobility levels and aids, ready to go home, falls risk)
     // Milestone 15: yesterday's food (a simple cost per meal served), today's diet tags
     const meals = dining.served(day - 1);
     if (meals) ledger.economy.add('credits', -meals * FOOD_COST.perMeal, `Food: ${meals} meal${meals === 1 ? '' : 's'} served`, 'food');
@@ -1332,7 +1433,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         const q = joinTeam(r.def);
         const on = (sid) => team().filter((x) => x !== q && x.role === q.role && roster.shiftOf(x.id)?.id === sid).length;
         const nightEmpty = !team().some((x) => x !== q && roster.shiftOf(x.id)?.id === 'night');
-        const day = on('afternoon') < on('morning') ? 'afternoon' : 'morning';
+        // (Milestone 16 fix first: a second Hospitality worker goes to Afternoon, so lunch and the evening meal have a server)
+        const day = on('afternoon') < on('morning') || (q.role === 'HN' && on('morning') > 0 && on('afternoon') === 0) ? 'afternoon' : 'morning';
         roster.move(q.id, r.def.shiftPref === 'night' && nightEmpty ? 'night' : day);
         hired.push(q.id);
       }
@@ -1432,11 +1534,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       for (const p of residents) {
         riseNeeds(p.state, hours, world.isAsleep(p));
         driftOutcomes(p.state, hours);
+        noteMobilityNeed(p.state, hours); // (Milestone 16)
       }
       const b = bandAt(hourNow());
       if (b !== band) {
         band = b;
         crew.newBand();
+        for (const p of seated()) updateFalls(p); // (Milestone 16: who is on shift changes the falls modifiers)
         bus?.emit('care:band', { band: b.id });
       }
       if (shortStaffing) coverage.tick(); // Milestone 7: warnings, float / agency cover, scale-back — before anyone moves
@@ -1635,6 +1739,72 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (unmet.length) warnings.push(`${unmet.map((p) => first(p.name)).join(', ')}: nobody on the team can make ${unmet.length === 1 ? dietWords(dietOf(unmet[0].state)) : 'their menus'} (the Nutrition specialty or a Nutrition Office would).`);
       return { avg, lowest, recent, warnings, served: here.length };
     },
+    // --- Milestone 16: mobility, rehab, discharge -----------------------------------------------------------------------
+    // Their aid and level · the prop drawn beside them where they sit (a frame or wheelchair; null walking or for a stick)
+    mobilityOf: (residentId) => byResident(residentId)?.state.mobility ?? null,
+    aidPropOf(p) {
+      if (p?.kind !== 'resident' || p.state.guest || p.agent.state === 'walking') return null;
+      return AIDS[p.state.mobility?.aid]?.prop ?? null;
+    },
+    fallsOf: (residentId) => (byResident(residentId) ? updateFalls(byResident(residentId)) : null),
+    rehabOf: (residentId) => byResident(residentId)?.state.rehab ?? null,
+    rehabStatus: (residentId) => rehabStatus(byResident(residentId)?.state.rehab),
+    rehabProgress: (residentId) => rehabProgress(byResident(residentId)?.state.rehab),
+    therapySpaceOf: (residentId) => (byResident(residentId) ? therapySpace(byResident(residentId)).name : null),
+    // Residents ready to go home (the Inbox): [{ id, name, readyDay, autoDay }]
+    readyToGoHome: () => seated().filter((p) => p.state.rehab?.active && p.state.rehab.readyDay != null).map((p) => ({ id: p.id, name: p.name, readyDay: p.state.rehab.readyDay, autoDay: p.state.rehab.readyDay + DISCHARGE.autoDays, kept: !!p.state.rehab.kept })),
+    // Keep a ready resident on for now (no automatic discharge). It brings nothing extra: their funding stays at the
+    // ready-to-go-home rate, and a reminder shows every day until they are sent home.
+    keepForNow(residentId) {
+      const rh = byResident(residentId)?.state.rehab;
+      if (!rh?.active || rh.readyDay == null) return { ok: false, reason: 'Not ready to go home yet.' };
+      rh.kept = true;
+      return { ok: true, reason: null };
+    },
+    // The rewards counters (Reputation and Research Points are spent in M26 / M21) and each family's record (M19).
+    get rewards() {
+      care.rewards ??= { reputation: 0, research: 0, positiveOutcomes: 0, discharges: [] };
+      return care.rewards;
+    },
+    familyOf: (residentId) => care.families?.[residentId] ?? null,
+    // A successful discharge: every goal met. They walk out with family, the room frees, the rewards and a positive
+    // care outcome are counted, their family's trust rises. → { ok, reason, first }
+    discharge(residentId, { auto = false } = {}) {
+      const p = byResident(residentId);
+      if (!p || p.state.leaving) return { ok: false, reason: 'They are not here.' };
+      if (!p.state.rehab?.active || p.state.rehab.readyDay == null) return { ok: false, reason: 'Not ready yet: their rehab goals are not all met.' };
+      const r = world.rewards;
+      const first = r.discharges.length === 0;
+      const R = DISCHARGE.rewards;
+      r.reputation += R.reputation;
+      r.research += R.research;
+      r.positiveOutcomes += 1;
+      r.discharges.push({ id: p.id, name: p.name, day: clock.totalDays, auto, days: clock.totalDays - (p.state.admittedDay ?? p.state.rehab.startDay) });
+      if (r.discharges.length > 40) r.discharges.shift();
+      care.families ??= {};
+      const fam = (care.families[p.id] ??= { trust: 50, history: [] });
+      fam.trust = Math.min(100, fam.trust + R.familyTrust);
+      fam.history = [...fam.history, { day: clock.totalDays, event: 'discharge', trust: R.familyTrust }].slice(-12);
+      p.state.rehab.dischargedDay = clock.totalDays;
+      startLeaving(p, { discharge: true });
+      bus?.emit('care:discharge', { resident: p.id, name: p.name, first, auto, art: first ? DISCHARGE.firstArt : null });
+      return { ok: true, reason: null, first };
+    },
+    // Milestone 16 (fix first): meal cover on the roster — for each shift with a meal, who is rostered to serve it.
+    // → [{ shift, meals: [meal ids], level: 'none' (nobody who can serve) | 'noHospitality' (only care staff) }]
+    // (a home with no residents needs none). No automatic fix and no agency for meals: it is a warning only.
+    mealCover() {
+      if (!seated().length) return [];
+      const out = [];
+      for (const [sid, meals] of Object.entries(MEAL_SHIFTS)) {
+        const on = team().filter((q) => roster.shiftOf(q.id)?.id === sid && !roster.isTraining(q.id));
+        const hosp = on.some((q) => q.role === 'HN' || specialtiesOf(q.id).includes('nutrition'));
+        const any = hosp || on.some((q) => ['CW', 'HN'].includes(q.role));
+        if (!any) out.push({ shift: sid, meals, level: 'none' });
+        else if (!hosp) out.push({ shift: sid, meals, level: 'noHospitality' });
+      }
+      return out;
+    },
     // The trolley a staff member is pushing (the home screen draws it beside them while they walk): the Hydration Cart
     // on a drinks round, the dining trolley taking a tray to a room. (Serving at the table, the trolley stands by the
     // Dining Room: world.decor.)
@@ -1751,7 +1921,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     assignedTo: (staffId, residentId) => !!byResident(residentId) && assignedTo(staffId, byResident(residentId)),
     // --- Milestone 9 ------------------------------------------------------------------------------------------
     inCare,
-    stayDaysLeft: (residentId) => (byResident(residentId) ? stayDaysLeft(byResident(residentId).state, clock.totalDays) : null),
+    stayDaysLeft: (residentId) => (byResident(residentId) && !byResident(residentId).state.rehab?.active ? stayDaysLeft(byResident(residentId).state, clock.totalDays) : null), // (Milestone 16: rehab goes by goals)
     homeGoings: () => admissions.homeGoings,
     // ?debug=1 "Spawn all 60" (a test home only): everyone not here comes in as a guest, ignoring rooms and capacity —
     // placed on an open tile, then walking to another (seeded). Guests live no routine, get no tasks and are never

@@ -8,7 +8,7 @@ export const SAVE = {
   count: 4,
   prefix: 'campaign_',
   accountKey: 'account',
-  version: 15, // 2 = Milestone 2 (the clock and the residents' state), 3 = Milestone 3 (the staff), 4 = Milestone 4 (care
+  version: 16, // 2 = Milestone 2 (the clock and the residents' state), 3 = Milestone 3 (the staff), 4 = Milestone 4 (care
   // plans, tasks, call bells, familiarity), 5 = Milestone 5 (the Dining Room and Staff Room, the props, Credits / Care
   // Tokens), 6 = Milestone 6 (every resident, the 24 × 16 home, applicants, the ledger), 7 = Milestone 7 (three
   // shifts, floats, wings, on call, coverage history, agency hires), 8 = Milestone 8 (plan reviews, stale reasons,
@@ -17,6 +17,7 @@ export const SAVE = {
   // training, specialties), 12 = Milestone 12 (Familiar Care records, the Elite unlock), 13 = Milestone 13 (wake times, seats,
   // friendships, activity counts, favourites, continuity groups), 14 = Milestone 14 (the activity timetable, sessions,
   // community notices, birthdays), 15 = Milestone 15 (the weekly menu, meal records, hydration timers, diet tags, dining
-  // satisfaction); src/systems/facility.js
+  // satisfaction), 16 = Milestone 16 (mobility levels and aids, rehab goals, falls risk, discharges, rewards counters,
+  // family records); src/systems/facility.js
   // SAVE_MIGRATIONS moves older saves
 };
