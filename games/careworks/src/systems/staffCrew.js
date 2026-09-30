@@ -280,7 +280,8 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       return Object.fromEntries(people.map((p) => [p.id, { mode: p.mode, postIndex: p.postIndex, stay: p.stay }]));
     },
     positions() {
-      return Object.fromEntries(people.map((p) => [p.id, { x: p.agent.x, y: p.agent.y }]));
+      // (Milestone 13: and the rest of the path they are walking, so a reload carries on exactly)
+      return Object.fromEntries(people.map((p) => [p.id, { x: p.agent.x, y: p.agent.y, ...(p.agent.state === 'walking' && p.agent.path.length ? { path: p.agent.path.map((pt) => ({ x: pt.x, y: pt.y })) } : {}) }]));
     },
   };
   return crew;

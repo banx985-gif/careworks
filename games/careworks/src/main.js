@@ -73,7 +73,9 @@ import { BUILDABLE_FACILITIES } from '../data/facilities.js';
 import { FOUNDERS } from '../data/setup.js';
 import { DOMAINS, CARE_OPTIONS, optionById, optionsFor, validateCarePlans, OPTION_PREF_MOOD } from '../data/carePlans.js';
 import { TASK_TYPES, BELL } from '../data/tasks.js';
-import { clockText } from './systems/residentNeeds.js';
+import { clockText, wakeWindowOf } from './systems/residentNeeds.js';
+import { WAKE } from '../data/routine.js';
+import { CONTINUITY, FRIENDSHIP, ACTIVITY_GROUPS } from '../data/relationships.js';
 import { yearsEmployed } from './systems/staffTeam.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
@@ -671,6 +673,15 @@ function openRoster() {
         { title: 'Safe Coverage', bars, lines: detail },
         { title: 'Team', columns: 2, buttons: teamRows },
         {
+          title: 'Continuity groups',
+          lines: [{ text: `Pin a team member to up to ${CONTINUITY.maxResidents} residents: they are preferred for them when on shift, so familiarity builds. Safety, skills and urgency still come first.`, color: COL.textMuted }],
+          columns: 1,
+          buttons: w.team.map((p) => {
+            const grp = w.continuityOf(p.id);
+            return { id: `group:${p.id}`, label: `${first(p.name)}'s residents`, sub: grp.length ? grp.map((id) => first(w.residentById(id)?.name ?? id)).join(', ') : 'None pinned', icon: p.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[p.role].badge, accent: grp.length ? COL.good : COL.progress, onTap: () => openContinuity(p.id) };
+          }),
+        },
+        {
           title: 'Nurse on call',
           lines: [{ text: `While the home is small and nobody needs much clinical care, a Registered Nurse on call covers the RN rule and adds cover. Afternoon: up to ${ON_CALL.maxResidents.afternoon} residents.`, color: COL.textMuted }],
           columns: 1,
@@ -695,6 +706,37 @@ function openRoster() {
     };
   });
 }
+// Milestone 13: pin a team member to a small group of residents (tap to add / remove; up to CONTINUITY.maxResidents).
+function openContinuity(staffId) {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    const q = w?.byId(staffId);
+    if (!q) return { title: '', sections: [] };
+    const grp = w.continuityOf(staffId);
+    const rows = w.residents.filter((r) => !r.state.leaving && !r.state.guest).map((r) => {
+      const on = grp.includes(r.id);
+      return { id: `pin:${r.id}`, label: `${on ? '✓ ' : ''}${r.name}`, sub: `${r.def.support} · familiarity ${Math.round(familiarityOfCare(w, r.id, staffId))}`, icon: r.art, iconCrop: PORTRAIT_CROP, selected: on, accent: on ? COL.good : COL.progress, onTap: () => {
+        const res = w.toggleContinuity(staffId, r.id);
+        message = res.ok ? null : res.reason;
+        if (res.ok) autosave.request('roster');
+      } };
+    });
+    return {
+      title: `${first(q.name)}'s residents`,
+      subtitle: `Continuity group · ${grp.length} of ${CONTINUITY.maxResidents}`,
+      art: q.art,
+      badge: ROLES[q.role].badge,
+      accent: accentNow(),
+      sections: [
+        { lines: [...(message ? [{ text: message, color: COL.bad }] : []), { text: 'Tap a resident to add or remove them. When on shift, they are preferred for these residents; nobody is held back when they are off.', color: COL.textMuted }] },
+        { columns: 1, buttons: rows },
+        { columns: 1, buttons: [{ id: 'group:back', label: '‹ Back to the roster', accent: COL.progress, onTap: () => openRoster() }] },
+      ],
+    };
+  });
+}
+const familiarityOfCare = (w, residentId, staffId) => w.topStaffFor(residentId, 99).find((r) => r.staff === staffId)?.familiarity ?? 0;
 // Develop / Quality: what will live there.
 // --- Develop and Build Mode (Milestone 10) -----------------------------------------------------------------------------
 const stageOf = (n) => STAGES[n - 1];
@@ -1247,12 +1289,13 @@ function residentSections(w, it) {
   const they = theirOf(it.id) === 'her' ? 'she' : 'he';
   const room = st.room ? `Room ${w.roomNumber(st.room)}` : 'No room (test home)';
   return [
-    { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `${room} · Support Level ${supportLevel(it.def)}`, { text: stayLine(w, it), color: st.stay ? COL.actionDark : COL.textMuted }] },
+    { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `${room} · Support Level ${supportLevel(it.def)}`, `${WAKE.windows[wakeWindowOf(it.def)].name} · gets up at ${clockText(st.wakeAt ?? 7)}`, { text: stayLine(w, it), color: st.stay ? COL.actionDark : COL.textMuted }] },
     { title: 'Life story', lines: [it.def.story, { text: (st.tags?.length ? st.tags : it.def.tags).join(' · '), color: COL.actionDark }, ...(st.returning ? [{ text: 'Returning: stayed here before', color: COL.good }] : [])] },
     planSection(w, it),
     { title: 'Tasks today', lines: taskLines(w, it) },
     { title: 'Call bells', lines: bellLines(w, it, they) },
     familiarSection(w, it),
+    friendsSection(w, it),
     { title: 'Needs', lines: [{ text: `How much support ${they} needs right now`, color: COL.textMuted }], bars: NEEDS.map((n) => ({ label: n.name, value: st.needs[n.id], color: COL.progress })) },
     { title: 'Outcomes', bars: OUTCOMES.map((o) => ({ label: o.name, value: st.outcomes[o.id], color: COL.good })) },
     { title: 'Today', lines: log.length ? log : ['Nothing yet today'] },
@@ -1311,14 +1354,41 @@ function bellLines(w, it, they) {
 }
 // Milestone 12: the three staff on the team who know them best (a Familiar Care record each: familiarity 0–100, tasks
 // together, when they first met), with a small bar each.
+// Milestone 13: a small heart drawn in code beside the favourite staff member's line.
+function heartGlyph(ctx, x, y, size) {
+  const s = size * 0.9;
+  const cx = x + s / 2;
+  const top = y + s * 0.3;
+  ctx.fillStyle = COL.bad;
+  ctx.beginPath();
+  ctx.moveTo(cx, y + s * 0.95);
+  ctx.bezierCurveTo(x - s * 0.1, y + s * 0.55, x + s * 0.05, y, cx, top);
+  ctx.bezierCurveTo(x + s * 0.95, y, x + s * 1.1, y + s * 0.55, cx, y + s * 0.95);
+  ctx.fill();
+}
 function familiarSection(w, it) {
   const top = w.topStaffFor(it.id, 3);
   const lines = top.length ? [] : [{ text: 'Nobody knows them well yet: familiarity builds with every task done together.', color: COL.textMuted }];
+  // Milestone 13: the favourite (most familiar, at least FAVOURITE.at) with a heart; their usual carers (continuity)
+  const fav = w.favouriteOf(it.id);
+  if (fav) lines.push({ text: `Favourite: ${w.byId(fav)?.name ?? fav}`, color: COL.actionDark, glyph: heartGlyph });
+  const usual = w.usualCarers(it.id);
+  lines.push({ text: usual.length ? `Usual carers: ${usual.map((id) => first(w.byId(id)?.name ?? id)).join(', ')}` : 'Usual carers: none yet (pin a continuity group on the roster)', color: usual.length ? COL.text : COL.textMuted });
   if (top.length) {
     lines.push({ text: `Most familiar: ${w.byId(top[0].staff)?.name ?? top[0].staff}`, color: COL.actionDark });
     lines.push({ text: `Tasks together: ${top.map((r) => `${first(w.byId(r.staff)?.name ?? r.staff)} ${r.tasks}${r.firstDay != null ? ` (since day ${r.firstDay + 1})` : ''}`).join(' · ')}`, color: COL.textMuted });
   }
   return { title: 'Familiar Care', lines, bars: top.map((r) => ({ label: w.byId(r.staff)?.name ?? r.staff, value: Math.round(r.familiarity), max: 100, color: COL.good })) };
+}
+// Milestone 13: their three best friends here (friendship 0–100), a bar each; friends (≥ FRIENDSHIP.friendAt) are named.
+function friendsSection(w, it) {
+  const top = w.friendsOf(it.id, 3);
+  const name = (id) => w.residentById(id)?.name ?? id;
+  const friends = top.filter((r) => r.friendship >= FRIENDSHIP.friendAt);
+  const lines = top.length
+    ? [{ text: friends.length ? `Friends: ${friends.map((r) => first(name(r.other))).join(', ')}` : 'Getting to know the others at meals and activities', color: friends.length ? COL.actionDark : COL.textMuted }]
+    : [{ text: 'No friendships yet: they grow at shared meals, activities and neighbouring seats.', color: COL.textMuted }];
+  return { title: 'Friends', lines, bars: top.map((r) => ({ label: name(r.other), value: Math.round(r.friendship), max: 100, color: COL.gold })) };
 }
 // "Mobility for Betty" (Milestone 8: all eight options): each row says whether it can be chosen (greyed with the
 // reason when not), the current one and their like / dislike / refusal. Tap a row to see it; Choose to take it.
@@ -1469,6 +1539,8 @@ function staffMenu(w, p, accent) {
     { title: m.traits.length > 1 ? 'Traits' : 'Trait', lines: m.traits.length ? traitLines(m.traits) : ['None'] },
   ];
   if (!agency) {
+    const grp = w.continuityOf(p.id);
+    sections.push({ title: 'Continuity group', lines: [{ text: grp.length ? `${first(p.name)}'s residents: ${grp.map((id) => first(w.residentById(id)?.name ?? id)).join(', ')}` : 'No residents pinned: they help whoever needs it most', color: grp.length ? COL.actionDark : COL.textMuted }], columns: 1, buttons: [{ id: `group:${p.id}`, label: grp.length ? 'Change their residents' : 'Pin residents to them', sub: `Up to ${CONTINUITY.maxResidents}: they are preferred for these residents when on shift`, accent: COL.progress, onTap: () => openContinuity(p.id) }] });
     const famLines = fam.length
       ? [...fam.filter((r) => w.mostFamiliar(r.resident) === p.id).map((r) => ({ text: `${first(w.residentById(r.resident)?.name ?? r.resident)}'s most familiar staff member`, color: COL.actionDark })), { text: `Tasks together: ${fam.map((r) => `${first(w.residentById(r.resident)?.name ?? r.resident)} ${r.tasks}`).join(' · ')}`, color: COL.textMuted }]
       : [{ text: 'Not familiar with anyone yet: it builds with every task done together.', color: COL.textMuted }];
@@ -1520,6 +1592,13 @@ function openHomeSheet(id, from = null) {
       sub = who ? `Room ${n} · ${who.name}'s room` : `Room ${n} · Empty`;
       lines.unshift(who ? `Resident: ${who.name} (${who.def.support})` : 'Empty: ready for a new resident. Admit one from Care → Admissions.');
       if (!who) sections.push({ columns: 1, buttons: [{ id: 'room:admissions', label: 'Admissions', sub: `${w.admissions.board.length} applying`, icon: CARE_ICONS.admissions, accent: COL.action, onTap: () => openAdmissions() }] });
+    }
+    if (it.defId === 'F05') {
+      // Milestone 13: the activity groups (regulars: they prefer it, or have joined it often)
+      for (const g of ACTIVITY_GROUPS) {
+        const members = w.activityGroup(g.id).map((id) => first(w.residentById(id)?.name ?? id));
+        lines.push({ text: members.length ? `${g.name}: ${members.join(', ')}` : `${g.name}: no regulars yet`, color: members.length ? COL.actionDark : COL.textMuted });
+      }
     }
     if (it.defId === 'F09') sections.push({ columns: 1, buttons: [{ id: 'place:recruit', label: 'Recruit', sub: `${w.staffing.board.length} candidates · Staff ${w.team.length} / ${w.staffing.cap}`, accent: COL.action, onTap: () => openRecruit() }] });
     if (it.defId === 'F11') {
@@ -1613,7 +1692,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

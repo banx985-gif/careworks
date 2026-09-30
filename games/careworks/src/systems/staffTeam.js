@@ -58,6 +58,7 @@ export function newStaffState(founderId) {
     roster: newRosterState(staff), // Milestone 7: three shifts (data/shifts.js DEFAULT_ROSTER), wings, floats, on call
     coverage: newCoverageState(), // Milestone 7: shift records, the coverage log, the unsafe-shift counter
     assignments: {}, // routine step id → staff id (none = automatic)
+    continuity: {}, // Milestone 13: staff id → [resident ids] (their continuity group, bible §14)
     noCandidates: [founder], // bible §3.5.4: the Founder never appears again as a candidate
     pos: {}, // staff id → { x, y } where they were (a reload puts them back)
     bandDone: {}, // Milestone 4: staff id → tasks finished this band (the task AI's workload)
@@ -75,6 +76,7 @@ export function ensureStaffState(saved, founderId) {
     roster: ensureRosterState(saved.roster, saved.staff.map((m) => m.id)), // Milestones 3–6: everyone stays on Morning
     coverage: ensureCoverageState(saved.coverage),
     assignments: { ...(saved.assignments ?? {}) },
+    continuity: Object.fromEntries(Object.entries(saved.continuity ?? {}).map(([k, v]) => [k, [...v]])), // (an M12 save: none)
     noCandidates: [...new Set([...(saved.noCandidates ?? []), fresh.founder.id])],
     pos: { ...(saved.pos ?? {}) },
     bandDone: { ...(saved.bandDone ?? {}) },

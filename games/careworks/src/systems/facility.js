@@ -226,6 +226,7 @@ export const SAVE_MIGRATIONS = {
   9: (record) => record, // (Milestone 10: no layout saved = the default layout, Stage 1 — exactly what it had)
   10: (record) => record, // (Milestone 11: no staffing saved = a fresh board; the bigger floor needs nothing)
   11: (record) => ({ ...record, data: upgradeV11(record.data) }),
+  12: (record) => record, // (Milestone 13: no friendships / pins saved = none; wake times and seats come from each resident)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

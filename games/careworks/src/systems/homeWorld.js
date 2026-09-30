@@ -65,12 +65,12 @@ import { roomById } from '../../data/rooms.js';
 import { facilityById } from '../../data/facilities.js';
 import { residentById, NEEDS, supportLevel, RESIDENTS, STAY_LEAVE_HOUR } from '../../data/residents.js';
 import { Rng } from '../../../../core/Rng.js';
-import { DAY, ROUTINE } from '../../data/routine.js';
-import { BELL, FAMILIARITY } from '../../data/tasks.js';
+import { DAY, ROUTINE, WAKE } from '../../data/routine.js';
+import { BELL, FAMILIARITY, BACKUP_HELP } from '../../data/tasks.js';
 import { ECONOMY_START, STAFF_BALANCE, ON_CALL } from '../../data/balance.js';
 import { AGENCY } from '../../data/shifts.js';
-import { ensureResidentState, newResidentState, newStay, stayDaysLeft, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog } from './residentNeeds.js';
-import { ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar, topFamiliar, noteLeft, noteBack } from './careTasks.js';
+import { ensureResidentState, newResidentState, newStay, stayDaysLeft, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog, routineFor } from './residentNeeds.js';
+import { ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar, topFamiliar, noteLeft, noteBack, familiarityOf, fadeFamiliarity } from './careTasks.js';
 import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkPct } from './staffTeam.js';
 import { createRoster } from './roster.js';
 import { createCoverage } from './coverage.js';
@@ -85,6 +85,8 @@ import { SPECIALTIES, TRAINING } from '../../data/training.js';
 import { staffById } from '../../data/staff.js';
 import { RANK_NOW } from '../../data/recruitment.js';
 import { taskPct, matchesTask, familiarPct } from './traitEffects.js';
+import { compatibility, addFriendship, areFriends, topFriends, groupMembers, favouriteOf, familiarEffects, friendshipOf } from './relationships.js';
+import { FRIENDSHIP, CONTINUITY, ACTIVITY_GROUPS, SEATING } from '../../data/relationships.js';
 import { FOUNDER_FLAG } from '../../data/setup.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
@@ -172,20 +174,60 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const byResident = (id) => residents.find((p) => p.id === id) ?? null;
   // Milestone 10: a resident's seat follows their room number (room 1 → seat 1 …): four seats a Dining Room / Activity
   // Lounge, the next four at the next one built, and round again when there are more residents than seats.
+  // Milestone 13: residents remember their own seat (st.seats: { dining, lounge }); a new one takes the seat after their
+  // room number if it is free, else the first free one, and friends move next to each other overnight (reseatFriends).
   const PLACE_DEF = { dining: 'F03', lounge: 'F05' };
-  const seatOf = (p) => Math.max(0, layout.roomNumber(p.state.room) - 1);
+  const SEAT_PLACES = ['dining', 'lounge'];
+  const seatOf = (p, place = 'dining') => p.state.seats?.[place] ?? Math.max(0, layout.roomNumber(p.state.room) - 1);
+  const seatCount = (place) => Math.max(1, layout.ofDef(PLACE_DEF[place]).length) * SEATING.perRoom;
   const seatPiece = (p, place) => {
     const list = layout.ofDef(PLACE_DEF[place]);
     if (!list.length) return null;
-    return list[Math.floor(seatOf(p) / 4) % list.length];
+    return list[Math.floor(seatOf(p, place) / SEATING.perRoom) % list.length];
   };
   // Where a resident goes for a place: their room's inside spot, or their seat at the Dining Room / lounge.
   const placeRef = (p, place) => {
     if (place === 'room') return `${p.state.room}.inside`;
     const pc = seatPiece(p, place);
     const seats = facilityById(PLACE_DEF[place]).seats;
-    return `${pc?.id ?? PLACE_DEF[place]}.${seats[seatOf(p) % seats.length]}`;
+    return `${pc?.id ?? PLACE_DEF[place]}.${seats[seatOf(p, place) % seats.length]}`;
   };
+  const seated = () => residents.filter((q) => !q.state.leaving && !q.state.guest);
+  const seatsTaken = (place, except = null) => new Set(seated().filter((q) => q !== except && q.state.seats).map((q) => q.state.seats[place] % seatCount(place)));
+  // Give someone their seats (a new resident, or anyone in an older save): the one after their room number if free.
+  function assignSeats(p) {
+    if (p.state.seats) return;
+    const seats = {};
+    for (const place of SEAT_PLACES) {
+      const taken = seatsTaken(place, p);
+      const n = seatCount(place);
+      const want = Math.max(0, layout.roomNumber(p.state.room) - 1);
+      let pick = want < n && !taken.has(want) ? want : -1;
+      for (let i = 0; pick < 0 && i < n; i++) if (!taken.has(i)) pick = i;
+      seats[place] = pick < 0 ? want : pick; // (more residents than seats: they share, as before)
+    }
+    p.state.seats = seats;
+  }
+  const sideBySide = (i, j) => Math.floor(i / SEATING.perRoom) === Math.floor(j / SEATING.perRoom) && Math.abs(i - j) === 1;
+  // Overnight: someone whose best friend sits away from them moves to a free seat beside that friend.
+  function reseatFriends() {
+    for (const p of seated()) {
+      const best = topFriends(care, p.id, seated().map((q) => q.id), 1)[0];
+      if (!best || best.friendship < FRIENDSHIP.friendAt) continue;
+      const f = byResident(best.other);
+      for (const place of SEAT_PLACES) {
+        const n = seatCount(place);
+        const mine = seatOf(p, place) % n;
+        const theirs = seatOf(f, place) % n;
+        if (sideBySide(mine, theirs)) continue;
+        const taken = seatsTaken(place, p);
+        const free = [theirs - 1, theirs + 1].find((i) => i >= 0 && i < n && sideBySide(i, theirs) && !taken.has(i));
+        if (free == null) continue;
+        p.state.seats[place] = free;
+        log(p, `Sits beside ${first(f.name)} at the ${place === 'dining' ? 'Dining Room' : 'lounge'} now`);
+      }
+    }
+  }
   const placeTile = (p, place) => spot(placeRef(p, place));
   function addResident(st, { atEntrance = false } = {}) {
     const def = residentById(st.id);
@@ -202,6 +244,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       p.agent.placeAtTile(grid, t.col, t.row);
     }
     residents.push(p);
+    if (!st.guest) assignSeats(p); // (Milestone 13: their own seats, remembered)
     return p;
   }
   // Milestone 6+: the saved list as it is (Milestone 9: it may be empty — everyone went home). Milestones 1–5 saved
@@ -238,8 +281,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const assignSys = new AssignmentSystem({ staff: sys, getJobs: () => care.tasks.filter((t) => t.status === 'claimed' || t.status === 'working') });
   const absNow = () => absHour(clock.totalDays, hourNow());
   const now = () => clockText(hourNow());
-  const logDay = () => routineAt(hourNow(), clock.totalDays).day;
-  const log = (p, text) => addLog(p.state, logDay(), now(), text);
+  // (Milestone 13: each resident's routine day starts at their own wake-up)
+  const logDay = (st = null) => routineAt(hourNow(), clock.totalDays, routineFor(st)).day;
+  const log = (p, text) => addLog(p.state, logDay(p.state), now(), text);
   const rolesOnShift = (bandId) => new Set(crew.people.filter((q) => roster.coversBand(q.id, bandId)).map((q) => q.role));
   const stepIndex = (id) => ROUTINE.findIndex((s) => s.id === id);
   const joined = (p) => p.state.joinAt == null || absNow() >= p.state.joinAt;
@@ -303,8 +347,18 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const wing = roster.wingOf(staffId);
     return care.keyWorkers[p.id] === staffId || (!!wing && wing === roster.wingOfRoom(p.state.room));
   };
+  // Milestone 13: continuity groups — staff id → the residents they are pinned to (bible §14).
+  const groupOf = (staffId) => staffState.continuity?.[staffId] ?? [];
+  const inGroup = (staffId, residentId) => groupOf(staffId).includes(residentId);
+  // Milestone 13: a back-up helper (a nurse on a wake-up) only while no task that only their role can do is waiting or
+  // about to open (the medicine round comes first).
+  const ownWorkWaiting = (role) => {
+    const soon = absNow() + BACKUP_HELP.ownWorkHours;
+    return care.tasks.some((x) => x.status === 'open' && x.roles.length === 1 && x.roles[0] === role && x.opens <= soon && x.due > absNow() && byResident(x.resident));
+  };
   function scoreFor(t, q) {
     if (!t.roles.includes(q.role)) return null; // (scorePair says so too; this skips the path search)
+    if (t.roleFrom?.[q.role] != null && ownWorkWaiting(q.role)) return null;
     const pin = pinOf(t);
     if (pin && pin !== q.id) return null;
     if (!pin && t.type !== 'bell' && crew.tooTired(q)) return null;
@@ -318,8 +372,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       keyWorker: assigned ? q.id : care.keyWorkers[t.resident] ?? null,
       mostFamiliar: mostFamiliar(care, t.resident, crew.people.map((x) => x.id)),
       doneThisBand: q.bandDone ?? 0,
+      now: absNow(),
       // Milestone 11: a specialty fits the task; Milestone 12: or a trait that seeks this kind of task ('match')
       specialty: (staffing?.specialtiesOf(q.id) ?? []).some((sp) => SPECIALTIES[sp]?.tasks.includes(t.type)) || matchesTask(q.model.traits, t.type),
+      continuity: inGroup(q.id, t.resident), // Milestone 13: their continuity group (bible §14)
     });
   }
   function claim(t, q) {
@@ -360,6 +416,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function completeTask(t, q) {
     const helper = q.id;
     const p = byResident(t.resident);
+    // Milestone 13: someone they know well lifts their Mood a little (never an agency worker: they build no Familiar Care)
+    const fx = familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, helper));
+    if (p && fx.mood) p.state.outcomes.mood = clamp(p.state.outcomes.mood + fx.mood);
     if (p) {
       if (t.source === 'routine') completeRoutine(p, { ...routineStep(t.stepId), drops: t.drops, taskType: t.type }, t.day, helper);
       else {
@@ -393,8 +452,32 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       st.step.status = 'doing';
       st.step.dropped = dropped;
       st.step.helper = helper;
+      together(p, step, day);
     }
     bus?.emit('care:step', { resident: st.id, step: step.id, status: 'done', helper });
+  }
+  // Milestone 13 (bible §20): residents at the same meal (the same Dining Room) or the same activity grow their
+  // friendship — more when they share tags / get on, sit side by side, or are both regulars of the activity's group.
+  // Friends lift each other's Social Connection a little whenever they are together.
+  function together(p, step, day) {
+    if (step.place !== 'dining' && step.place !== 'lounge') return;
+    const st = p.state;
+    const kind = step.activity ? 'activity' : 'meal';
+    if (step.activity) st.activityCounts = { ...(st.activityCounts ?? {}), [step.id]: (st.activityCounts?.[step.id] ?? 0) + 1 };
+    const group = ACTIVITY_GROUPS.find((g) => g.stepId === step.id);
+    const regulars = group ? new Set(groupMembers(group, seated())) : null;
+    const piece = seatPiece(p, step.place);
+    for (const q of residents) {
+      if (q === p || q.state.guest || q.state.leaving || !isCurrent(q, step, day) || q.state.step.status !== 'doing') continue;
+      if (seatPiece(q, step.place) !== piece) continue; // (a different Dining Room / lounge)
+      let gain = FRIENDSHIP.gain[kind];
+      if (sideBySide(seatOf(p, step.place) % seatCount(step.place), seatOf(q, step.place) % seatCount(step.place))) gain += FRIENDSHIP.neighbour;
+      if (regulars?.has(p.id) && regulars.has(q.id)) gain += FRIENDSHIP.groupBonus;
+      addFriendship(care, p.id, q.id, gain * compatibility(p.def, st.tags, q.def, q.state.tags), { day, kind });
+      if (areFriends(care, p.id, q.id)) {
+        for (const x of [p, q]) for (const [o, v] of Object.entries(FRIENDSHIP.together)) x.state.outcomes[o] = clamp(x.state.outcomes[o] + v);
+      }
+    }
   }
   // Help can come if the step has a task that someone on shift now could take (or someone is already on it).
   const helpCanCome = (t) => !!t && isOpen(t) && (t.status !== 'open' || crew.people.some((q) => t.roles.includes(q.role) && roster.onShift(q.id)));
@@ -439,6 +522,18 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (t && isOpen(t)) finish(t, 'self');
     if (s.arthurThere && step) completeRoutine(p, step, s.day, null, p.id === ARTHUR ? 'on his own' : 'on their own');
   }
+  // Milestone 13 (fix first): someone waiting to be got up stays in bed until a helper comes — while anyone on shift
+  // could help — and the next step (breakfast) waits for them, until WAKE.waitForHelpUntil.
+  function waitsInBed(p) {
+    const s = p.state.step;
+    if (!s || s.id !== 'wake' || s.status === 'doing' || s.status === 'missed' || hourNow() >= WAKE.waitForHelpUntil) return false;
+    const t = routineTask(p, 'wake', s.day);
+    return !!t && isOpen(t) && (t.status !== 'open' || crew.people.some((q) => t.roles.includes(q.role) && roster.onShift(q.id)));
+  }
+  // Milestone 13: how often they are offered something they dislike, and how often they say no (the continuity check).
+  const countDislike = (st, refused) => {
+    st.dislikes = { offered: (st.dislikes?.offered ?? 0) + 1, refused: (st.dislikes?.refused ?? 0) + (refused ? 1 : 0) };
+  };
   function startStep(p, step, day) {
     const st = p.state;
     closePrevious(p);
@@ -453,7 +548,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       bus?.emit('care:step', { resident: st.id, step: step.id, status: 'scaled' });
       return;
     }
-    const answer = decide(st, step, day, seed);
+    // Milestone 13: a disliked step offered by someone they know well is refused less often (never a refused one)
+    // (who offers it: the helper already on it or pinned to it; else their usual carer who can help with it and works
+    // today — the one who knows them best; else the person who knows them best among those on shift who could help)
+    const canHelp = (q) => !q.agency && !q.leftTeam && (t?.roles ?? step.roles).includes(q.role);
+    const usual = crew.people.filter((q) => canHelp(q) && inGroup(q.id, p.id) && roster.shiftOf(q.id)).map((q) => q.id);
+    const eligible = crew.people.filter((q) => canHelp(q) && roster.onShift(q.id)).map((q) => q.id);
+    const offeredBy = t?.slots[0] ?? staffState.assignments[pinKey(p.id, step.id)] ?? mostFamiliar(care, p.id, usual) ?? mostFamiliar(care, p.id, eligible);
+    const offerer = offeredBy && crew.byId(offeredBy);
+    const answer = decide(st, step, day, seed, offerer && !offerer.agency ? familiarEffects(familiarityOf(care, p.id, offeredBy)).dislikeMult : 1);
+    if (st.prefs?.[step.id] === 'dislike') countDislike(st, answer === 'refuse');
     if (answer === 'refuse') {
       st.step = { id: step.id, day, status: 'refused', helper: null };
       if (t && isOpen(t)) finish(t, 'refused'); // a refused task ends here: logged, never retried this band
@@ -490,6 +594,17 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     crew.resumeTask(q.id, taskInfo(t), t.spot ?? spotFor(t, q.id), !!t.arrived);
   }
   assignSys.refresh();
+  // Milestone 13: someone saved mid-walk carries on along the path they were on (re-planning from the tile they stand
+  // on could send them back to its centre first, so a reload would drift from the run it came from).
+  const resumePath = (agent, saved) => {
+    const path = saved?.path;
+    if (agent.state !== 'walking' || !path?.length || !agent.path.length) return;
+    const a = path[path.length - 1];
+    const b = agent.path[agent.path.length - 1];
+    if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5) agent.path = path.map((pt) => ({ x: pt.x, y: pt.y }));
+  };
+  for (const p of residents) resumePath(p.agent, p.state.pos);
+  for (const q of crew.people) resumePath(q.agent, staffState.pos?.[q.id]);
 
   // Milestone 8: a task from an option they refuse is refused the moment it comes up — logged on their card.
   function logRefused(p, tasks) {
@@ -555,14 +670,17 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           log(p, `Call bell answered by ${helperName(q.id)} (${minutes} min)`);
           bus?.emit('care:bell', { resident: p.id, status: 'answered', staff: q.id, minutes });
         }
-        if (decideTask(p.state, t, seed) === 'refuse') {
+        const refused = decideTask(p.state, t, seed, familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, q.id)).dislikeMult) === 'refuse';
+        if ((t.pref && p.state.prefs?.[t.pref] === 'dislike') || (t.optionId && p.state.optionPrefs?.[t.optionId] === 'dislike')) countDislike(p.state, refused);
+        if (refused) {
           finish(t, 'refused'); // they said no: it ends cleanly and is not tried again this band
           log(p, `Said no to ${label(t)}`);
           continue;
         }
         t.status = 'working';
       }
-      t.workLeft -= hours;
+      // Milestone 13: a familiar helper works a little faster (communication / routine efficiency, bible §6)
+      t.workLeft -= hours * (1 + familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, q.id)).speedUp);
       if (t.workLeft <= 1e-9) completeTask(t, q);
     }
     // free staff pick their next task (bible §15 order: src/systems/careTasks.js scorePair)
@@ -595,7 +713,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     st.leftDay = clock.totalDays;
     admissions.wentHome({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: st.admittedDay ?? 0, leftDay: clock.totalDays, stay: st.stay?.type ?? p.def.stay });
     noteLeft(care, { residentId: p.id }, clock.totalDays); // (Milestone 12: their Familiar Care records stay, marked)
-    addLog(st, logDay(), now(), 'Heading home: the stay is over');
+    // Milestone 13: their friends here miss them (a small, one-off Mood dip that drifts back)
+    for (const q of seated()) {
+      if (q === p || !areFriends(care, p.id, q.id)) continue;
+      q.state.outcomes.mood = clamp(q.state.outcomes.mood + FRIENDSHIP.friendLeftMood);
+      log(q, `Misses ${first(p.name)}, who has gone home`);
+    }
+    addLog(st, logDay(st), now(), 'Heading home: the stay is over');
     bus?.emit('care:leaving', { resident: p.id, name: p.name, stay: st.stay?.type ?? p.def.stay });
     walkOut(p);
   }
@@ -690,6 +814,14 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   };
   tickAdmissions(clock.totalDays); // a new home (or an older save) gets its first board
   // A new day: the day's beat, the Founder's days, the board; a new month: the ledger's close for the month just ended.
+  // Milestone 13: each resident's favourite staff member (store only: later secrets and family events read it).
+  function updateFavourites(day) {
+    const ids = team().map((q) => q.id);
+    for (const p of seated()) {
+      const fav = favouriteOf(care, p.id, ids);
+      if ((p.state.favourite?.staff ?? null) !== fav) p.state.favourite = fav ? { staff: fav, since: day } : null;
+    }
+  }
   function newDay(day) {
     // Milestone 9: the opening resident's countdown pauses for each day he spent as the only resident
     for (const p of residents) {
@@ -698,6 +830,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       p.state.stay.paused = (p.state.stay.paused ?? 0) + 1;
     }
     staffState.founder.history.daysEmployed += 1;
+    fadeFamiliarity(care, day - 1, seated().map((p) => p.id), team().map((q) => q.id)); // Milestone 13: regular contact matters
+    reseatFriends(); // Milestone 13: friends sit together when seats allow
+    updateFavourites(day);
     bus?.emit('care:dayEnd', world.daySummary(day - 1));
     if (shortStaffing) coverage.dayEnd(day - 1); // care recovery for yesterday's missed essential tasks (Milestone 7)
     noteMissed(day - 1); // Milestone 8: the missed-essential streak (plan review)
@@ -818,6 +953,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       for (const t of care.tasks) if ((t.status === 'claimed' || t.status === 'working') && t.slots[0] === staffId) unclaim(t);
       for (const [k, v] of Object.entries(care.keyWorkers)) if (v === staffId) delete care.keyWorkers[k];
       for (const [k, v] of Object.entries(staffState.assignments)) if (v === staffId) delete staffState.assignments[k];
+      delete staffState.continuity?.[staffId]; // (Milestone 13: their continuity group ends)
       staffing.departed(q.model, clock.totalDays, founder);
       noteLeft(care, { staffId }, clock.totalDays); // (Milestone 12: their Familiar Care records stay, marked)
       roster.forget(staffId);
@@ -922,8 +1058,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           delete p.state.joinAt; // settled in: from this band they live the routine
           bus?.emit('care:joined', { resident: p.id });
         }
-        const r = routineAt(hourNow(), clock.totalDays);
-        if (!p.state.step || p.state.step.id !== r.step.id || p.state.step.day !== r.day) startStep(p, r.step, r.day);
+        const r = routineAt(hourNow(), clock.totalDays, routineFor(p.state));
+        if (!p.state.step || p.state.step.id !== r.step.id || p.state.step.day !== r.day) {
+          if (waitsInBed(p)) continue; // (Milestone 13: help is on the way — they stay in bed for it)
+          startStep(p, r.step, r.day);
+        }
       }
       tickTasks(hours);
       for (const p of residents) p.agent.update(g, grid);
@@ -947,7 +1086,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const step = routineStep(stepId);
       const p = byResident(residentId);
       if (!step || !p) return null;
-      const day = routineAt(hourNow(), clock.totalDays).day;
+      const day = routineAt(hourNow(), clock.totalDays, routineFor(p.state)).day;
       const t = routineTask(p, stepId, day);
       if (t && (t.status === 'claimed' || t.status === 'working' || t.status === 'done')) return t.slots[0];
       const probe = t ?? { id: 'probe', source: 'routine', stepId, type: 'meal', urgency: 3, roles: step.roles, place: 'step', opens: 0, resident: p.id };
@@ -1029,6 +1168,37 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     bellSummary: (residentId = ARTHUR) => bellSummary(care, residentId),
     mostFamiliar: (residentId = ARTHUR) => mostFamiliar(care, residentId, crew.people.map((q) => q.id)),
+    // --- Milestone 13 ------------------------------------------------------------------------------------------
+    // Continuity groups (bible §14): pin a team member to up to CONTINUITY.maxResidents residents.
+    continuityOf: (staffId) => groupOf(staffId).filter((id) => byResident(id)),
+    setContinuity(staffId, residentIds) {
+      const q = crew.byId(staffId);
+      if (!q || q.agency || q.leftTeam) return { ok: false, reason: 'Only a team member can have a continuity group.' };
+      const ids = [...new Set(residentIds)].filter((id) => byResident(id));
+      if (ids.length > CONTINUITY.maxResidents) return { ok: false, reason: `A group holds up to ${CONTINUITY.maxResidents} residents.` };
+      staffState.continuity ??= {};
+      if (ids.length) staffState.continuity[staffId] = ids;
+      else delete staffState.continuity[staffId];
+      return { ok: true, reason: null };
+    },
+    toggleContinuity(staffId, residentId) {
+      const cur = groupOf(staffId).filter((id) => byResident(id));
+      return world.setContinuity(staffId, cur.includes(residentId) ? cur.filter((x) => x !== residentId) : [...cur, residentId]);
+    },
+    // "Usual carers": the team members whose group includes them.
+    usualCarers: (residentId) => team().filter((q) => inGroup(q.id, residentId)).map((q) => q.id),
+    // Friendships (bible §20): their top friends here, a pair's value; the activity groups; favourite staff.
+    friendsOf: (residentId, n = 3) => topFriends(care, residentId, seated().map((q) => q.id), n),
+    friendship: (a, b) => friendshipOf(care, a, b),
+    activityGroup: (groupId = 'cards') => {
+      const g = ACTIVITY_GROUPS.find((x) => x.id === groupId);
+      return g ? groupMembers(g, seated()) : [];
+    },
+    favouriteOf: (residentId) => {
+      const fav = byResident(residentId) ? favouriteOf(care, residentId, team().map((q) => q.id)) : null;
+      return fav;
+    },
+    seatOf: (residentId, place = 'dining') => (byResident(residentId) ? seatOf(byResident(residentId), place) : null),
     // Milestone 12: the resident card's three most familiar staff on the team, the staff card's three residents here
     topStaffFor: (residentId, n = 3) => topFamiliar(care, { residentId }, team().map((q) => q.id), n),
     topResidentsFor: (staffId, n = 3) => topFamiliar(care, { staffId }, residents.filter((p) => !p.state.guest).map((p) => p.id), n),
@@ -1161,13 +1331,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       world.people.splice(residents.length - 1, 0, p); // residents first, then the staff
       const t = placeTile(p, 'room');
       p.agent.walkTo(grid, t.col, t.row);
-      addLog(st, logDay(), now(), `Moved in to room ${layout.roomNumber(room.id)}`);
+      addLog(st, logDay(st), now(), `Moved in to room ${layout.roomNumber(room.id)}`);
       bus?.emit('care:admit', { resident: p.id, name: p.name, room: room.id });
       return { ok: true, reason: null, resident: p };
     },
     serialize() {
       for (const p of residents) {
-        p.state.pos = { x: p.agent.x, y: p.agent.y };
+        p.state.pos = { x: p.agent.x, y: p.agent.y, ...(p.agent.state === 'walking' && p.agent.path.length ? { path: p.agent.path.map((pt) => ({ x: pt.x, y: pt.y })) } : {}) }; // (Milestone 13: the path too)
         if (p.state.review) p.state.review.reasons = staleReasons(p.state, clock.totalDays).map((r) => r.text); // (Milestone 8)
       }
       for (const a of staffState.roster.agency) a.model = sys.get(a.id)?.toJSON() ?? null;

@@ -4,7 +4,8 @@
 //   ensureResidentState(saved, def)    an older / partial save filled in with the row's defaults (M1 saves had none)
 //   riseNeeds(st, hours, asleep)       needs rise over time (slower asleep)
 //   driftOutcomes(st, hours)           outcomes drift towards what the needs allow
-//   routineAt(hour, totalDays)         which routine step is on now, and for which routine day
+//   routineAt(hour, totalDays, steps?) which routine step is on now, and for which routine day (steps: routineFor(st))
+//   wakeWindowOf(def) · wakeAtFor(def) · routineFor(st)   Milestone 13: their own wake-up (and breakfast) time
 //   decide(st, step, day, seed)        'go' or 'refuse' — the same answer every time for that day (reloads never reroll)
 //   completeStep(st, step, clockText)  the step happened: its drops, the Mood / activity nudges, a log line
 //   refuseStep(st, step, clockText)    he said no: nothing dropped, a log line, the activity nudge if it was the activity
@@ -12,14 +13,39 @@
 import { Rng } from '../../../../core/Rng.js';
 import { NEEDS, OUTCOMES } from '../../data/residents.js';
 import { ensurePlan } from '../../data/carePlans.js';
-import { ROUTINE, BANDS, NEED_RISE, ASLEEP_RISE, OUTCOME_TARGETS, OUTCOME_PULL, PREF_RULES, ACTIVITY_DONE, ACTIVITY_REFUSED } from '../../data/routine.js';
+import { ROUTINE, BANDS, NEED_RISE, ASLEEP_RISE, OUTCOME_TARGETS, OUTCOME_PULL, PREF_RULES, ACTIVITY_DONE, ACTIVITY_REFUSED, WAKE } from '../../data/routine.js';
 
 const clamp = (x) => Math.max(0, Math.min(100, x));
 const LOG_KEEP = 30; // entries kept in the save (the card shows the last few)
 
+// --- Milestone 13: staggered wake-ups (data/routine.js WAKE) ---------------------------------------------------------
+export const wakeWindowOf = (def) => WAKE.byPersonality[def?.personality] ?? 'usual';
+// Their wake-up hour: fixed for the opening resident, else a quarter-hour slot inside their window, from their id.
+export function wakeAtFor(def) {
+  if (WAKE.fixed[def.id] != null) return WAKE.fixed[def.id];
+  const w = WAKE.windows[wakeWindowOf(def)];
+  const slots = Math.max(1, Math.round((w.to - w.from) / WAKE.slot));
+  return w.from + Math.floor(new Rng(`wake:${def.id}`).next() * slots) * WAKE.slot;
+}
+// Their day's steps: the routine with their own wake-up, and breakfast moved later for a late riser.
+const routines = new Map();
+export function routineFor(st) {
+  const wake = st?.wakeAt ?? ROUTINE[0].at;
+  if (!routines.has(wake)) {
+    const base = ROUTINE.find((x) => x.id === 'breakfast').at;
+    const breakfast = Math.min(WAKE.lateBreakfastUntil, Math.max(base, wake + WAKE.breakfastAfter));
+    routines.set(wake, ROUTINE.map((x) => (x.id === 'wake' ? { ...x, at: wake } : x.id === 'breakfast' ? { ...x, at: breakfast } : x)));
+  }
+  return routines.get(wake);
+}
+
 export function newResidentState(def, { room = null } = {}) {
   return {
     id: def.id,
+    wakeAt: wakeAtFor(def), // Milestone 13: their own wake-up time
+    seats: null, // Milestone 13: { dining, lounge } seat numbers (null: the one after their room number — src/systems/homeWorld.js)
+    activityCounts: {}, // Milestone 13: activity step id → sessions joined (activity groups)
+    favourite: null, // Milestone 13: { staff, since } — their favourite staff member (store only, for later milestones)
     needs: { ...def.needs },
     outcomes: { ...def.outcomes },
     prefs: { ...def.prefs },
@@ -49,6 +75,10 @@ export function ensureResidentState(saved, def, { room = null } = {}) {
   out.plan = ensurePlan(saved.plan, fresh.plan); // an M1–M3 save has none: the defaults from data
   out.tags = Array.isArray(saved.tags) ? [...saved.tags] : fresh.tags; // (Milestone 9; an older save: from data)
   out.stay = saved.stay ?? null; // an older save's residents keep staying (no timer)
+  out.wakeAt = saved.wakeAt ?? fresh.wakeAt; // (Milestone 13; an older save: from their personality)
+  out.seats = saved.seats ? { ...saved.seats } : null;
+  out.activityCounts = { ...(saved.activityCounts ?? {}) };
+  out.favourite = saved.favourite ?? null;
   out.room = saved.room ?? room;
   out.log = Array.isArray(saved.log) ? saved.log : [];
   return out;
@@ -78,11 +108,11 @@ export function driftOutcomes(st, hours) {
 
 // The step on at this hour. Before the first step of the morning it is still last night's final step (settle), so a
 // routine day runs from wake-up to wake-up.
-export function routineAt(hour, totalDays) {
+export function routineAt(hour, totalDays, steps = ROUTINE) {
   let i = -1;
-  for (let k = 0; k < ROUTINE.length; k++) if (hour >= ROUTINE[k].at) i = k;
-  if (i < 0) return { step: ROUTINE[ROUTINE.length - 1], day: totalDays - 1 };
-  return { step: ROUTINE[i], day: totalDays };
+  for (let k = 0; k < steps.length; k++) if (hour >= steps[k].at) i = k;
+  if (i < 0) return { step: steps[steps.length - 1], day: totalDays - 1 };
+  return { step: steps[i], day: totalDays };
 }
 
 export function bandAt(hour) {
@@ -96,9 +126,12 @@ export const clockText = (hour) => {
 
 export const prefOf = (st, stepId) => st.prefs[stepId] ?? 'accept';
 
-export function decide(st, step, day, seed = 'careworks') {
+// dislikeMult (Milestone 13): a highly familiar helper makes a *disliked* step less likely to be refused. A refused step
+// (chance 1) is never changed, and the roll is the same one (a reload never rerolls).
+export function decide(st, step, day, seed = 'careworks', dislikeMult = 1) {
   if (!step.optional) return 'go'; // waking and settling always happen
-  const chance = PREF_RULES[prefOf(st, step.id)].refuseChance;
+  const pref = prefOf(st, step.id);
+  const chance = PREF_RULES[pref].refuseChance * (pref === 'dislike' ? dislikeMult : 1);
   if (chance >= 1) return 'refuse';
   if (chance <= 0) return 'go';
   return new Rng(`${seed}:${st.id}:${day}:${step.id}`).next() < chance ? 'refuse' : 'go';

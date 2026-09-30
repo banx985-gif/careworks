@@ -55,12 +55,32 @@ export const NEED_TASKS = {
 // Response time (ring → someone at his side) is kept for the last `keep` bells; the card shows the last `shown`.
 export const BELL = { line: 85, drop: 30, minutes: 10, roles: ['RN', 'CW', 'LC', 'AH', 'HN'], cooldownHours: 1.5, keep: 20, shown: 5 };
 
-// Familiar Care (bible §6, first pass): a counter per resident–staff pair, up by perTask for each task they complete
-// together, capped. No effect on Mood yet (Milestone 13).
-export const FAMILIARITY = { perTask: 1, cap: 100 };
+// Familiar Care (bible §6): a counter per resident–staff pair, up by perTask for each task they complete together,
+// capped. Milestone 13 (bible §2.4: trust grows with the staff they *regularly* see): each day a pair who are both here
+// but did not work together loses fadePerDay (never below 0; not while either of them is away). Its effects are in
+// data/relationships.js FAMILIAR_EFFECTS.
+export const FAMILIARITY = { perTask: 1, cap: 100, fadePerDay: 2 };
 
 // Staff AI scoring (bible §15, in order): urgency / safety → is the resident assigned to me → role (a hard rule: a role
 // that doesn't fit never scores) → Familiar Care → distance → workload. Each weight dwarfs the ones after it, except
 // Familiar Care, which is a small bonus worth `familiar` tiles of walking to the single most familiar person (never on
 // a safety task: a bell goes to the nearest). workload: per task already done this band, and per point of Energy used.
-export const SCORING = { urgency: 1000, assigned: 100, familiar: 6, perTile: 1, perTaskDone: 0.5, perEnergyUsed: 0.01 };
+// Milestone 13 (fix first): a Registered Nurse free on the Morning shift may also help with wake-ups and morning
+// personal care, at a score penalty (worth that many tiles of walking), so a free Care Worker is still preferred.
+// They are the back-up: a nurse may take it only afterHours after the step's own time (a wake-up: after the resident
+// wakes; any other task: after it opens), so a carer who is nearly free gets it first, and a nurse never sets off early
+// and waits at a room while the medicine round is due.
+// And only while no task that needs their own role is waiting or due to open within ownWorkHours (the medicine round
+// comes first). Hospitality & Nutrition staff are never added: they are serving breakfast.
+export const BACKUP_HELP = { ownWorkHours: 1 };
+export const ALSO_HELP = [
+  { types: ['wake'], bands: ['morning'], roles: ['RN'], penalty: 40, afterHours: 0.5 },
+  { types: ['personal'], bands: ['morning'], roles: ['RN'], penalty: 40, afterHours: 0.5 },
+];
+// Milestone 13: continuity — the resident is in their continuity group (bible §14; data/relationships.js CONTINUITY):
+// worth 12 tiles of walking, so it tips a close choice without sending someone across the home.
+export const SCORING = { urgency: 1000, assigned: 100, continuity: 12, familiar: 6, perTile: 1, perTaskDone: 0.5, perEnergyUsed: 0.01 };
+// Milestone 13 (fix first): among tasks of the same urgency, getting someone up comes first — a resident waiting in bed
+// is helped before a meal or personal-care task of the same urgency (worth this many tiles of walking; never above a
+// higher urgency, since urgency is worth 1,000).
+export const TYPE_FIRST = { wake: 60 };

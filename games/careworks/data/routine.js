@@ -70,3 +70,24 @@ export const PREF_RULES = {
 export const ACTIVITY_DONE = { connection: 3 }; // outcome points when he joins the activity
 export const ACTIVITY_REFUSED = { connection: -2 }; // …and when he refuses it
 export const LOG_SHOWN = 6; // log lines on his card
+
+// Milestone 13 (fix first): staggered wake-ups. Each resident wakes at their own time inside a window set by their
+// personality, so the Care Workers' wake-ups spread over the morning instead of all landing at 07:00. The time inside
+// the window is fixed per resident (quarter-hour slots, from their id: the same every day and after a reload).
+// A late riser's breakfast moves with them: breakfastAfter hours after waking, never before the usual 08:30, and served
+// until lateBreakfastUntil (a resident not yet got up stays in bed until a helper comes, and breakfast waits for them).
+// fixed: a resident whose time is set outright (the opening resident, Arthur, keeps the
+// 07:00 of Milestones 2–12).
+export const WAKE = {
+  windows: {
+    early: { name: 'Early riser', from: 6, to: 6.75 },
+    usual: { name: 'Usual riser', from: 6.75, to: 7.75 },
+    late: { name: 'Late riser', from: 7.75, to: 8.5 },
+  },
+  byPersonality: { 'Routine-Loving': 'early', Independent: 'early', 'Stubbornly Independent': 'early', Quiet: 'late', Reserved: 'late', Witty: 'late' }, // (everyone else: usual)
+  slot: 0.25,
+  fixed: { RES01: 7 },
+  breakfastAfter: 1,
+  lateBreakfastUntil: 9.5,
+  waitForHelpUntil: 10.5, // someone not yet got up waits in bed for a helper (breakfast waits) until then
+};
