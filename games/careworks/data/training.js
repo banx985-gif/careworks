@@ -7,7 +7,7 @@
 // Training needs a Training Room (F11: two places each); ?debug=1 lets people train without one.
 export const COURSES = [
   { id: 'medicationSafety', name: 'Medication Safety', text: 'Safer, steadier medicine rounds', cost: 600, days: 5, roles: ['RN'], gains: { CLN: [8, 14] }, specialty: 'medication' },
-  { id: 'dementiaCommunication', name: 'Dementia Communication', text: 'Calm, clear support for residents with memory needs', cost: 700, days: 6, roles: ['RN', 'CW', 'LC'], gains: { SOC: [6, 10], PER: [3, 6] }, specialty: 'memoryCare' },
+  { id: 'memoryCommunication', name: 'Memory Care Communication', text: 'Calm, clear support for residents with memory needs', cost: 700, days: 6, roles: ['RN', 'CW', 'LC'], gains: { SOC: [6, 10], PER: [3, 6] }, specialty: 'memoryCare' },
   { id: 'manualHandling', name: 'Manual Handling', text: 'Safe moving, lifting and transfers', cost: 450, days: 4, roles: ['CW', 'AH', 'RN'], gains: { PER: [5, 9], MOB: [4, 7] }, specialty: 'handling' },
   { id: 'fallsPrevention', name: 'Falls Prevention', text: 'Spotting and reducing fall risks', cost: 550, days: 5, roles: ['AH', 'CW', 'RN'], gains: { MOB: [7, 12] }, specialty: 'falls' },
   { id: 'palliativeSupport', name: 'Palliative Support', text: 'Comfort and presence at the end of life', cost: 800, days: 7, roles: ['RN', 'CW'], gains: { PER: [4, 8], CLN: [4, 8] }, specialty: 'comfortCare' },

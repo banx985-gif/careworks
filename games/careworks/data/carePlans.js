@@ -199,7 +199,7 @@ const NEW_OPTIONS = [
     eligibility: [{ type: 'roleOnShifts', role: 'RN', shifts: ['morning', 'afternoon'], reason: 'Needs a Registered Nurse on the Morning and Afternoon shifts' }],
   }),
   opt({
-    id: 'CL04', domain: 'CL', name: 'Wound Support', roles: ['RN'],
+    id: 'CL04', domain: 'CL', name: 'Skin Care Support', roles: ['RN'],
     text: 'The nurse checks and cares for their skin each morning and afternoon.',
     tasks: [
       t('observation', 'Skin care check', 10.5, 'morning', ['RN'], 20, { clinical: 12 }, { comfort: 1 }),
@@ -208,7 +208,7 @@ const NEW_OPTIONS = [
     eligibility: [{ type: 'roleOnTeam', role: 'RN', reason: 'Needs a Registered Nurse on the roster' }],
   }),
   opt({
-    id: 'CL05', domain: 'CL', name: 'Diabetes Support', roles: ['RN'],
+    id: 'CL05', domain: 'CL', name: 'Blood Sugar Support', roles: ['RN'],
     text: 'Health checks before breakfast and the evening meal, and the morning medicines.',
     tasks: [
       t('observation', 'Morning health check', 8, 'morning', ['RN'], 10, { clinical: 8 }),
@@ -318,14 +318,14 @@ const NEW_OPTIONS = [
     tasks: [t('hydration', 'Evening drinks round', 19, 'evening', FOOD, 5, { nutrition: 8 })],
   }),
   opt({
-    id: 'NU04', domain: 'NU', name: 'Diabetes-Friendly Menu', roles: ['HN'],
+    id: 'NU04', domain: 'NU', name: 'Low-Sugar Menu', roles: ['HN'],
     text: 'Balanced meals planned by the kitchen, with a steady afternoon snack.',
     tasks: [t('hydration', 'Balanced afternoon snack', 15, 'afternoon', FOOD, 10, { nutrition: 8, clinical: 4 })],
     changes: [
       { step: 'breakfast', dropsAdd: { clinical: 3 } },
       { step: 'dinner', dropsAdd: { clinical: 3 } },
     ],
-    eligibility: [{ type: 'roleOnTeam', role: 'HN', reason: 'Needs a Hospitality & Nutrition worker on the roster' }, DIET_SKILL('diabetes')],
+    eligibility: [{ type: 'roleOnTeam', role: 'HN', reason: 'Needs a Hospitality & Nutrition worker on the roster' }, DIET_SKILL('lowSugar')],
   }),
   opt({
     id: 'NU05', domain: 'NU', name: 'Texture-Modified Meals', roles: ['HN'],

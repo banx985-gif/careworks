@@ -28,5 +28,7 @@ export const diningPct = (traits) => sum(effectsOf(traits, 'dining'), 'pct');
 export const rehabPct = (traits, goal) => sum(effectsOf(traits, 'rehab').filter((fx) => !fx.goals || fx.goals.includes(goal)), 'pct');
 // Milestone 17: % further with a memory-support resident ('memory')
 export const memoryPct = (traits) => sum(effectsOf(traits, 'memory'), 'pct');
+// Milestone 18: % on complex residents' round safety and on their assessments / senior reviews ('clinical')
+export const clinicalPct = (traits) => sum(effectsOf(traits, 'clinical'), 'pct');
 export const isLive = (id) => !!TRAITS[id]?.live;
 export const pendingOf = (id) => TRAITS[id]?.pendingSystem ?? null;

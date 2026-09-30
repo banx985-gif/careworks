@@ -5,7 +5,7 @@
 //   drawBellMarker(ctx, x, y, r, t)                   the ringing bell (it swings with time t, in seconds)
 const INK = '#3B342C';
 const COLOURS = {
-  bell: '#F2B530', pill: '#E0645A', sun: '#F2B530', moon: '#5E6FB8', bowl: '#C8834E', drop: '#3E9BD6', cross: '#E0645A',
+  bell: '#F2B530', meds: '#E0645A', sun: '#F2B530', moon: '#5E6FB8', bowl: '#C8834E', drop: '#3E9BD6', cross: '#E0645A',
   steps: '#8A6CC0', cup: '#3E9BD6', pot: '#D9822B', star: '#E0913F', heart: '#E0645A', house: '#6FA86A', rest: '#5E6FB8', tired: '#D98A00',
 };
 
@@ -77,7 +77,7 @@ function drawIcon(ctx, icon, s) {
       ctx.arc(0, s * 0.62, s * 0.18, 0, Math.PI * 2);
       fillStroke();
       break;
-    case 'pill':
+    case 'meds':
       ctx.save();
       ctx.rotate(-Math.PI / 4);
       ctx.roundRect(-s * 0.85, -s * 0.36, s * 1.7, s * 0.72, s * 0.36);

@@ -81,6 +81,7 @@ import { facilityById } from '../data/facilities.js';
 import { DIETS, dishById, dishesOf, mealById, SAT_REASONS, HYDRATION, KITCHENS, TROLLEYS } from '../data/dining.js';
 import { AIDS, GOALS, DISCHARGE, REHAB_FUNDING } from '../data/mobility.js';
 import { WALKING } from '../data/memory.js';
+import { ACTIONS, ACTION_IDS, CLINICIAN, HOSPITAL } from '../data/clinical.js';
 import { yearsEmployed } from './systems/staffTeam.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
@@ -266,7 +267,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left', 'care:birthday', 'care:ready', 'care:discharge', 'care:aid', 'care:walk', 'care:walkEnd', 'care:lifeStory', 'home:walkPath'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left', 'care:birthday', 'care:ready', 'care:discharge', 'care:aid', 'care:walk', 'care:walkEnd', 'care:lifeStory', 'home:walkPath', 'care:alert', 'care:alertAction', 'care:alertEnd', 'care:transfer', 'care:back', 'care:roundIssue'],
   save: () => saveRun(),
   stamp: () => (open && !spawn ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && !spawn && router.currentName === 'home' && !open.world.clock.paused,
@@ -461,16 +462,18 @@ const topBar = createTopBar({
   },
   onStats: () => openLedger(),
   onInbox: () => openInbox(),
-  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0), // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home)
+  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting(), // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home; Milestone 18: alerts waiting for a choice)
   onHelp: () => openTopSheet('help'),
   onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_LOCKED, accent: COL.progress, sections: [] })),
 });
 // Care's badge (Milestone 6: a count): the call bells ringing now plus the missed tasks today the player hasn't looked
 // at yet (opening the resident list or a resident's card counts as looking).
 const missedToday = () => open?.world.missedToday() ?? [];
+// Milestone 18: alerts the home has noticed and nobody has chosen an action for yet
+const alertsWaiting = () => open?.world?.clinical?.alerts().filter((a) => !a.pending).length ?? 0;
 function careBadge() {
   if (!open) return null;
-  const n = open.world.bells.length + missedToday().filter((t) => !open.seenMissed.has(t.id)).length + open.world.stalePlans().length; // Milestone 8: + plans to review
+  const n = open.world.bells.length + missedToday().filter((t) => !open.seenMissed.has(t.id)).length + open.world.stalePlans().length + alertsWaiting(); // Milestone 8: + plans to review; Milestone 18: + alerts waiting
   return n || null;
 }
 // Staff's badge (Milestone 7): the shifts short now, or about to start short (from the band before).
@@ -520,6 +523,16 @@ bus.on('care:birthday', ({ names, first: isFirst, art }) => {
   const who = names.map((n) => first(n)).join(' and ');
   dayBeat.showText(`Happy birthday, ${who}!`, true);
   if (isFirst && art) bigBeat = { title: 'A first birthday', text: `${who}'s birthday tea in the lounge`, art, age: 0 };
+});
+// Milestone 18: an alert noticed (the Inbox has the choices), a transfer to the hospital service and the return
+bus.on('care:alert', ({ name, word }) => {
+  if (open && router.currentName === 'home' && name) dayBeat.showText(`${first(name)} seems ${word}: choose what to do (Inbox)`, false);
+});
+bus.on('care:transfer', ({ name }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} goes to the hospital service for a few days`, false);
+});
+bus.on('care:back', ({ name }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} is back from the hospital service`, true);
 });
 // Milestone 16: ready to go home (an Inbox item) and a successful discharge (the big beat the first time, then medium)
 bus.on('care:ready', ({ name }) => {
@@ -845,6 +858,8 @@ function openInbox() {
     const notices = w.activities.notices();
     const sections = [];
     if (message) sections.push({ lines: [{ text: message, color: COL.bad }] });
+    // Milestone 18: alerts — the six high-level choices
+    for (const a of w.clinical.alerts()) sections.push(alertSection(w, a, 'inbox'));
     // Milestone 16: residents ready to go home — send them home now, or it happens on its own
     for (const r of w.readyToGoHome()) sections.push(readyNotice(w, r, 'inbox'));
     for (const n of notices) {
@@ -863,7 +878,8 @@ function openInbox() {
     }
     const past = w.activities.history().slice(-4).reverse();
     sections.push({ title: 'Earlier', lines: past.length ? past.map((h) => ({ text: `${h.def.name}: ${h.accepted ? 'accepted' : h.auto ? 'no answer (let go)' : 'declined'}`, color: COL.textMuted })) : [{ text: notices.length ? '' : 'Nothing yet. Letters from families, partners and inspectors will arrive here too.', color: COL.textMuted }] });
-    return { title: 'Inbox', subtitle: notices.length ? `${notices.length} notice waiting` : 'Nothing waiting', art: 'care_ui_01', accent: accentNow(), sections };
+    const waiting = notices.length + alertsWaiting();
+    return { title: 'Inbox', subtitle: waiting ? `${waiting} waiting` : 'Nothing waiting', art: 'care_ui_01', accent: accentNow(), sections };
   });
 }
 // The resident card's Activities section: what they enjoy, a hint when nothing they like has been on for a while, their
@@ -1043,6 +1059,106 @@ function memorySections(w, it) {
     const r = w.offerLifeStory(it.id);
     if (r.ok) autosave.request('lifeStory');
   } }] }];
+}
+// --- Milestone 18: clinical care ------------------------------------------------------------------------------------------
+// High-level only: a plain alert word and six choices. No medicines, amounts or diagnoses anywhere.
+const scoreColour = (v) => (v >= 70 ? COL.good : v >= 50 ? COL.actionDark : COL.warn);
+const signed = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(v)}`;
+function actionSub(w, a, id) {
+  const c = w.clinical.canAct(a.id, id);
+  if (!c.ok) return c.reason;
+  if (id === 'clinician') return `Tomorrow at ${clockText(CLINICIAN.visitAt)} · ${credits(c.cost)} Credits`;
+  if (id === 'hospital') return `About ${HOSPITAL.days} days away, room held · ${credits(c.cost)} Credits`;
+  if (id === 'escalate') return `${first(w.clinical.senior()?.name ?? 'The senior nurse')} reviews now`;
+  return ACTIONS[id].text;
+}
+function pendingText(w, a) {
+  const pd = a.pending;
+  const task = pd.task ? w.care.tasks.find((t) => t.id === pd.task) : null;
+  const who = task?.slots[0] ? first(w.byId(task.slots[0])?.name ?? '') : null;
+  if (pd.action === 'assess') return who ? `${who} is assessing them` : 'A nurse assessment is on its way';
+  if (pd.action === 'escalate') return `${first(w.byId(pd.by)?.name ?? 'The senior nurse')} is reviewing them`;
+  if (pd.action === 'observe') return `Extra health checks until ${dayName(w, pd.until)}: ${pd.done} of ${pd.due} done`;
+  if (pd.action === 'carePlan') return `Update their Clinical/Nursing plan by the end of tomorrow: ${optionById(pd.suggest)?.name ?? 'a new option'} is suggested`;
+  if (pd.action === 'clinician') return `The visiting clinician sees them ${pd.day === w.clock.totalDays ? 'today' : 'tomorrow'} at ${clockText(CLINICIAN.visitAt)}`;
+  return ACTIONS[pd.action].name;
+}
+const RESULT_WORDS = { lingering: 'still unsettled', notDone: "didn't happen", well: 'settled', overdone: 'settled' };
+function alertSection(w, a, from) {
+  const p = w.residentById(a.resident);
+  const who = first(p?.name ?? '');
+  const lines = [{ text: `${who} seems ${a.word}${a.late ? ' (noticed late: no health check came sooner)' : ''}`, color: COL.bad }];
+  const tried = a.actions.filter((x) => x.result);
+  if (tried.length) lines.push({ text: `Tried: ${tried.map((x) => `${ACTIONS[x.action].name.toLowerCase()} (${RESULT_WORDS[x.result] ?? x.result})`).join(', ')}`, color: COL.textMuted });
+  if (a.pending) lines.push({ text: pendingText(w, a), color: COL.actionDark });
+  else if (a.autoAt != null) lines.push({ text: `Choose what to do. With no choice by ${clockText(a.autoAt % 24)}, the nurse on shift acts.`, color: COL.textMuted });
+  lines.push({ text: 'High-level choices only: the care team handles the details. The right-sized step works best.', color: COL.textMuted });
+  const buttons = ACTION_IDS.map((id) => {
+    const c = w.clinical.canAct(a.id, id);
+    return { id: `alert:${from}:${id}:${a.id}`, label: ACTIONS[id].name, sub: actionSub(w, a, id), disabled: !c.ok, accent: id === 'hospital' ? COL.warn : COL.action, onTap: () => {
+      const r = w.clinical.act(a.id, id);
+      if (!r.ok) return;
+      autosave.request('alert');
+      if (id === 'carePlan') openPlanPicker('CL', a.resident, r.suggest);
+    } };
+  });
+  if (a.pending?.action === 'carePlan') buttons.push({ id: `alert:${from}:plan:${a.id}`, label: 'Open the plan', sub: optionById(a.pending.suggest)?.name ?? '', accent: COL.good, onTap: () => openPlanPicker('CL', a.resident, a.pending?.suggest ?? null) });
+  if (from === 'inbox') buttons.push({ id: `alert:inbox:card:${a.id}`, label: `${who}'s card`, sub: 'Their plan, tasks and log', accent: COL.progress, onTap: () => openHomeSheet(a.resident) });
+  return { title: `${who}: ${a.word}`, titleDot: a.pending ? null : COL.bad, lines, columns: 2, buttons };
+}
+// The resident card's Health section: their Clinical/Nursing option, today's rounds and checks, and an alert's choices.
+function healthSections(w, it) {
+  if (w.isAway(it.id)) return [{ title: 'Health', lines: [{ text: w.stateOf(it), color: COL.actionDark }] }];
+  const o = optionById(it.state.plan?.CL);
+  const lines = [{ text: `Clinical/Nursing plan: ${o?.name ?? 'not set'}`, color: COL.actionDark }];
+  const tasks = w.tasksToday(it.id).filter((t) => t.type === 'meds' || (t.type === 'observation' && t.source !== 'routine'));
+  for (const t of tasks.sort((x, y) => (x.at ?? x.opens % 24) - (y.at ?? y.opens % 24))) lines.push({ text: `${clockText(t.at ?? t.opens % 24)}  ${t.type === 'meds' ? 'Medicine round' : t.name} · ${TASK_WORDS[t.status] ?? t.status}`, color: t.status === 'missed' ? COL.bad : t.status === 'done' ? COL.good : COL.textMuted });
+  const a = w.clinical.alertOf(it.id);
+  if (!a) lines.push({ text: 'No alerts: seems well', color: COL.good });
+  return a ? [{ title: 'Health', lines }, alertSection(w, a, 'card')] : [{ title: 'Health', lines }];
+}
+// The Nurse Station card: the Clinical Safety score, today's rounds, the issues counter, health checks, open alerts.
+function clinicalSections(w) {
+  const s = w.clinical.score();
+  const today = w.clinical.today();
+  const rounds = w.clinical.rounds();
+  const lines = [
+    { text: `Clinical Safety: ${s.score} / 100`, color: scoreColour(s.score) },
+    { text: `Last 7 days: round safety ${s.round} · health checks done ${s.obs}% · alerts resolved well ${s.well}%${s.open ? ` · ${s.open} open now` : ''}`, color: COL.textMuted },
+    { text: `Round issues: ${w.clinical.state.issues} so far (${s.issues} in the last 7 days)`, color: s.issues ? COL.warn : COL.textMuted },
+    { text: `Health checks today: ${today.obs.done} done${today.obs.missed ? `, ${today.obs.missed} missed` : ''}`, color: today.obs.missed ? COL.warn : COL.textMuted },
+  ];
+  if (!w.layout.ofDef('F02').length) lines.push({ text: 'No Medication Room: the cart is kept here and rounds are less safe. Build one in Build Mode (F02).', color: COL.warn });
+  const rl = rounds.length
+    ? rounds.map((r) => ({ text: `${r.name}: ${r.collected == null ? 'not started' : `${first(w.byId(r.by)?.name ?? r.by ?? '')} · safety ${r.safety}`} · ${r.done} of ${r.stops || '?'} done${r.late ? `, ${r.late} late` : ''}${r.missed ? `, ${r.missed} missed` : ''}${r.issues.length ? ` · ${r.issues.length} issue${r.issues.length === 1 ? '' : 's'}` : ''}`, color: r.missed || r.issues.length ? COL.warn : COL.actionDark }))
+    : [{ text: 'No medicine round yet today.', color: COL.textMuted }];
+  const last = [...rounds].reverse().find((r) => r.parts);
+  if (last) {
+    const P = last.parts;
+    rl.push({ text: `${last.name} safety: nurse ${signed(P.nurse)}, workload ${signed(P.workload)}, Medication Room ${signed(P.medRoom)}, complex needs ${signed(P.complexity)}, training ${signed(P.training)}, open alerts ${signed(P.alerts)}${last.mult > 1 ? ` · × ${last.mult} (rooms)` : ''}`, color: COL.textMuted });
+  }
+  const alerts = w.clinical.alerts();
+  const services = [
+    { text: `Visiting clinician: every ${TIMETABLE.days[CLINICIAN.visitDay]} (${CLINICIAN.visitFee} Credits for a visit booked for that day; any other day ${CLINICIAN.callOutFee} for next-day)`, color: COL.textMuted },
+    { text: `Hospital service: any time, ${HOSPITAL.fee} Credits; about ${HOSPITAL.days} days away with the room held · transfers so far: ${w.clinical.state.transfers ?? 0}`, color: COL.textMuted },
+  ];
+  return [
+    { title: 'Clinical Safety', lines },
+    { title: 'Medicine rounds today', lines: rl },
+    { title: alerts.length ? `Alerts (${alerts.length})` : 'Alerts', titleDot: alerts.some((a) => !a.pending) ? COL.bad : null, lines: alerts.length ? [] : [{ text: 'Nobody seems unwell right now.', color: COL.good }], columns: 1, buttons: alerts.map((a) => ({ id: `station:alert:${a.id}`, label: `${first(w.residentById(a.resident)?.name ?? '')}: ${a.word}`, sub: a.pending ? pendingText(w, a) : 'Choose what to do', accent: a.pending ? COL.progress : COL.action, onTap: () => openHomeSheet(a.resident) })) },
+    { title: 'Services', lines: services },
+  ];
+}
+// The Ledger's Clinical Safety lines and this month's clinical fees (paid as they happen).
+function clinicalLedger(w, range) {
+  const s = w.clinical.score();
+  const fees = w.ledger.economy.ledger.filter((l) => l.day >= range.fromDay && l.category === 'clinical');
+  const sum = fees.reduce((t, l) => t + l.amount, 0);
+  return { title: 'Clinical Safety', lines: [
+    { text: `Clinical Safety: ${s.score} / 100 (round safety ${s.round}, health checks ${s.obs}%, alerts resolved well ${s.well}%)`, color: scoreColour(s.score) },
+    { text: `Visiting clinician and hospital service this month: ${fees.length} · ${sum ? '−' : ''}${credits(-sum)} Credits`, color: fees.length ? COL.bad : COL.textMuted },
+    { text: 'The home\'s quality scores arrive in a later update; this one is shown for now.', color: COL.textMuted },
+  ] };
 }
 // --- Milestone 16: mobility, rehab goals, falls risk, discharge ----------------------------------------------------------
 const REHAB_COLOUR = { 'Ready to go home': COL.good, 'On track': COL.good, Slow: COL.warn, 'Just started': COL.actionDark };
@@ -1308,6 +1424,7 @@ function openLedger() {
         `Reputation: ${w.rewards.reputation} · Research Points: ${w.rewards.research}`,
         { text: `Rehab funding: ${REHAB_FUNDING.perMonth} Credits a month for each resident working on their goals (paid at the close)`, color: COL.textMuted },
       ] },
+      clinicalLedger(w, range),
       last ? { title: `Last close: ${last.month}`, lines: ledgerLines(last.lines) } : { title: 'Last close', lines: [{ text: 'No month has closed yet.', color: COL.textMuted }] },
       { columns: 1, buttons: [{ id: 'ledger:back', label: '‹ Back to Business', accent: COL.progress, onTap: () => openBusiness() }] },
     ];
@@ -1683,6 +1800,7 @@ function residentSections(w, it) {
     { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `${room} · Support Level ${supportLevel(it.def)}`, `${WAKE.windows[wakeWindowOf(it.def)].name} · gets up at ${clockText(st.wakeAt ?? 7)}`, { text: stayLine(w, it), color: st.stay ? COL.actionDark : COL.textMuted }] },
     { title: 'Life story', lines: [it.def.story, { text: (st.tags?.length ? st.tags : it.def.tags).join(' · '), color: COL.actionDark }, ...(st.returning ? [{ text: 'Returning: stayed here before', color: COL.good }] : [])] },
     planSection(w, it),
+    ...healthSections(w, it),
     { title: 'Tasks today', lines: taskLines(w, it) },
     { title: 'Call bells', lines: bellLines(w, it, they) },
     familiarSection(w, it),
@@ -1722,7 +1840,7 @@ function planButtons(w, it) {
   });
 }
 // "07:00  Wake up · done with Ruby"
-const TASK_WORDS = { open: 'to do', claimed: 'on the way', working: 'being helped', done: 'done', missed: 'missed', refused: 'said no', self: 'on their own', unstaffed: 'no one on shift', scaled: 'scaled back (short-staffed)' };
+const TASK_WORDS = { open: 'to do', claimed: 'on the way', working: 'being helped', done: 'done', missed: 'missed', refused: 'said no', self: 'on their own', unstaffed: 'no one on shift', scaled: 'scaled back (short-staffed)', away: 'away (hospital service)' };
 function taskLines(w, it) {
   if (!w.joined(it)) return [{ text: 'Settling in: care tasks start from the next band.', color: COL.textMuted }];
   const tasks = w.tasksToday(it.id).filter((t) => t.type !== 'bell');
@@ -1789,8 +1907,8 @@ function friendsSection(w, it) {
 // reason when not), the current one and their like / dislike / refusal. Tap a row to see it; Choose to take it.
 const NEED_WORDS = Object.fromEntries(NEEDS.map((n) => [n.id, n.name]));
 const OUTCOME_WORDS = Object.fromEntries(OUTCOMES.map((o) => [o.id, o.name]));
-function openPlanPicker(domainId, residentId) {
-  let looking = null; // the option tapped (its details and Choose)
+function openPlanPicker(domainId, residentId, suggest = null) {
+  let looking = suggest; // the option tapped (its details and Choose); Milestone 18: the one an alert suggests
   let message = null;
   sheet.open(() => {
     const w = open?.world;
@@ -1829,6 +1947,7 @@ function openPlanPicker(domainId, residentId) {
       if (pref === 'refuse') lines.push({ text: `${who} refuses this: you can choose it, but its tasks will be refused whenever they come up.`, color: COL.bad });
       if (pref === 'prefer') lines.push({ text: `${who} likes this (+${OPTION_PREF_MOOD.prefer} Mood when chosen).`, color: COL.good });
       if (!el.ok) lines.push({ text: el.reason, color: COL.bad });
+      if (o.id === suggest) lines.push({ text: 'Suggested for the alert: a plan that fits how they are now', color: COL.good });
       const choose = () => {
         const r = w.changePlan(d.id, o.id, residentId);
         if (!r.ok) {
@@ -2003,6 +2122,11 @@ function openHomeSheet(id, from = null) {
     if (it.defId === 'F20') lines.push({ text: 'Life-story time and memory-care sessions go further here', color: COL.actionDark });
     if (it.defId === 'F22' && !w.walkPath) lines.push({ text: 'Mark a safe walking path round it in Build Mode (Walking path)', color: COL.textMuted });
     if (it.defId === 'F17') lines.push({ text: 'Plans every special menu (soft, balanced, small plates, hearty), whoever is cooking', color: COL.actionDark });
+    // Milestone 18: the clinical places
+    if (it.defId === 'F01') sections.push(...clinicalSections(w));
+    if (it.defId === 'F02') lines.push({ text: 'The Medication Cart is kept here: each medicine round starts here (round safety +8%)', color: COL.actionDark });
+    if (it.defId === 'F23') lines.push({ text: 'Moderate alerts can be handled in-house: assessments and senior reviews go further', color: COL.actionDark });
+    if (it.defId === 'F28') lines.push({ text: 'Medicine rounds are safer and better recorded (round safety +10%)', color: COL.actionDark });
     if (it.defId === 'F09') sections.push({ columns: 1, buttons: [{ id: 'place:recruit', label: 'Recruit', sub: `${w.staffing.board.length} candidates · Staff ${w.team.length} / ${w.staffing.cap}`, accent: COL.action, onTap: () => openRecruit() }] });
     if (it.defId === 'F11') {
       const trainees = w.team.filter((q) => w.roster.isTraining(q.id));
@@ -2095,7 +2219,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openMenu, openDishPicker, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openMenu, openDishPicker, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

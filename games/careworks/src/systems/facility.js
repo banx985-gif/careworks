@@ -33,6 +33,7 @@ import { ensureCoverageState } from './coverage.js';
 import { markReviewed } from './carePlanRules.js';
 import { newCareState, upgradeFamiliarity } from './careTasks.js';
 import { ensurePlan } from '../../data/carePlans.js';
+import { RENAMED_IDS } from '../../data/clinical.js';
 
 const freshResidents = () => [newResidentState(residentById(RESIDENT.id), { room: RESIDENT.room })];
 // Milestone 9: a new home's Arthur is on his respite stay from day 0 (an older save's Arthur keeps staying).
@@ -214,6 +215,13 @@ export function upgradeV11(data) {
   if (!data.care) return data;
   return { ...data, care: upgradeFamiliarity({ ...data.care, relations: { ...(data.care.relations ?? {}) } }) };
 }
+// Version 17 → 18 (Milestone 18): the few ids that were diagnosis words were renamed (a course, two traits, a diet):
+// every place a save holds one gets the new id. Clinical state starts empty: no open alerts, no rounds yet.
+export function upgradeV17(data) {
+  let json = JSON.stringify(data);
+  for (const [from, to] of Object.entries(RENAMED_IDS)) json = json.split(`"${from}"`).join(`"${to}"`);
+  return JSON.parse(json);
+}
 export const SAVE_MIGRATIONS = {
   1: (record) => ({ ...record, data: upgradeV1(record.data) }),
   2: (record) => ({ ...record, data: upgradeV2(record.data) }),
@@ -231,6 +239,7 @@ export const SAVE_MIGRATIONS = {
   14: (record) => record, // (Milestone 15: no dining state = the default weekly menu; diets, favourites and satisfaction start from each resident)
   15: (record) => record, // (Milestone 16: mobility from each resident's profile and needs; rehab residents get goals from their current needs)
   16: (record) => record, // (Milestone 17: memory-support residents start steady, with no sessions yet and a full Choice score; no walking path)
+  17: (record) => ({ ...record, data: upgradeV17(record.data) }), // (Milestone 18: renamed ids; no open alerts)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

@@ -125,12 +125,15 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   };
   // A person is tapped on their body (the art's transparent margin is left out), a place on its art.
   const tapRect = (it) => {
+    if (world?.hiddenPerson?.(it)) return { x: -1e9, y: -1e9, w: 0, h: 0 }; // (Milestone 18: away at the hospital service)
     if (isPerson(it)) {
       const r = personRect(it);
       return { x: r.x + r.w * 0.22, y: r.y + r.h * 0.04, w: r.w * 0.56, h: r.h * 0.94 };
     }
     return artRect(it);
   };
+  // Milestone 18: everyone drawn — not a resident away at the hospital service
+  const shownPeople = () => (world.hiddenPerson ? world.people.filter((p) => !world.hiddenPerson(p)) : world.people);
   // Draw order: plan x + y (further back first). A walk-in room is part of the floor, so it is always under people.
   const depthOf = (it) => {
     if (isPerson(it)) return it.agent.x + it.agent.y;
@@ -484,7 +487,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       if (buildMode) drawPicked(ctx);
       drawPersonShadows(ctx);
       drawSelectionMark(ctx);
-      const items = [...world.placed.filter((p) => p.kind !== 'room'), ...world.props, ...(world.decor ?? []), ...walls, ...world.people].sort((a, b) => depthOf(a) - depthOf(b));
+      const items = [...world.placed.filter((p) => p.kind !== 'room'), ...world.props, ...(world.decor ?? []), ...walls, ...shownPeople()].sort((a, b) => depthOf(a) - depthOf(b));
       for (const it of items) {
         if (it.kind === 'wall') drawWall(ctx, it);
         else if (it.kind === 'station') assets.draw(ctx, it.def.art, ...rectArgs(artRect(it)));
@@ -497,7 +500,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       drawNight(ctx);
       // Name tags in screen space: always the small text size (28), whatever the zoom.
       layoutTags(ctx);
-      for (const p of world.people) drawTag(ctx, p);
+      for (const p of shownPeople()) drawTag(ctx, p);
       drawMarkers(ctx); // a status icon over each staff member (their task, resting, tired); the call bell over Arthur
       // The care pops, in the world but over the tags for their second or two (so a name never hides one).
       if (vfx) {
@@ -635,7 +638,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   function drawPersonShadows(ctx) {
     ctx.save();
     ctx.fillStyle = L.personShadow;
-    for (const p of world.people) {
+    for (const p of shownPeople()) {
       const f = feetOf(p);
       ctx.beginPath();
       ctx.ellipse(f.x, f.y - 4, 40, 15, 0, 0, Math.PI * 2);
@@ -769,7 +772,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     tags.clear();
     ctx.save();
     ctx.font = font(PERSON.tagSize, true);
-    const list = world.people.map((p) => {
+    const list = shownPeople().map((p) => {
       const r = personRect(p);
       const s = camera.worldToScreen(r.x + r.w / 2, r.y + r.h * 0.02);
       const w = ctx.measureText(p.name.split(' ')[0]).width + 36;
@@ -840,7 +843,48 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       const m = markerAt(r);
       if (onScreen(m)) drawBellMarker(ctx, m.x, m.y, MARK_R * 1.15, markT);
     }
+    // Milestone 18: an alert's plain word over the resident (code-drawn; above the bell when both show)
+    for (const r of world.residents) {
+      const word = world.clinical?.wordOf(r.id);
+      if (!word || world.hiddenPerson?.(r)) continue;
+      const m = markerAt(r);
+      const y = m.y - (world.bellFor(r.id) ? MARK_R * 2.9 : 0);
+      if (onScreen({ y })) drawAlertWord(ctx, m.x, y, word);
+    }
   }
+  // "unwell" in a soft red bubble with a small ! badge, pulsing gently; the same size at any zoom.
+  function drawAlertWord(ctx, x, y, word) {
+    ctx.save();
+    ctx.font = font(PERSON.tagSize, true);
+    const h = MARK_R * 1.6;
+    const w = ctx.measureText(word).width + h * 1.25;
+    const pulse = 0.5 + 0.5 * Math.sin(markT * 4);
+    ctx.fillStyle = `rgba(224, 100, 90, ${0.18 + 0.14 * pulse})`;
+    ctx.beginPath();
+    ctx.roundRect(x - w / 2 - 8, y - h / 2 - 8, w + 16, h + 16, (h + 16) / 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFF4F1';
+    ctx.strokeStyle = '#C0392B';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.roundRect(x - w / 2, y - h / 2, w, h, h / 2);
+    ctx.fill();
+    ctx.stroke();
+    const bx = x - w / 2 + h / 2;
+    ctx.fillStyle = '#E0645A';
+    ctx.beginPath();
+    ctx.arc(bx, y, h * 0.34, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = '#FFFFFF';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('!', bx, y + 1);
+    ctx.fillStyle = '#8E2A20';
+    ctx.textAlign = 'left';
+    ctx.fillText(word, bx + h * 0.48, y + 1);
+    ctx.restore();
+  }
+  screen.alertWordAt = (id) => (world?.clinical?.wordOf(id) ? markerAt(world.byId(id)) : null); // (tests)
   // Where a person's marker is drawn, and which status icon they show (tests).
   screen.markerPoint = (id) => markerAt(world.byId(id));
   screen.statusIconOf = (id) => statusIcon(world.byId(id))?.icon ?? null;

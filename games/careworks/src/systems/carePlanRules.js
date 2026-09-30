@@ -77,6 +77,7 @@ export function staleReasons(st, today) {
   if (streak >= REVIEW.missedStreakDays) out.push({ key: 'missed', text: `Essential care missed ${streak} days running` });
   const since = today - r.day;
   if (since >= REVIEW.periodDays) out.push({ key: 'period', text: `${since} days since the last review` });
+  if (r.hospital != null) out.push({ key: 'hospital', text: 'Back from the hospital service: review the plan' }); // (Milestone 18)
   return out;
 }
 export function markReviewed(st, today) {

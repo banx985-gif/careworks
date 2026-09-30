@@ -86,7 +86,7 @@ export const TROLLEYS = { meal: 'care_prop_early_04', round: 'care_equipment_06'
 // below) or a Nutrition Office (F17); 'hospitality' — any Hospitality worker on shift (or the Nutrition Office).
 export const DIETS = {
   standard: { name: 'Standard', menu: 'the standard menu', needs: null },
-  diabetes: { name: 'Diabetes-Friendly', menu: 'the balanced menu', needs: 'skill', option: 'NU04' },
+  lowSugar: { name: 'Low-Sugar', menu: 'the balanced menu', needs: 'skill', option: 'NU04' },
   texture: { name: 'Texture-Modified', menu: 'the soft menu', needs: 'skill', option: 'NU05' },
   smallFrequent: { name: 'Small Frequent', menu: 'small plates', needs: 'hospitality', option: 'NU06' },
   highProtein: { name: 'High-Protein', menu: 'the hearty menu', needs: 'hospitality', option: 'NU02' },

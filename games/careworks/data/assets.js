@@ -12,6 +12,7 @@ import { ROLES } from './roles.js';
 import { ACTIVITIES, BIRTHDAY } from './activities.js';
 import { TROLLEYS } from './dining.js';
 import { DISCHARGE } from './mobility.js';
+import { ROUND } from './clinical.js';
 
 const art = (folder, key) => [key, `assets/images/${folder}/${key}.png`];
 
@@ -42,6 +43,8 @@ export const ASSETS = {
   ...Object.fromEntries([art('equipment', TROLLEYS.round)]),
   // Milestone 16: the First Rehab Discharge picture (the aid props are early props, listed above)
   ...Object.fromEntries([art('events', DISCHARGE.firstArt)]),
+  // Milestone 18: the Medication Cart (pushed on the medicine round; beside the Medication Room otherwise)
+  ...Object.fromEntries([art('equipment', ROUND.cart)]),
   // Milestone 0 loader test (?screen=test): the placeholder PWA icon as a real image, and one deliberately missing file.
   m0Real: 'assets/branding/pwa/icon-192.png',
   m0Missing: 'assets/m0-missing-test.png',

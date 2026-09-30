@@ -25,7 +25,7 @@ export const FACILITIES = [
     essential: true, text: 'Coordinates shifts, care rounds and handovers',
     spots: { staff: { col: 1, row: 3 } },
   }),
-  f('F02', 'Medication Room', 'Specialist', start, 1600, fx('medicationSafetyPct', 8, 'Medication round safety +8%'), { text: 'Where medicines are kept and rounds are prepared' }),
+  f('F02', 'Medication Room', 'Specialist', start, 1600, fx('medicationSafetyPct', 8, 'Medication round safety +8%', true), { text: 'Where medicines are kept and rounds are prepared' }),
   f('F03', 'Dining Room', 'Showcase', start, 1500, fx('diningSatisfaction', 6, 'Dining satisfaction +6', true), {
     essential: true, text: 'Shared meals at the table, with a choice of seats',
     spots: {
@@ -66,12 +66,12 @@ export const FACILITIES = [
   f('F20', 'Memory Activity Room', 'Lifestyle', research('Memory', 3), 5000, fx('memoryActivitiesPct', 15, 'Memory-care activities +15%', true), { text: 'Familiar things and gentle activities' }),
   f('F21', 'Sensory Room', 'Lifestyle', research('Memory', 4), 5400, fx('lowStimulationComfort', 12, 'Low-stimulation comfort +12', true), { text: 'Soft light and calm sounds' }),
   f('F22', 'Memory Garden', 'Lifestyle', { type: 'wing', value: 'memory', text: 'Needs the Memory Wing' }, 6200, fx('secureOutdoorMemory', 15, 'Secure outdoor memory support +15', true), { text: 'A safe garden to wander' }),
-  f('F23', 'Clinical Treatment Room', 'Specialist', rank('B'), 6000, fx('complexClinicalPct', 12, 'Complex clinical tasks +12%'), { text: 'Care that would otherwise need a hospital trip' }),
+  f('F23', 'Clinical Treatment Room', 'Specialist', rank('B'), 6000, fx('complexClinicalPct', 12, 'Complex clinical tasks +12%', true), { text: 'Care that would otherwise need a hospital trip' }),
   f('F24', 'Palliative Family Lounge', 'Front desk', { type: 'program', value: 'Palliative 3', text: 'Needs the Palliative program at level 3' }, 5600, fx('endOfLifeFamilySupport', 15, 'End-of-life family support +15'), { text: 'Somewhere quiet for families to stay close' }),
   f('F25', 'Community Day Room', 'Lifestyle', rank('B'), 5800, fx('communityEventSlots', 1, 'Community / volunteer events +1 slot'), { text: 'Volunteers, clubs and visitors' }),
   f('F26', 'Transport Bay', 'Support', rank('B'), 7000, fx('outings', 1, 'Unlocks outings and the resident bus'), { text: 'The minibus for trips out' }),
   f('F27', 'Staff Education Centre', 'Training', rank('B'), 6500, fx('advancedTrainingSpeedPct', 15, 'Advanced training speed +15%'), { text: 'Longer courses for experienced staff' }),
-  f('F28', 'Clinical Governance Office', 'Thinker', rank('A'), 7200, fx('safetyCompliancePct', 10, 'Safety / compliance +10%'), { text: 'Keeps care safe and well recorded' }),
+  f('F28', 'Clinical Governance Office', 'Thinker', rank('A'), 7200, fx('safetyCompliancePct', 10, 'Safety / compliance +10%', true), { text: 'Keeps care safe and well recorded' }),
   f('F29', 'Family Partnership Centre', 'Front desk', rank('A'), 6800, fx('familyTrustPct', 12, 'Family Trust +12%'), { text: 'Families as partners in care' }),
   f('F30', 'High-Care Nursing Wing Hub', 'Maker', rank('A'), 9000, fx('highCareWing', 1, 'Unlocks the High-Care wing'), { text: 'The heart of a high-care wing' }),
   f('F31', 'Rehabilitation Wing Hub', 'Maker', rank('A'), 8800, fx('rehabWing', 1, 'Unlocks Rehab wing expansion'), { text: 'The heart of a rehabilitation wing' }),

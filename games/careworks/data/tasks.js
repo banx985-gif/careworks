@@ -5,7 +5,7 @@
 // must miss none of these), icon (the code-drawn marker over a helper's head: a shape, no text)
 export const TASK_TYPES = {
   bell: { name: 'Call bell', urgency: 5, essential: false, icon: 'bell' },
-  meds: { name: 'Medication round', urgency: 4, essential: true, icon: 'pill' },
+  meds: { name: 'Medication round', urgency: 4, essential: true, icon: 'meds' }, // (Milestone 18: the icon's key renamed — a small cart-and-cross mark)
   wake: { name: 'Wake up', urgency: 3, essential: true, icon: 'sun' },
   settle: { name: 'Settle for the night', urgency: 3, essential: true, icon: 'moon' },
   meal: { name: 'Meal support', urgency: 3, essential: true, icon: 'bowl' },
