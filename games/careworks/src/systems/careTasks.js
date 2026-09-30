@@ -214,7 +214,7 @@ export function scorePair({ task, person, tiles = 0, keyWorker = null, mostFamil
   const W = SCORING;
   let s = task.urgency * W.urgency;
   if (keyWorker && keyWorker === person.id) s += W.assigned;
-  if (task.urgency < TASK_TYPES.bell.urgency && continuity) s += W.continuity; // Milestone 13: their continuity group (never a bell)
+  if (task.urgency < TASK_TYPES.bell.urgency && continuity) s += W.continuity * Number(continuity); // Milestone 13: their continuity group (never a bell); Milestone 17: × 2 for a memory-support resident
   if (task.urgency < TASK_TYPES.bell.urgency && mostFamiliar === person.id) s += W.familiar;
   if (specialty) s += SPECIALTY_SCORE; // Milestone 11: their specialty fits the task (a small tip, like Familiar Care)
   s -= tiles * W.perTile + doneThisBand * W.perTaskDone + (100 - (person.energy ?? 100)) * W.perEnergyUsed;

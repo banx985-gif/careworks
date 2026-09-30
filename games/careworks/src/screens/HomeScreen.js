@@ -39,6 +39,7 @@ import { facilityById } from '../../data/facilities.js';
 import { bandAt, clockText } from '../systems/residentNeeds.js';
 import { TASK_TYPES } from '../../data/tasks.js';
 import { drawTaskMarker, drawBellMarker } from '../ui/taskMarkers.js';
+import { findPath } from '../../../../core/Pathing.js';
 
 const C = THEME.color;
 const S = THEME.size;
@@ -325,7 +326,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     setBuildMode(on) {
       if (buildMode === on) return;
       buildMode = on;
-      Object.assign(B, { ghost: null, picked: null, message: null, drag: null });
+      Object.assign(B, { ghost: null, picked: null, message: null, drag: null, path: null });
       if (on) {
         sheet.close();
         selection.clear();
@@ -479,6 +480,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       assets.detail = detailFor(camera.zoom); // sprites cached near the size they are drawn: sharp, and a plain copy each frame
       for (const it of world.placed) if (it.kind === 'room') assets.draw(ctx, it.def.art, ...rectArgs(artRect(it)));
       if (buildMode) drawBuildFloor(ctx);
+      drawWalkPath(ctx); // (Milestone 17: the safe walking path — stepping stones; the loop being traced in Build Mode)
       if (buildMode) drawPicked(ctx);
       drawPersonShadows(ctx);
       drawSelectionMark(ctx);
@@ -716,6 +718,36 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     }
     ctx.restore();
   }
+  // Milestone 17: the safe walking path — soft stepping stones on its tiles (clearer in Build Mode), and the loop being
+  // traced in amber.
+  function drawWalkPath(ctx) {
+    const saved = world.walkPath?.tiles ?? [];
+    const editing = B.path?.tiles ?? null;
+    if (!saved.length && !editing) return;
+    ctx.save();
+    const stone = (t, fill, stroke, k) => {
+      const c = iso.cellCenter(t.col, t.row);
+      ctx.beginPath();
+      ctx.ellipse(c.x, c.y, iso.halfW * 0.36 * k, iso.halfH * 0.36 * k, 0, 0, Math.PI * 2);
+      ctx.fillStyle = fill;
+      ctx.fill();
+      if (stroke) {
+        ctx.strokeStyle = stroke;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+    };
+    if (!editing) for (const t of saved) stone(t, buildMode ? 'rgba(84, 150, 96, 0.75)' : 'rgba(120, 170, 120, 0.45)', buildMode ? '#3F7A4A' : null, buildMode ? 1.3 : 1);
+    if (editing) {
+      for (const t of editing) {
+        isoPath(ctx, iso.outline(t.col, t.row, 1, 1));
+        ctx.fillStyle = 'rgba(242, 181, 48, 0.45)';
+        ctx.fill();
+      }
+      if (editing.length) stone(editing[0], '#F2B530', '#8A5A00', 1.5);
+    }
+    ctx.restore();
+  }
   function drawBuildFloor(ctx) {
     ctx.save();
     ctx.lineWidth = 1.5;
@@ -828,7 +860,8 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   // --- Build Mode (Milestone 10) ---------------------------------------------------------------------------------------
   // ghost: { defId, uid (a piece being moved) | null (a new one), col, row, res (the check: { ok, reason }) }
   // picked: the placed piece tapped (Move / Sell); message: the last result line
-  const B = { ghost: null, picked: null, message: null, drag: null };
+  // path (Milestone 17): the walking path being traced — { tiles: [{ col, row }] } — or null
+  const B = { ghost: null, picked: null, message: null, drag: null, path: null };
   const sizeOf = (defId) => {
     const r = roomById(defId);
     const f = r ? null : facilityById(defId);
@@ -901,9 +934,19 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
         { id: 'sell', label: can.ok ? `Sell · +${can.refund.toLocaleString('en-GB')}` : 'Sell', accent: C.bad, disabled: !can.ok, onTap: () => onSell?.(it) },
         { id: 'done', label: 'Done', accent: C.good, onTap: () => screen.setBuildMode(false) },
       ];
+    } else if (B.path) {
+      // Milestone 17: tracing the safe walking path
+      const n = B.path.tiles.length;
+      list = [
+        { id: 'pathSave', label: 'Save loop', accent: C.good, disabled: n < 3, onTap: () => savePath() },
+        { id: 'pathUndo', label: 'Undo', accent: C.progress, disabled: !n, onTap: () => B.path.tiles.splice(Math.max(0, n - (B.path.legs?.pop() ?? 1))) },
+        { id: 'pathClear', label: world.walkPath ? 'Remove path' : 'Clear', accent: C.bad, onTap: () => clearPath() },
+        { id: 'cancel', label: 'Cancel', accent: C.progress, onTap: () => (B.path = null) },
+      ];
     } else {
       list = [
         { id: 'shop', label: 'Build', accent: C.action, onTap: () => onShop?.() },
+        { id: 'walkpath', label: 'Walking path', accent: C.progress, onTap: () => (B.path = { tiles: [], legs: [] }) }, // (Milestone 17)
         { id: 'done', label: 'Done', accent: C.good, onTap: () => screen.setBuildMode(false) },
       ];
     }
@@ -911,6 +954,11 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     return list.map((x, i) => ({ ...x, rect: rects[i] }));
   }
   function bannerLine() {
+    if (B.path) {
+      if (B.message) return { text: B.message.text, color: B.message.good ? '#9BE7A4' : '#FFB3A8' };
+      const n = B.path.tiles.length;
+      return { text: n ? `Walking path: ${n} tiles · tap more floor to carry the loop on, then Save loop (it joins back to the start)` : 'Walking path: tap the floor to trace a loop residents can walk calmly (a Memory Garden is ideal)', color: C.textOnDark };
+    }
     if (B.ghost) {
       const g = B.ghost;
       if (g.res?.ok) return { text: g.uid == null ? `${nameOf(g.defId)}: fits here. Drag it or tap the floor, then Place.` : `${nameOf(g.defId)}: fits here. Place here to move it.`, color: '#9BE7A4' };
@@ -935,6 +983,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     }
     if (hitRect(p, bannerRect())) return;
     const c = cellAt(p.x, p.y);
+    if (B.path) return pathTap(c); // (Milestone 17)
     if (B.ghost) {
       if (!c) return;
       const sz = sizeOf(B.ghost.defId);
@@ -944,6 +993,53 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     B.message = null;
     screen.pick(pieceAtCell(c));
   }
+  // Milestone 17: tracing the walking path — each tap joins the new tile to the last by the shortest open way.
+  const openCell = (c) => !!c && !world.grid.isBlocked(c.col, c.row) && world.layout.isOpen(c.col, c.row);
+  function pathTap(c) {
+    B.message = null;
+    if (!openCell(c)) {
+      B.message = { text: 'The path must stay on open floor', good: false };
+      return;
+    }
+    const tiles = B.path.tiles;
+    if (!tiles.length) {
+      tiles.push({ col: c.col, row: c.row });
+      B.path.legs.push(1);
+      return;
+    }
+    const last = tiles[tiles.length - 1];
+    const leg = findPath(world.grid, last, c) ?? [];
+    const add = leg.filter((t) => !(t.col === last.col && t.row === last.row));
+    if (!add.length) return;
+    tiles.push(...add.map((t) => ({ col: t.col, row: t.row })));
+    B.path.legs.push(add.length);
+  }
+  function savePath() {
+    const tiles = B.path.tiles;
+    const last = tiles[tiles.length - 1];
+    const back = (findPath(world.grid, last, tiles[0]) ?? []).filter((t) => !(t.col === tiles[0].col && t.row === tiles[0].row) && !(t.col === last.col && t.row === last.row));
+    const loop = [...tiles, ...back.map((t) => ({ col: t.col, row: t.row }))];
+    const r = world.setWalkPath(loop);
+    if (!r.ok) {
+      B.message = { text: r.reason, good: false };
+      return;
+    }
+    B.path = null;
+    B.message = { text: `Walking path saved: ${loop.length} tiles`, good: true };
+    debug?.log(B.message.text);
+  }
+  function clearPath() {
+    if (B.path.tiles.length) {
+      B.path = { tiles: [], legs: [] };
+      return;
+    }
+    world.setWalkPath(null);
+    B.path = null;
+    B.message = { text: 'Walking path removed', good: true };
+  }
+  screen.pathTapForTests = (col, row) => pathTap({ col, row });
+  screen.pathForTests = () => B.path?.tiles ?? null;
+  screen.bannerButtonsForTests = () => (buildMode ? bannerButtons().map((x) => ({ id: x.id, label: x.label, disabled: !!x.disabled, rect: x.rect })) : []);
   function drawPicked(ctx) {
     const it = B.picked;
     if (!it || B.ghost) return;
@@ -981,7 +1077,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     ctx.roundRect(b.x, b.y, b.w, b.h, THEME.panel.radius);
     ctx.fill();
     ctx.restore();
-    const title = B.ghost ? (B.ghost.uid == null ? `Build: ${nameOf(B.ghost.defId)}` : `Move: ${nameOf(B.ghost.defId)}`) : 'Build Mode';
+    const title = B.path ? 'Walking path' : B.ghost ? (B.ghost.uid == null ? `Build: ${nameOf(B.ghost.defId)}` : `Move: ${nameOf(B.ghost.defId)}`) : 'Build Mode';
     text(ctx, title, b.x + 36, b.y + 56, { size: S.title, bold: true, color: C.textOnDark, baseline: 'middle', maxWidth: b.w - 72 });
     const line = bannerLine();
     text(ctx, line.text, b.x + 36, b.y + 128, { size: S.small, color: line.color, baseline: 'middle', maxWidth: b.w - 72 });

@@ -127,6 +127,8 @@ export const namedTrait = (def) => def.traits.find((t) => TRAITS[t]?.signature) 
 //     { kind: 'shift', pct }                      their preferred shift lifts Morale pct% more
 //     { kind: 'diet', diets: [diet id], pct }     Milestone 15: they can make these special menus (data/dining.js DIETS),
 //                                                 and a resident on one of them is pct% more satisfied when they cook it
+//     { kind: 'memory', pct }                     Milestone 17: life-story sessions and calm with a memory-support
+//                                                 resident go pct% further, and they never count as a "new face"
 //     { kind: 'rehab', pct, goals? }              Milestone 16: rehab goals move pct% more in sessions they lead (only
 //                                                 these goals, if given)
 //     { kind: 'dining', pct }                     Milestone 15: meals they serve lift Social Connection pct% more, and
@@ -160,7 +162,7 @@ export const TRAITS = {
   medicationFocus: live('Medication Focus', 'Medicine rounds go further', task(['meds'], 8)),
   dignityFirst: live('Dignity First', 'Personal care keeps dignity and choice', task(['personal'], 8)),
   fastResponse: later('Fast Response', 'Answers call bells a little faster', 'M25', { bellResponsePct: -10 }),
-  memoryFriendly: later('Memory Friendly', 'Calmer support for residents with memory needs', 'M17', { memoryCarePct: 8 }),
+  memoryFriendly: live('Memory Friendly', 'Calmer support for residents with memory needs: never a new face to them', { kind: 'memory', pct: 8 }), // (Milestone 17)
   companion: live('Companion', 'One-to-one time goes further', task(['visit'], 8)),
   gardenLover: later('Garden Lover', 'Outdoor and garden activities go further', 'M14', { gardenActivityPct: 10 }),
   musicMaker: later('Music Maker', 'Music activities lift Social Connection more', 'M14', { musicActivityPct: 10 }),
@@ -181,7 +183,7 @@ export const TRAITS = {
   trustedCarer: live('Trusted Carer', 'Wake-ups, personal care and settling go further', task(['wake', 'personal', 'settle'], 10)),
   familiarFace: live('Familiar Face', 'Residents get to know them twice as fast', { kind: 'familiar', pct: 100 }),
   eventLeader: live('Event Leader', 'Leads activities: they go further and they seek them out', task(['activity'], 12), match(['activity'])),
-  memoryMaker: later('Memory Maker', 'Life-story and memory sessions go further', 'M17', { memorySessionPct: 12 }),
+  memoryMaker: live('Memory Maker', 'Life-story and memory sessions go further', { kind: 'memory', pct: 12 }),
   mobilityMentor: live('Mobility Mentor', 'Mobility support goes much further', task(['mobility'], 12)),
   reablementLead: live('Reablement Lead', 'Rehab goals move faster in their sessions: home sooner', { kind: 'rehab', pct: 12 }),
   kitchenMentor: live('Kitchen Mentor', 'Meals and drinks go further', task(['meal', 'hydration'], 10)),
@@ -199,7 +201,7 @@ export const TRAITS = {
   perfectPath: sig('Perfect Path', 'Every resident walks a little further', 'M16', 'perfectPath', { independencePct: 20 }),
   homeFeast: sig('Home Feast', 'A monthly feast lifts the whole home', 'M15', 'homeFeast', { feastMood: 10 }),
 };
-export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift', 'diet', 'dining', 'rehab'];
+export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift', 'diet', 'dining', 'rehab', 'memory'];
 
 // Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator; taskTypes = data/tasks.js
 // TASK_TYPES ids (optional: the trait task checks).

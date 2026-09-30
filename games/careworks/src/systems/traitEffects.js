@@ -26,5 +26,7 @@ export const dietPct = (traits, diet) => sum(effectsOf(traits, 'diet').filter((f
 export const diningPct = (traits) => sum(effectsOf(traits, 'dining'), 'pct');
 // Milestone 16: % more on a rehab goal in a session they lead ('rehab')
 export const rehabPct = (traits, goal) => sum(effectsOf(traits, 'rehab').filter((fx) => !fx.goals || fx.goals.includes(goal)), 'pct');
+// Milestone 17: % further with a memory-support resident ('memory')
+export const memoryPct = (traits) => sum(effectsOf(traits, 'memory'), 'pct');
 export const isLive = (id) => !!TRAITS[id]?.live;
 export const pendingOf = (id) => TRAITS[id]?.pendingSystem ?? null;

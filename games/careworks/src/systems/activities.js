@@ -25,7 +25,7 @@ export function feelingOf(def, st, activity) {
   const pref = activity.prefKey ? st?.prefs?.[activity.prefKey] : null;
   if (pref === 'refuse') return 'refuse';
   const tags = new Set([...(st?.tags ?? def?.tags ?? []), def?.interest].filter(Boolean));
-  const loves = activity.likes.tags.some((t) => tags.has(t));
+  const loves = activity.likes.tags.some((t) => tags.has(t)) || !!activity.likes.supports?.includes(def?.support); // (Milestone 17: by support too)
   if (pref === 'dislike' && !loves) return 'dislike';
   if (loves) return 'love';
   if (pref === 'prefer' || activity.likes.personalities.includes(def?.personality)) return 'like';

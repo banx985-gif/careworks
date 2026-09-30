@@ -52,6 +52,7 @@ export function newResidentState(def, { room = null } = {}) {
     mobility: null, // Milestone 16: { base, level, aid, avgNeed } (src/systems/mobility.js; null: from their profile)
     rehab: null, // Milestone 16: their rehab goals while in rehab (null: none)
     falls: null, // Milestone 16: { risk, band, parts } — stored and shown (falls themselves: Milestone 25)
+    memory: null, // Milestone 17: memory support — routine changes, sessions, the Choice signal, stimulation, walks (src/systems/memory.js)
     needs: { ...def.needs },
     outcomes: { ...def.outcomes },
     prefs: { ...def.prefs },
@@ -90,6 +91,7 @@ export function ensureResidentState(saved, def, { room = null } = {}) {
   out.mobility = saved.mobility ? { ...saved.mobility } : null; // (Milestone 16; an M15 save: from their profile)
   out.rehab = saved.rehab ? { ...saved.rehab, start: { ...saved.rehab.start }, goals: { ...saved.rehab.goals }, targets: { ...saved.rehab.targets }, hist: [...(saved.rehab.hist ?? [])] } : null;
   out.falls = saved.falls ? { ...saved.falls, parts: [...(saved.falls.parts ?? [])] } : null;
+  out.memory = saved.memory ? JSON.parse(JSON.stringify(saved.memory)) : null; // (Milestone 17; an M16 save: neutral, from their profile)
   out.room = saved.room ?? room;
   out.log = Array.isArray(saved.log) ? saved.log : [];
   return out;

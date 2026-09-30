@@ -110,7 +110,7 @@ export class GuideSystem {
 
   // Pick the next step if none is waiting; pause the game while one shows.
   update() {
-    if (this.state.off) return;
+    if (this.state.off || this._finishing) return; // (a game event fired while a step is being finished waits for its update)
     const c = this.current;
     if (c?.skipIf && this.shownId !== c.id && this.state.events.includes(c.skipIf)) {
       this.state.done.push(c.id); // waiting to show, but the player has just done it anyway
@@ -143,7 +143,12 @@ export class GuideSystem {
     this.current = null;
     this.shownId = null;
     this._finishPause();
-    this.bus.emit('guide:done', { step: s, skipped });
+    this._finishing = true;
+    try {
+      this.bus.emit('guide:done', { step: s, skipped });
+    } finally {
+      this._finishing = false;
+    }
     this._changed();
     this.update();
   }

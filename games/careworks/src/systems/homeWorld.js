@@ -29,6 +29,11 @@
 // Milestone 16: mobility and rehab (src/systems/mobility.js): each resident's own mobility level and aid (walking speed
 // follows it), MO04 two-person transfers, a daily therapy step and four rehab goals for anyone in rehab, the stored
 // falls-risk number, and a successful discharge (ready to go home → confirmed, or after three days) with its rewards.
+// Milestone 17: memory support (src/systems/memory.js): a steadier routine (continuity counts double, no reseating, a
+// routine-change counter → steady / unsettled), life-story sessions (one-to-one, offered on an unsettled day; and
+// "Life-story time" on the timetable), stimulation by place (a calm spot for the morning rest), walks — on a safe walking
+// path marked in Build Mode, or along the corridor with a gentle walk back — and the stored Choice signal and family
+// connection. No cure mechanic: nothing lowers the Memory need.
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
@@ -101,6 +106,9 @@ import { MEAL_SHIFTS, MEALS, mealById, mealOfStep, KITCHENS, KITCHEN_IDS, PREP, 
 import { createDining, dietOf, favouritesOf, skillsOf, canMake, dietWords, mealQuality, satisfaction, nutritionMult, moodFrom, noteMeal, avgOf } from './dining.js';
 import { dietPct as traitDietPct, diningPct, rehabPct } from './traitEffects.js';
 import { AIDS, TWO_PERSON, GOAL_TASKS, THERAPY_PLACES, THERAPY_NO_SPACE, GOALS, DISCHARGE, REHAB_FUNDING } from '../../data/mobility.js';
+import { MEMORY_SUPPORT, ROUTINE_CHANGE, CONTINUITY_MULT, FAMILIAR_MEMORY, LIFE_STORY, STIMULATION, CALM_PLACES, WALKING } from '../../data/memory.js';
+import { isMemorySupport, themeOf, newMemoryState, noteChange, endMemoryDay, noteChoice, honour, stimulationLift, validatePath, walkChance } from './memory.js';
+import { memoryPct } from './traitEffects.js';
 import { newMobility, driftMobility, noteMobilityNeed, aidSpeed, inRehab, newRehab, gainMult, addGain, missTherapy, endRehabDay, isReady, rehabStatus, rehabRise, rehabProgress, fallsRisk } from './mobility.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
@@ -210,7 +218,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
     return { ...THERAPY_NO_SPACE, piece: null };
   };
+  const calmPiece = () => CALM_PLACES.map((id) => layout.ofDef(id)[0]).find(Boolean) ?? null;
   const placeRef = (p, place) => {
+    if (place === 'calm') {
+      const pc = calmPiece();
+      return pc ? `${pc.id}.calm` : `${p.state.room}.inside`;
+    }
     if (place === 'therapy') {
       const sp = therapySpace(p);
       return sp.piece ? `${sp.piece.id}.therapy` : `${p.state.room}.inside`;
@@ -240,6 +253,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // Overnight: someone whose best friend sits away from them moves to a free seat beside that friend.
   function reseatFriends() {
     for (const p of seated()) {
+      if (p.state.memory && isMemorySupport(p.def)) continue; // (Milestone 17: fewer changes — their seat stays theirs)
       const best = topFriends(care, p.id, seated().map((q) => q.id), 1)[0];
       if (!best || best.friendship < FRIENDSHIP.friendAt) continue;
       const f = byResident(best.other);
@@ -265,6 +279,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (!st.guest) {
       st.mobility ??= newMobility(def, st);
       if (!st.rehab && !st.leaving && inRehab(def, st)) st.rehab = newRehab(def, st, clock.totalDays);
+      if (!st.memory && isMemorySupport(def)) st.memory = newMemoryState(def); // (Milestone 17; an M16 save: neutral)
     }
     // (Milestone 14: everyone walks WALK.speedMultiplier faster; Milestone 16: × their own aid's speed — the M14 numbers)
     p.agent = new Agent({ id: def.id, name: def.name, speed: RESIDENT.speed * WALK.speedMultiplier * aidSpeed(st.mobility?.aid ?? 'none'), noPathTeleportSec: 3 });
@@ -360,13 +375,19 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const clearSteps = () => stepsCache.clear();
   function stepsForState(st, day) {
     const therapy = !!st.rehab?.active && st.rehab.readyDay == null; // (Milestone 16: the therapy step while working on goals)
-    const key = `${st.wakeAt}:${day}:${therapy ? 1 : 0}`;
+    const calm = st.memory && isMemorySupport(residentById(st.id)) ? calmPiece() : null; // (Milestone 17: the morning rest somewhere calm)
+    const key = `${st.wakeAt}:${day}:${therapy ? 1 : 0}:${calm?.id ?? ''}`;
     if (stepsCache.has(key)) return stepsCache.get(key);
     const base = routineFor(st);
     const out = [];
     for (const def of ALL_STEPS) {
       if (def.id === 'therapy') {
         if (therapy) out.push(def);
+        continue;
+      }
+      if (def.id === 'rest' && calm) {
+        const r = base.find((x) => x.id === 'rest');
+        out.push({ ...r, place: 'calm', doing: `Resting at ${facilityById(calm.defId).name.replace(/^/, 'the ')}`, going: `Walking to ${facilityById(calm.defId).name.replace(/^/, 'the ')} for a rest` });
         continue;
       }
       const slot = SLOT_OF[def.id];
@@ -403,6 +424,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const residentPlace = (p) => {
     const st = p.state;
     const step = st.step && dayStep(p, st.step.id, st.step.day);
+    if (st.memory?.walk) return 'walking'; // (Milestone 17)
     return !step || !joined(p) || st.step.status === 'refused' || st.step.status === 'missed' || st.step.tray ? 'room' : step.place;
   };
   const taskPlace = (t) => {
@@ -412,6 +434,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // The spots a helper may use beside this resident at a place: in their room its two; at a shared place the pool,
   // nearest their seat first.
   function helpPool(p, place) {
+    if (place === 'walking') return [p.state.memory?.walk?.helpRef ?? 'hall.cwPost']; // (Milestone 17: out for a walk)
+    if (place === 'calm') {
+      const pc = calmPiece();
+      if (pc) return [`${pc.id}.calm2`, `${pc.id}.calm3`];
+      place = 'room';
+    }
     if (place === 'therapy') {
       const sp = therapySpace(p);
       if (sp.piece) return [`${sp.piece.id}.therapy2`, `${sp.piece.id}.therapy3`];
@@ -478,6 +506,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const pin = pinOf(t);
     if (pin && pin !== q.id) return null;
     if (!pin && t.type !== 'bell' && crew.tooTired(q)) return null;
+    if (t.source === 'lifeStory' && q.role === 'CW' && familiarityOf(care, t.resident, q.id) < LIFE_STORY.careWorkerFrom) return null; // (Milestone 17: a Care Worker who knows them)
     if (t.source === 'kitchen') return scorePair({ task: { ...t, pinned: pin }, person: { id: q.id, role: q.role, energy: q.model.energy }, tiles: tilesBetween(q, kitchenPool()[0]), doneThisBand: q.bandDone ?? 0, now: absNow() });
     const p = byResident(t.resident) ?? arthur;
     // "Is this resident assigned to me" (bible §15): their key worker, or (Milestone 7) staff on the resident's wing
@@ -491,8 +520,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       doneThisBand: q.bandDone ?? 0,
       now: absNow(),
       // Milestone 11: a specialty fits the task; Milestone 12: or a trait that seeks this kind of task ('match')
-      specialty: (staffing?.specialtiesOf(q.id) ?? []).some((sp) => SPECIALTIES[sp]?.tasks.includes(t.type)) || matchesTask(q.model.traits, t.type),
-      continuity: inGroup(q.id, t.resident), // Milestone 13: their continuity group (bible §14)
+      // (Milestone 17: the Memory Care specialty fits any task for a memory-support resident)
+      specialty: (staffing?.specialtiesOf(q.id) ?? []).some((sp) => SPECIALTIES[sp]?.tasks.includes(t.type)) || matchesTask(q.model.traits, t.type) || (!!memoryOf(p) && specialtiesOf(q.id).includes('memoryCare')),
+      continuity: inGroup(q.id, t.resident) ? (memoryOf(p) ? CONTINUITY_MULT : 1) : 0, // Milestone 13: their continuity group (bible §14); Milestone 17: × 2 for memory support
     });
   }
   function claim(t, q) {
@@ -543,17 +573,22 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
     const p = byResident(t.resident);
     // Milestone 13: someone they know well lifts their Mood a little (never an agency worker: they build no Familiar Care)
-    const fx = familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, helper));
-    if (p && fx.mood) p.state.outcomes.mood = clamp(p.state.outcomes.mood + fx.mood);
+    const famBefore = q.agency ? 0 : familiarityOf(care, t.resident, helper);
+    const fx = familiarEffects(famBefore);
+    // (Milestone 17: a familiar face calms a memory-support resident more)
+    if (p && fx.mood) p.state.outcomes.mood = clamp(p.state.outcomes.mood + fx.mood * (memoryOf(p) ? FAMILIAR_MEMORY.moodMult : 1));
+    if (p && memoryOf(p)) memoryTaskDone(p, t, q, famBefore);
     if (p) {
       if (t.source === 'routine') completeRoutine(p, { ...dayStep(p, t.stepId, t.day), drops: t.drops, taskType: t.type }, t.day, helper);
       else {
+        const personal = personalSession(p, t, q, famBefore); // (Milestone 17: a life-story / music-and-memory session)
         applyEffects(p, t, helper);
         if (t.type === 'bell') bellState(care, t.resident).cooldownUntil = absNow() + BELL.cooldownHours;
+        else if (t.source === 'redirect') endWalk(p, 'redirected', helper); // (Milestone 17: walked back together)
+        else log(p, personal ? `${t.name} with ${helperName(helper)}: ${personal}` : `${t.name} (with ${helperName(helper)})`);
         if (t.type === 'hydration') p.state.hydration = { last: absNow() }; // (Milestone 15: their last drink)
         const kind = goalKind(t);
         if (kind) rehabSession(p, kind, helper); // (Milestone 16: therapy, walks and transfers move rehab goals)
-        else log(p, `${t.name} (with ${helperName(helper)})`);
       }
     }
     assignSys.unassign(t, helper);
@@ -757,6 +792,179 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       updateFalls(p);
     }
   }
+  // --- Milestone 17: memory support ---------------------------------------------------------------------------------------
+  const memoryOf = (p) => (p?.state.memory && isMemorySupport(p.def) ? p.state.memory : null);
+  const memoryCoop = (p, mult) => (memoryOf(p) ? Math.max(0, 1 - (1 - mult) * FAMILIAR_MEMORY.cooperationMult) : mult);
+  // A task done for them: a face they hardly know is a routine change (not a Memory Friendly one); a familiar one calms.
+  function memoryTaskDone(p, t, q, famBefore) {
+    const ms = memoryOf(p);
+    // (each new face counts once a day)
+    if (famBefore < ROUTINE_CHANGE.newFaceBelow && !memoryPct(q.model.traits) && !(ms.faces ?? []).includes(q.id)) {
+      ms.faces = [...(ms.faces ?? []), q.id];
+      noteChange(ms, 'newFace');
+    }
+    if (famBefore >= FAMILIAR_MEMORY.comfortAt) p.state.outcomes.comfort = clamp(p.state.outcomes.comfort + FAMILIAR_MEMORY.comfort);
+  }
+  // A personal session for a memory-support resident (a life-story session, SO04's music and memory): a bigger lift with
+  // someone who knows them well, in the Memory Activity Room, or with a Memory Friendly / Memory Maker helper; counted
+  // (SEC-RES-08 reads the count later). → the theme (for the log), or null
+  function personalSession(p, t, q, famBefore) {
+    const ms = memoryOf(p);
+    const music = t.optionId === 'SO04';
+    if (!ms || (t.source !== 'lifeStory' && !music)) return null;
+    const theme = music ? 'favourite music from the past' : themeOf(p.def, p.state);
+    const mult = (famBefore >= LIFE_STORY.familiarAt ? LIFE_STORY.familiarBonus : 1) * (layout.ofDef('F20').length ? LIFE_STORY.roomMult : 1) * (1 + memoryPct(q.model.traits) / 100);
+    t.outcomes = Object.fromEntries(Object.entries(t.outcomes ?? {}).map(([k, v]) => [k, v * mult]));
+    if (!q.agency) addFamiliarity(care, p.id, q.id, LIFE_STORY.familiarityBonus, clock.totalDays);
+    ms.sessions = (ms.sessions ?? 0) + 1;
+    ms.lastSession = { day: clock.totalDays, theme, with: q.id, kind: music ? 'music' : 'lifeStory' };
+    bus?.emit('care:lifeStory', { resident: p.id, staff: q.id, theme });
+    return theme;
+  }
+  // An unsettled day (or a day after several changes): a one-to-one life-story session is offered in the afternoon.
+  function planLifeStory(p, inst, at) {
+    const ms = memoryOf(p);
+    if (!ms || inst.band.id !== 'afternoon') return;
+    if (ms.status !== 'unsettled' && (ms.hist?.at(-1) ?? 0) < ROUTINE_CHANGE.unsettledAt) return;
+    const roles = rolesOnShift(inst.band.id);
+    if (!LIFE_STORY.roles.some((r) => roles.has(r))) return;
+    const due = bandEnd(inst.band, inst.day);
+    if (due <= at) return;
+    addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: 'visit', name: LIFE_STORY.name, source: 'lifeStory', at: LIFE_STORY.offerAt, place: 'resident', roles: [...LIFE_STORY.roles], minutes: LIFE_STORY.minutes, drops: { ...LIFE_STORY.drops }, outcomes: { ...LIFE_STORY.lifts }, opens: Math.max(at, absHour(inst.day, LIFE_STORY.offerAt)), due });
+  }
+  // How busy it is where they are now.
+  function placeLevel(p) {
+    const ms = p.state.memory;
+    if (ms.walk) return ms.walk.kind === 'path' ? 'calm' : STIMULATION.places.walking;
+    const place = residentPlace(p);
+    if (place === 'dining') {
+      const s = p.state.step;
+      const diners = residents.filter((o) => o.state.step?.id === s?.id && o.state.step.day === s?.day && ['waiting', 'doing'].includes(o.state.step.status) && residentPlace(o) === 'dining' && seatPiece(o, 'dining') === seatPiece(p, 'dining')).length;
+      return diners > SEATING.perRoom ? STIMULATION.places.diningCrowded : STIMULATION.places.dining;
+    }
+    if (place === 'calm') return STIMULATION.facilities[calmPiece()?.defId] ?? 'low';
+    return STIMULATION.places[place] ?? 'medium';
+  }
+  // An hour's stimulation: a busy place for long lowers Comfort a little, a quiet one lifts it (more in their own
+  // Memory Support Room, or with EN03 / EN04 on their plan).
+  function memoryHour(p, hours) {
+    const ms = memoryOf(p);
+    if (!ms) return;
+    if (world.isAsleep(p) || !joined(p) || p.state.leaving) {
+      ms.stim = { level: 'low', highHours: 0 };
+      return;
+    }
+    const level = placeLevel(p);
+    const highHours = level === 'high' ? (ms.stim?.highHours ?? 0) + hours : 0;
+    let mult = 1;
+    if (residentPlace(p) === 'room' && !ms.walk) {
+      mult *= STIMULATION.roomBonus[roomList().find((r) => r.id === p.state.room)?.defId] ?? 1;
+      mult *= STIMULATION.plan[p.state.plan?.EN] ?? 1;
+    }
+    ms.stim = { level, highHours: Math.round(highHours * 1000) / 1000 };
+    const lift = stimulationLift(level, highHours, mult) * hours;
+    if (lift) p.state.outcomes.comfort = clamp(p.state.outcomes.comfort + lift);
+  }
+  // --- walks: never locked in, never restrained, never punished ---
+  function walkTick(p) {
+    const ms = memoryOf(p);
+    if (!ms) return;
+    const st = p.state;
+    if (ms.walk) {
+      if (ms.walk.kind === 'path' && p.agent.state !== 'walking') nextPathLeg(p);
+      else if (ms.walk.kind === 'corridor' && absNow() >= ms.walk.until) endWalk(p, 'alone');
+      else if (ms.walk.kind === 'corridor' && p.agent.state !== 'walking' && !ms.walk.there) {
+        const t = spot(ms.walk.ref);
+        const here = grid.worldToTile(p.agent.x, p.agent.y);
+        if (here && (here.col !== t.col || here.row !== t.row)) p.agent.walkTo(grid, t.col, t.row);
+        else ms.walk.there = true;
+      }
+      return;
+    }
+    if (st.leaving || !joined(p) || world.isAsleep(p) || st.step?.status !== 'doing' || p.agent.state === 'walking') return;
+    const h = hourNow();
+    if (h < WALKING.fromHour || h > WALKING.toHour) return;
+    const block = `${clock.totalDays}:${Math.floor(h * 4)}`;
+    if (ms.walkCheck === block) return;
+    ms.walkCheck = block;
+    if (new Rng(`${seed}:walk:${p.id}:${block}`).next() >= walkChance(ms) / 4) return;
+    startWalk(p);
+  }
+  function startWalk(p) {
+    const ms = memoryOf(p);
+    const tiles = care.walkPath?.tiles;
+    if (tiles?.length) {
+      const here = grid.worldToTile(p.agent.x, p.agent.y) ?? tiles[0];
+      let i0 = 0;
+      tiles.forEach((t, i) => {
+        if (Math.abs(t.col - here.col) + Math.abs(t.row - here.row) < Math.abs(tiles[i0].col - here.col) + Math.abs(tiles[i0].row - here.row)) i0 = i;
+      });
+      ms.walk = { kind: 'path', i0, step: 0, from: absNow(), helpRef: 'hall.cwPost' };
+      log(p, 'Went for a walk on the walking path');
+    } else {
+      const rng = new Rng(`${seed}:walkto:${p.id}:${clock.totalDays}:${Math.floor(hourNow() * 4)}`);
+      const [ref, helpRef] = rng.next() < 0.5 ? ['hall.cwRound', 'hall.ahRound'] : ['hall.ahRound', 'hall.cwRound'];
+      ms.walk = { kind: 'corridor', ref, helpRef, from: absNow(), until: absNow() + WALKING.returnAfter };
+      const inst = bandInstance(hourNow(), clock.totalDays);
+      const R = WALKING.redirect;
+      addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: 'visit', urgency: 2, name: R.name, source: 'redirect', place: 'resident', roles: [...R.roles], minutes: R.minutes, drops: {}, outcomes: {}, opens: absNow(), due: absNow() + WALKING.returnAfter });
+      log(p, 'Went for a walk along the corridor');
+    }
+    ms.walk.falls = updateFalls(p)?.risk ?? null; // (Milestone 16's falls risk applies while walking; no falls until M25)
+    bus?.emit('care:walk', { resident: p.id, kind: ms.walk.kind });
+  }
+  // The path, a few tiles at a time; once round the loop, back to where they were, a little calmer.
+  function nextPathLeg(p) {
+    const ms = memoryOf(p);
+    const tiles = care.walkPath?.tiles;
+    if (!ms?.walk || !tiles?.length) return ms?.walk && endWalk(p, 'alone');
+    if (ms.walk.step >= tiles.length) return endWalk(p, 'path');
+    ms.walk.step = Math.min(tiles.length, ms.walk.step + 3);
+    const t = tiles[(ms.walk.i0 + ms.walk.step) % tiles.length];
+    p.agent.walkTo(grid, t.col, t.row);
+  }
+  // A walk is over: on the path (a calm walk: a small lift), walked back with someone, or back on their own. Nothing is
+  // ever held against them. back: walk them back to where their step is (not when their next step is taking over).
+  function endWalk(p, how, helper = null, quiet = false) {
+    const ms = p.state.memory;
+    if (!ms?.walk) return;
+    const kind = ms.walk.kind;
+    ms.walk = null;
+    for (const t of care.tasks) if (t.resident === p.id && t.source === 'redirect' && isOpen(t)) finish(t, 'self');
+    if (how === 'path') {
+      p.state.outcomes.comfort = clamp(p.state.outcomes.comfort + WALKING.pathComfort);
+      p.state.outcomes.mood = clamp(p.state.outcomes.mood + WALKING.pathMood);
+      log(p, 'Back from a calm walk on the walking path');
+    } else if (how === 'redirected') log(p, `Walked back together with ${helperName(helper)}`);
+    else if (how === 'alone') log(p, kind === 'corridor' ? 'Came back from the walk' : 'Back from the walk');
+    bus?.emit('care:walkEnd', { resident: p.id, how });
+    if (quiet) return;
+    const s = p.state.step;
+    const step = s && dayStep(p, s.id, s.day);
+    if (step) walkResident(p, step, s.day);
+  }
+  function memoryDay(day) {
+    for (const p of inSession()) {
+      const ms = memoryOf(p);
+      if (!ms) continue;
+      const was = ms.status;
+      endMemoryDay(ms, p.state);
+      noteChoice(ms, p.state);
+      if (ms.status !== was) log(p, ms.status === 'unsettled' ? 'Seems unsettled: a steady day and a familiar face would help' : 'Settled again: a steadier routine');
+    }
+  }
+  // The safe walking path (one loop for the home). tiles: [{ col, row }] → { ok, reason }; null clears it.
+  function setWalkPath(tiles) {
+    if (tiles == null) {
+      delete care.walkPath;
+      return { ok: true, reason: null };
+    }
+    const r = validatePath(tiles, (c, rr) => layout.isOpen(c, rr) && !grid.isBlocked(c, rr));
+    if (!r.ok) return r;
+    care.walkPath = { tiles: tiles.map((t) => ({ col: t.col, row: t.row })) };
+    bus?.emit('home:walkPath', { tiles: tiles.length });
+    return r;
+  }
   // --- kitchen prep, drinks rounds (planned with the band's tasks) ---
   function planKitchen(inst, at) {
     const roles = rolesOnShift(inst.band.id);
@@ -811,6 +1019,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (!s.joined.includes(p.id)) s.joined.push(p.id);
     if (feeling === 'love' || feeling === 'like' || s.birthday) p.state.lastLikedDay = day;
     delete p.state.wouldEnjoy;
+    // Milestone 17: Life-story time — personal for a memory-support resident (their own theme), better in the Memory
+    // Activity Room
+    if (act.id === 'lifeStory' && memoryOf(p)) {
+      const ms = memoryOf(p);
+      const f20 = layout.ofDef('F20').length ? LIFE_STORY.roomMult : 1;
+      for (const [o, v] of Object.entries(LIFE_STORY.lifts)) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v * 0.5 * f20); // (half a one-to-one session's lift, in a small group)
+      ms.sessions = (ms.sessions ?? 0) + 1;
+      ms.lastSession = { day, theme: themeOf(p.def, p.state), with: null, kind: 'group' };
+      log(p, `Life-story time: ${themeOf(p.def, p.state)}`);
+    }
   }
   // Milestone 14: on a birthday the resident's most familiar staff on shift drop by (a short visit each, pinned to them).
   function birthdayVisits(p, day) {
@@ -886,6 +1104,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       s.helper = null;
       log(p, `Missed: ${step.name} (no help came)`);
       if (s.id === 'therapy') missTherapy(p.state.rehab); // (Milestone 16: a missed session knocks their confidence)
+      noteChange(memoryOf(p), 'missed'); // (Milestone 17: a routine step that didn't happen)
       return;
     }
     if (t && isOpen(t)) finish(t, 'self');
@@ -905,12 +1124,14 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   };
   function startStep(p, step, day) {
     const st = p.state;
+    if (st.memory?.walk) endWalk(p, 'step', null, true); // (Milestone 17: the next step takes over)
     closePrevious(p);
     const t = routineTask(p, step.id, day);
     // Milestone 7, fallback step 4: short-staffed, so the day's activity is scaled back (never held against them)
     if (step.activity && coverage.skipsActivity(day)) {
       st.step = { id: step.id, day, status: 'refused', scaled: true, helper: null };
       if (t && isOpen(t)) finish(t, 'scaled');
+      noteChange(memoryOf(p), 'missed'); // (Milestone 17)
       addLog(st, day, now(), 'Activities scaled back — short-staffed');
       const r = placeTile(p, 'room');
       p.agent.walkTo(grid, r.col, r.row);
@@ -925,7 +1146,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const eligible = crew.people.filter((q) => canHelp(q) && roster.onShift(q.id)).map((q) => q.id);
     const offeredBy = t?.slots[0] ?? staffState.assignments[pinKey(p.id, step.id)] ?? mostFamiliar(care, p.id, usual) ?? mostFamiliar(care, p.id, eligible);
     const offerer = offeredBy && crew.byId(offeredBy);
-    const mult = offerer && !offerer.agency ? familiarEffects(familiarityOf(care, p.id, offeredBy)).dislikeMult : 1;
+    const mult = memoryCoop(p, offerer && !offerer.agency ? familiarEffects(familiarityOf(care, p.id, offeredBy)).dislikeMult : 1);
     // Milestone 14: an activity session — they join or decline by their own choice (made at the start of the day; a
     // maybe is settled now). Declining is a normal choice: logged, never a failure, never overridden, no penalty.
     if (step.activity && step.slot) {
@@ -939,6 +1160,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         st.step = { id: step.id, day, status: 'refused', declined: true, helper: null };
         if (t && isOpen(t)) finish(t, 'refused');
         if (!s.declined.includes(p.id)) s.declined.push(p.id);
+        honour(memoryOf(p)); // (Milestone 17: the Choice signal — their decline respected)
         addLog(st, day, now(), `Chose not to join ${step.name}: free time in ${theirOf(p.id)} room`);
         const r = placeTile(p, 'room');
         p.agent.walkTo(grid, r.col, r.row);
@@ -965,6 +1187,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       st.step = { id: step.id, day, status: 'refused', helper: null };
       if (t && isOpen(t)) finish(t, 'refused'); // a refused task ends here: logged, never retried this band
       refuseStep(st, step, day, now());
+      honour(memoryOf(p));
       const r = placeTile(p, 'room'); // they stay in (or go back to) their room
       p.agent.walkTo(grid, r.col, r.row);
       bus?.emit('care:step', { resident: st.id, step: step.id, status: 'refused' });
@@ -1018,6 +1241,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     for (const t of tasks ?? []) {
       if (!t.optionRefused) continue;
       log(p, `Refused: ${label(t)} (${optionById(t.optionId)?.name ?? 'plan option'})`);
+      honour(memoryOf(p));
       bus?.emit('care:task', { id: t.id, type: t.type, status: 'refused', resident: t.resident });
     }
   }
@@ -1032,6 +1256,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       dining.prune(clock.totalDays);
       planKitchen(inst, at); // (Milestone 15: kitchen prep for the band's meals, and each resident's drinks rounds)
       for (const p of residents) if (inCare(p)) planRounds(p, inst, at);
+      for (const p of residents) if (inCare(p)) planLifeStory(p, inst, at); // (Milestone 17)
       for (const p of residents) if (inCare(p)) logRefused(p, secondHelpers(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p), steps: stepsFor(p, inst.day) })));
     }
     for (const p of residents) {
@@ -1097,11 +1322,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           dining.record(t.day, t.meal).prep.status = 'cooking';
           continue;
         }
-        const refused = decideTask(p.state, t, seed, familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, q.id)).dislikeMult) === 'refuse';
+        const refused = decideTask(p.state, t, seed, memoryCoop(p, familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, q.id)).dislikeMult)) === 'refuse';
         if ((t.pref && p.state.prefs?.[t.pref] === 'dislike') || (t.optionId && p.state.optionPrefs?.[t.optionId] === 'dislike')) countDislike(p.state, refused);
         if (refused) {
           finish(t, 'refused'); // they said no: it ends cleanly and is not tried again this band
           log(p, `Said no to ${label(t)}`);
+          honour(memoryOf(p));
           continue;
         }
         t.status = 'working';
@@ -1328,6 +1554,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       }
     }
     mobilityDay(day); // (Milestone 16: rehab progress, mobility levels and aids, ready to go home, falls risk)
+    memoryDay(day); // (Milestone 17: steady / unsettled, the Choice signal)
     // Milestone 15: yesterday's food (a simple cost per meal served), today's diet tags
     const meals = dining.served(day - 1);
     if (meals) ledger.economy.add('credits', -meals * FOOD_COST.perMeal, `Food: ${meals} meal${meals === 1 ? '' : 's'} served`, 'food');
@@ -1535,6 +1762,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         riseNeeds(p.state, hours, world.isAsleep(p));
         driftOutcomes(p.state, hours);
         noteMobilityNeed(p.state, hours); // (Milestone 16)
+        if (p.state.memory) memoryHour(p, hours); // (Milestone 17: stimulation)
       }
       const b = bandAt(hourNow());
       if (b !== band) {
@@ -1568,6 +1796,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           }
           startStep(p, r.step, r.day);
         }
+        if (p.state.memory) walkTick(p); // (Milestone 17: a walk of their own)
       }
       tickTasks(hours);
       for (const p of residents) p.agent.update(g, grid);
@@ -1738,6 +1967,28 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const unmet = seated().filter((p) => dietOf(p.state) !== 'standard' && !world.dietMadeByTeam(p.id));
       if (unmet.length) warnings.push(`${unmet.map((p) => first(p.name)).join(', ')}: nobody on the team can make ${unmet.length === 1 ? dietWords(dietOf(unmet[0].state)) : 'their menus'} (the Nutrition specialty or a Nutrition Office would).`);
       return { avg, lowest, recent, warnings, served: here.length };
+    },
+    // --- Milestone 17: memory support -------------------------------------------------------------------------------------
+    isMemorySupport: (residentId) => !!byResident(residentId) && isMemorySupport(byResident(residentId).def),
+    memoryOf: (residentId) => memoryOf(byResident(residentId)),
+    themeOf: (residentId) => (byResident(residentId) ? themeOf(byResident(residentId).def, byResident(residentId).state) : null),
+    stimulationOf: (residentId) => (memoryOf(byResident(residentId)) ? placeLevel(byResident(residentId)) : null),
+    calmPlace: () => calmPiece(),
+    get walkPath() {
+      return care.walkPath ?? null;
+    },
+    setWalkPath,
+    checkWalkPath: (tiles) => validatePath(tiles, (c, rr) => layout.isOpen(c, rr) && !grid.isBlocked(c, rr)),
+    // Offer a life-story session now (the resident card): a one-to-one task this band. → { ok, reason }
+    offerLifeStory(residentId) {
+      const p = byResident(residentId);
+      if (!memoryOf(p)) return { ok: false, reason: 'Life-story sessions are for residents with memory support.' };
+      if (care.tasks.some((t) => t.resident === p.id && t.source === 'lifeStory' && isOpen(t))) return { ok: false, reason: 'A session is already on its way.' };
+      const inst = bandInstance(hourNow(), clock.totalDays);
+      const roles = rolesOnShift(inst.band.id);
+      if (!LIFE_STORY.roles.some((r) => roles.has(r))) return { ok: false, reason: 'Needs a Lifestyle Coordinator or a Care Worker on shift.' };
+      addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: 'visit', name: LIFE_STORY.name, source: 'lifeStory', at: hourNow(), place: 'resident', roles: [...LIFE_STORY.roles], minutes: LIFE_STORY.minutes, drops: { ...LIFE_STORY.drops }, outcomes: { ...LIFE_STORY.lifts }, opens: absNow(), due: bandEnd(inst.band, inst.day) });
+      return { ok: true, reason: null };
     },
     // --- Milestone 16: mobility, rehab, discharge -----------------------------------------------------------------------
     // Their aid and level · the prop drawn beside them where they sit (a frame or wheelchair; null walking or for a stick)
@@ -2086,6 +2337,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const r = layout.move(uid, col, row);
       if (!r.ok) return r;
       relayout({ moved: { from: r.from, to: { col, row }, box: r.piece.box } });
+      for (const p of residents) if (p.state.room === r.piece.id) noteChange(memoryOf(p), 'room'); // (Milestone 17: their room moved)
       bus?.emit('home:moved', { id: r.piece.id });
       return r;
     },

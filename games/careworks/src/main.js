@@ -80,6 +80,7 @@ import { ACTIVITIES, SCHEDULABLE, activityById, TIMETABLE, COMMUNITY_EVENTS } fr
 import { facilityById } from '../data/facilities.js';
 import { DIETS, dishById, dishesOf, mealById, SAT_REASONS, HYDRATION, KITCHENS, TROLLEYS } from '../data/dining.js';
 import { AIDS, GOALS, DISCHARGE, REHAB_FUNDING } from '../data/mobility.js';
+import { WALKING } from '../data/memory.js';
 import { yearsEmployed } from './systems/staffTeam.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
@@ -265,7 +266,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left', 'care:birthday', 'care:ready', 'care:discharge', 'care:aid'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left', 'care:birthday', 'care:ready', 'care:discharge', 'care:aid', 'care:walk', 'care:walkEnd', 'care:lifeStory', 'home:walkPath'],
   save: () => saveRun(),
   stamp: () => (open && !spawn ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && !spawn && router.currentName === 'home' && !open.world.clock.paused,
@@ -1019,6 +1020,30 @@ function openDishPicker(dow) {
     };
   });
 }
+// --- Milestone 17: memory support ----------------------------------------------------------------------------------------
+// Respectful, plain words: a steady routine, familiar faces, their own story, calm places and walks of their own.
+const CHANGE_WORDS = { newFace: 'a new face', room: 'a room move', seat: 'a seat change', missed: 'a missed routine step' };
+const STIM_WORDS = { high: 'somewhere busy', medium: 'somewhere a little busy', low: 'somewhere quiet', veryLow: 'somewhere very calm', calm: 'somewhere calm' };
+function memorySections(w, it) {
+  const ms = w.memoryOf(it.id);
+  if (!ms) return [];
+  const they = theirOf(it.id) === 'her' ? 'she' : 'he';
+  const today = Object.entries(ms.kinds ?? {}).map(([k, n]) => `${n > 1 ? `${n} × ` : ''}${CHANGE_WORDS[k] ?? k}`);
+  const lines = [
+    { text: `Routine: ${ms.status}${ms.status === 'unsettled' ? ' (a few changes lately: familiar faces and a steady day help)' : ''}`, color: ms.status === 'steady' ? COL.good : COL.warn },
+    { text: today.length ? `Changes today: ${today.join(', ')}` : 'No changes today', color: COL.textMuted },
+    `Life story: ${w.themeOf(it.id)}`,
+    { text: `Personal sessions: ${ms.sessions}${ms.lastSession ? ` · last ${ms.lastSession.day === w.clock.totalDays ? 'today' : `${w.clock.totalDays - ms.lastSession.day} day${w.clock.totalDays - ms.lastSession.day === 1 ? '' : 's'} ago`}${ms.lastSession.with ? ` with ${first(w.byId(ms.lastSession.with)?.name ?? '')}` : ''}` : ''}`, color: COL.actionDark },
+    { text: `Now ${STIM_WORDS[w.stimulationOf(it.id)] ?? 'somewhere quiet'}`, color: COL.textMuted },
+  ];
+  if (ms.walk) lines.push({ text: ms.walk.kind === 'path' ? `Out for a walk on the walking path${ms.walk.falls != null ? ` (falls risk ${ms.walk.falls})` : ''}` : `Out for a walk along the corridor: someone will walk back with ${theirOf(it.id) === 'her' ? 'her' : 'him'}`, color: COL.actionDark });
+  else if (!w.walkPath) lines.push({ text: `Likes a walk now and then: a safe walking path helps (Build Mode → Walking path)`, color: COL.textMuted });
+  lines.push({ text: `Choices honoured: ${ms.choice.honoured} · ${they === 'she' ? 'her' : 'his'} say is always final`, color: COL.textMuted });
+  return [{ title: 'Memory support', lines, columns: 1, buttons: [{ id: `memory:lifeStory:${it.id}`, label: 'Offer a life-story session', sub: 'One to one, about their own story', accent: COL.action, onTap: () => {
+    const r = w.offerLifeStory(it.id);
+    if (r.ok) autosave.request('lifeStory');
+  } }] }];
+}
 // --- Milestone 16: mobility, rehab goals, falls risk, discharge ----------------------------------------------------------
 const REHAB_COLOUR = { 'Ready to go home': COL.good, 'On track': COL.good, Slow: COL.warn, 'Just started': COL.actionDark };
 function readyNotice(w, r, from) {
@@ -1665,6 +1690,7 @@ function residentSections(w, it) {
     activitySection(w, it),
     mealsSection(w, it),
     ...rehabSections(w, it),
+    ...memorySections(w, it),
     { title: 'Needs', lines: [{ text: `How much support ${they} needs right now`, color: COL.textMuted }], bars: NEEDS.map((n) => ({ label: n.name, value: st.needs[n.id], color: COL.progress })) },
     { title: 'Outcomes', bars: OUTCOMES.map((o) => ({ label: o.name, value: st.outcomes[o.id], color: COL.good })) },
     { title: 'Today', lines: log.length ? log : ['Nothing yet today'] },
@@ -1972,6 +1998,10 @@ function openHomeSheet(id, from = null) {
     }
     if (it.defId === 'F03') sections.push(...diningSections(w)); // (Milestone 15)
     if (it.defId === 'F04' || it.defId === 'F16') sections.push(...kitchenSections(w, it));
+    // Milestone 17: the memory-support places
+    if (it.defId === 'F21' || it.defId === 'F22' || it.defId === 'F06') lines.push({ text: w.calmPlace()?.id === it.id ? 'A calm place: residents with memory support have their morning rest here' : 'A calm place to sit', color: COL.actionDark });
+    if (it.defId === 'F20') lines.push({ text: 'Life-story time and memory-care sessions go further here', color: COL.actionDark });
+    if (it.defId === 'F22' && !w.walkPath) lines.push({ text: 'Mark a safe walking path round it in Build Mode (Walking path)', color: COL.textMuted });
     if (it.defId === 'F17') lines.push({ text: 'Plans every special menu (soft, balanced, small plates, hearty), whoever is cooking', color: COL.actionDark });
     if (it.defId === 'F09') sections.push({ columns: 1, buttons: [{ id: 'place:recruit', label: 'Recruit', sub: `${w.staffing.board.length} candidates · Staff ${w.team.length} / ${w.staffing.cap}`, accent: COL.action, onTap: () => openRecruit() }] });
     if (it.defId === 'F11') {
