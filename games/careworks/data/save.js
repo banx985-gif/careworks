@@ -8,7 +8,7 @@ export const SAVE = {
   count: 4,
   prefix: 'campaign_',
   accountKey: 'account',
-  version: 18, // 2 = Milestone 2 (the clock and the residents' state), 3 = Milestone 3 (the staff), 4 = Milestone 4 (care
+  version: 19, // 2 = Milestone 2 (the clock and the residents' state), 3 = Milestone 3 (the staff), 4 = Milestone 4 (care
   // plans, tasks, call bells, familiarity), 5 = Milestone 5 (the Dining Room and Staff Room, the props, Credits / Care
   // Tokens), 6 = Milestone 6 (every resident, the 24 × 16 home, applicants, the ledger), 7 = Milestone 7 (three
   // shifts, floats, wings, on call, coverage history, agency hires), 8 = Milestone 8 (plan reviews, stale reasons,
@@ -20,6 +20,7 @@ export const SAVE = {
   // satisfaction), 16 = Milestone 16 (mobility levels and aids, rehab goals, falls risk, discharges, rewards counters,
   // family records), 17 = Milestone 17 (memory support: routine changes, personalised sessions, the Choice signal,
   // stimulation, walks, the walking path), 18 = Milestone 18 (clinical: medicine rounds, round safety history, observations, open alerts and
-  // their choices, hospital transfers under way; renamed ids); src/systems/facility.js
+  // their choices, hospital transfers under way; renamed ids), 19 = Milestone 19 (family records and Family Trust with every
+  // change, visits and visitors under way, meetings, compliments, complaints and their trails, requests); src/systems/facility.js
   // SAVE_MIGRATIONS moves older saves
 };

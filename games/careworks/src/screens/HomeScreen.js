@@ -39,6 +39,7 @@ import { facilityById } from '../../data/facilities.js';
 import { bandAt, clockText } from '../systems/residentNeeds.js';
 import { TASK_TYPES } from '../../data/tasks.js';
 import { drawTaskMarker, drawBellMarker } from '../ui/taskMarkers.js';
+import { VISITOR_LOOK } from '../../data/family.js';
 import { findPath } from '../../../../core/Pathing.js';
 
 const C = THEME.color;
@@ -134,9 +135,11 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   };
   // Milestone 18: everyone drawn — not a resident away at the hospital service
   const shownPeople = () => (world.hiddenPerson ? world.people.filter((p) => !world.hiddenPerson(p)) : world.people);
+  // Milestone 19: visitors (code-drawn, a name tag; tapping one opens their resident's card)
+  const shownVisitors = () => world?.visitors ?? [];
   // Draw order: plan x + y (further back first). A walk-in room is part of the floor, so it is always under people.
   const depthOf = (it) => {
-    if (isPerson(it)) return it.agent.x + it.agent.y;
+    if (isPerson(it) || it.kind === 'visitor') return it.agent.x + it.agent.y;
     if (it.kind === 'wall') return (it.col + it.row + 1) * CELL;
     if (it.kind === 'room') return -1;
     return (it.fp.col + it.fp.w / 2 + it.fp.row + it.fp.h / 2) * CELL;
@@ -214,7 +217,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   function updateMotion(dt) {
     if (!world) return;
     if (!world.clock.paused) animT += dt;
-    for (const p of world.people) {
+    for (const p of [...world.people, ...shownVisitors()]) {
       const m = motionOf(p);
       const dx = p.agent.x - m.x;
       const dy = p.agent.y - m.y;
@@ -248,13 +251,17 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   const pickAt = (sx, sy) => {
     const w = camera.screenToWorld(sx, sy);
     const hit = (r) => w.x >= r.x && w.x <= r.x + r.w && w.y >= r.y && w.y <= r.y + r.h;
-    const people = (world?.people ?? []).filter((p) => hit(tapRect(p)));
-    if (people.length > 1) {
+    // (Milestone 19: a visitor counts too, and stands for their resident: the tap opens that resident's card)
+    const bodyOf = (p) => (p.kind === 'visitor' ? visitorRect(p) : tapRect(p));
+    const people = [...(world?.people ?? []), ...shownVisitors()].filter((p) => hit(bodyOf(p)));
+    if (people.length) {
       const dist = (p) => {
-        const r = tapRect(p);
+        const r = bodyOf(p);
         return Math.abs(w.x - (r.x + r.w / 2)) + Math.abs(w.y - (r.y + r.h / 2)) * 0.35;
       };
-      return people.reduce((a, b) => (dist(b) < dist(a) ? b : a));
+      const best = people.length > 1 ? people.reduce((a, b) => (dist(b) < dist(a) ? b : a)) : people[0];
+      if (best.kind === 'visitor') return world.residentById(best.resident) ?? null;
+      if (people.length > 1) return best;
     }
     return selection.pick(w.x, w.y);
   };
@@ -299,8 +306,8 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     },
     // Screen point on a person's body or a place's art (tests): the visible middle of what a finger would tap.
     screenPointOf(id) {
-      const it = world.byId(id);
-      const r = tapRect(it);
+      const it = world.byId(id) ?? shownVisitors().find((x) => x.id === id); // (Milestone 19: a visitor too)
+      const r = it.kind === 'visitor' ? visitorRect(it) : tapRect(it);
       return camera.worldToScreen(r.x + r.w / 2, r.y + r.h * (it.kind === 'room' ? 0.45 : 0.55));
     },
     screenPointOfCell(col, row) {
@@ -487,11 +494,12 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       if (buildMode) drawPicked(ctx);
       drawPersonShadows(ctx);
       drawSelectionMark(ctx);
-      const items = [...world.placed.filter((p) => p.kind !== 'room'), ...world.props, ...(world.decor ?? []), ...walls, ...shownPeople()].sort((a, b) => depthOf(a) - depthOf(b));
+      const items = [...world.placed.filter((p) => p.kind !== 'room'), ...world.props, ...(world.decor ?? []), ...walls, ...shownPeople(), ...shownVisitors()].sort((a, b) => depthOf(a) - depthOf(b));
       for (const it of items) {
         if (it.kind === 'wall') drawWall(ctx, it);
         else if (it.kind === 'station') assets.draw(ctx, it.def.art, ...rectArgs(artRect(it)));
         else if (it.kind === 'prop') drawProp(ctx, it);
+        else if (it.kind === 'visitor') drawVisitor(ctx, it);
         else drawPerson(ctx, it);
       }
       if (buildMode && B.ghost) drawGhost(ctx);
@@ -500,7 +508,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       drawNight(ctx);
       // Name tags in screen space: always the small text size (28), whatever the zoom.
       layoutTags(ctx);
-      for (const p of shownPeople()) drawTag(ctx, p);
+      for (const p of [...shownPeople(), ...shownVisitors()]) drawTag(ctx, p);
       drawMarkers(ctx); // a status icon over each staff member (their task, resting, tired); the call bell over Arthur
       // The care pops, in the world but over the tags for their second or two (so a name never hides one).
       if (vfx) {
@@ -638,7 +646,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   function drawPersonShadows(ctx) {
     ctx.save();
     ctx.fillStyle = L.personShadow;
-    for (const p of shownPeople()) {
+    for (const p of [...shownPeople(), ...shownVisitors()]) {
       const f = feetOf(p);
       ctx.beginPath();
       ctx.ellipse(f.x, f.y - 4, 40, 15, 0, 0, Math.PI * 2);
@@ -678,6 +686,66 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     if (aid) assets.draw(ctx, aid, ax, f.y - ah, aw, ah);
     drawCharacter(ctx, assets, p.art, f.x, f.y, r.w, r.h, pose);
     if (cart) assets.draw(ctx, cart, cx, f.y - ch, cw, ch);
+  }
+  // Milestone 19: a visitor — a plain code-drawn figure (legs, an outdoor coat, a head with hair, a small bag), a little
+  // shorter than the art people so the name tag reads it; the same hop as everyone while walking.
+  const visitorRect = (x) => {
+    const f = feetOf(x);
+    const h = PERSON.height * 0.82;
+    return { x: f.x - h * 0.2, y: f.y - h, w: h * 0.4, h };
+  };
+  const pickOf = (list, id) => {
+    let n = 0;
+    for (const ch of id) n = (n * 31 + ch.charCodeAt(0)) >>> 0;
+    return list[n % list.length];
+  };
+  function drawVisitor(ctx, x) {
+    const m = motionOf(x);
+    const walking = x.agent.state === 'walking';
+    const t = walking ? m.stride / (MOTION.stride * WALK.speedMultiplier) : animT;
+    const bob = walking ? Math.abs(Math.sin(t * Math.PI)) * MOTION.staff.walkBobPx * 1.2 : Math.sin(animT * Math.PI * 2 * MOTION.resident.idleBreathPerSec) * MOTION.resident.idleBreathPx;
+    const f = feetOf(x);
+    const H = PERSON.height * 0.82;
+    const cx = f.x;
+    const y = f.y - bob;
+    const L = VISITOR_LOOK;
+    ctx.save();
+    ctx.lineWidth = 3;
+    ctx.strokeStyle = C.outline;
+    // legs (a small stride while walking)
+    const step = walking ? Math.sin(t * Math.PI) * H * 0.04 : 0;
+    ctx.fillStyle = L.legs;
+    for (const [dx, s] of [[-H * 0.07, step], [H * 0.02, -step]]) {
+      ctx.beginPath();
+      ctx.roundRect(cx + dx + s, y - H * 0.3, H * 0.075, H * 0.3, H * 0.03);
+      ctx.fill();
+      ctx.stroke();
+    }
+    // the coat
+    ctx.fillStyle = pickOf(L.coats, x.id);
+    ctx.beginPath();
+    ctx.roundRect(cx - H * 0.16, y - H * 0.68, H * 0.32, H * 0.42, H * 0.09);
+    ctx.fill();
+    ctx.stroke();
+    // a small bag on one side (the way they face)
+    const side = m.flip >= 0 ? 1 : -1;
+    ctx.fillStyle = L.bag;
+    ctx.beginPath();
+    ctx.roundRect(cx + side * H * 0.15 - H * 0.05, y - H * 0.42, H * 0.1, H * 0.1, H * 0.02);
+    ctx.fill();
+    ctx.stroke();
+    // head and hair
+    ctx.fillStyle = pickOf(L.skin, `${x.id}s`);
+    ctx.beginPath();
+    ctx.arc(cx, y - H * 0.82, H * 0.15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = pickOf(L.hair, `${x.id}h`);
+    ctx.beginPath();
+    ctx.arc(cx, y - H * 0.845, H * 0.155, Math.PI * 1.02, Math.PI * 1.98);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
   }
   // An inside wall: a low slab through the middle of its tile (two front faces and the top).
   function drawWall(ctx, t) {
@@ -772,8 +840,8 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     tags.clear();
     ctx.save();
     ctx.font = font(PERSON.tagSize, true);
-    const list = shownPeople().map((p) => {
-      const r = personRect(p);
+    const list = [...shownPeople(), ...shownVisitors()].map((p) => {
+      const r = p.kind === 'visitor' ? visitorRect(p) : personRect(p);
       const s = camera.worldToScreen(r.x + r.w / 2, r.y + r.h * 0.02);
       const w = ctx.measureText(p.name.split(' ')[0]).width + 36;
       return { id: p.id, x: s.x - w / 2, y: s.y - TAG_H - 6, w };
@@ -799,14 +867,14 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     const s = { x: x + w / 2 };
     ctx.save();
     ctx.font = font(PERSON.tagSize, true);
-    ctx.fillStyle = p.kind === 'resident' ? '#FFFFFF' : palette.hex;
+    ctx.fillStyle = p.kind === 'resident' ? '#FFFFFF' : p.kind === 'visitor' ? VISITOR_LOOK.tag : palette.hex; // (Milestone 19: a visitor's cream tag)
     ctx.strokeStyle = C.outline;
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.roundRect(x, y, w, TAG_H, TAG_H / 2);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = p.kind === 'resident' ? C.text : '#FFFFFF';
+    ctx.fillStyle = p.kind === 'resident' || p.kind === 'visitor' ? C.text : '#FFFFFF';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(label, s.x, y + TAG_H / 2 + 1);

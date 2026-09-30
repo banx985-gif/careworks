@@ -34,6 +34,11 @@
 // "Life-story time" on the timetable), stimulation by place (a calm spot for the morning rest), walks — on a safe walking
 // path marked in Build Mode, or along the corridor with a gentle walk back — and the stored Choice signal and family
 // connection. No cure mechanic: nothing lowers the Memory need.
+// Milestone 19: family trust (src/systems/family.js): each resident's family record (a fictional contact, the visit
+// pattern, Family Trust and every change with its reason), visitors who walk in and sit with the resident (in the
+// Family Room when there is one) and notice how things are, care-plan meetings (the Founder or a nurse attends for an
+// hour), compliments, complaints as improvement tasks with an evidence trail (never Credits or a score), and family
+// requests (a room move, a birthday party). world.family is the API; visitors are world.visitors (not world.people).
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
@@ -89,7 +94,7 @@ import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkP
 import { createRoster } from './roster.js';
 import { createCoverage } from './coverage.js';
 import { eligibilityOf, optionPrefOf, staleReasons, markReviewed, noteDay, admissionPlan } from './carePlanRules.js';
-import { optionById, domainById, OPTION_PREF_MOOD } from '../../data/carePlans.js';
+import { optionById, domainById, OPTION_PREF_MOOD, DOMAINS } from '../../data/carePlans.js';
 import { SHIFT_IDS } from '../../data/shifts.js';
 import { createCrew } from './staffCrew.js';
 import { createAdmissions, stayLengthFor, varied } from './admissions.js';
@@ -112,7 +117,10 @@ import { memoryPct } from './traitEffects.js';
 import { newMobility, driftMobility, noteMobilityNeed, aidSpeed, inRehab, newRehab, gainMult, addGain, missTherapy, endRehabDay, isReady, rehabStatus, rehabRise, rehabProgress, fallsRisk } from './mobility.js';
 import { ROUND, ISSUES, OBSERVATION, NOTICE, ACTIONS, ACTION_IDS, AUTO, CLINICIAN, HOSPITAL, MED_ROOM, TREATMENT_ROOM, GOVERNANCE } from '../../data/clinical.js';
 import { ensureClinical, dayRecord, roundSafety, issueChance, alertChance, rollSeverity, wordFor, bigger, resolveChance, resultOf, suggestOption, clinicalScore } from './clinical.js';
-import { clinicalPct } from './traitEffects.js';
+import { clinicalPct, familyPct } from './traitEffects.js';
+import { TRUST, VISIT, NOTICE as FAMILY_NOTICE, MEETING, MEETING_ASK, MEETING_KINDS, NOTES, COMPLIMENTS, COMPLIMENT, COMPLAINT, COMPLAINTS, FIXES, REQUESTS, REQUEST, VIEW, FIRSTS, SO_VISITS, PATTERNS } from '../../data/family.js';
+import { ensureFamily, ensureFamilyHome, changeTrust, nextVisitDay, visitParts, visitTotal, visitWords, homeTrust, callOf, whoOf, theirWord, noteSeen, seenOf } from './family.js';
+import { SHIFT_TEMPLATES } from '../../data/shifts.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
 // own live layout; these are for older saves' upgrades and the tests.
@@ -237,6 +245,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return sp.piece ? `${sp.piece.id}.therapy` : `${p.state.room}.inside`;
     }
     if (place === 'room') return `${p.state.room}.inside`;
+    if (place === 'family') return `${layout.ofDef(VISIT.familyRoom)[0]?.id ?? VISIT.familyRoom}.family`; // (Milestone 19: whereIs only)
     const pc = seatPiece(p, place);
     const seats = facilityById(PLACE_DEF[place]).seats;
     return `${pc?.id ?? PLACE_DEF[place]}.${seats[seatOf(p, place) % seats.length]}`;
@@ -434,6 +443,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const st = p.state;
     const step = st.step && dayStep(p, st.step.id, st.step.day);
     if (st.memory?.walk) return 'walking'; // (Milestone 17)
+    if (st.familyRoom) return 'family'; // (Milestone 19: with their visitor in the Family Room)
     return !step || !joined(p) || st.step.status === 'refused' || st.step.status === 'missed' || st.step.tray ? 'room' : step.place;
   };
   const taskPlace = (t) => {
@@ -444,6 +454,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // nearest their seat first.
   function helpPool(p, place) {
     if (place === 'walking') return [p.state.memory?.walk?.helpRef ?? 'hall.cwPost']; // (Milestone 17: out for a walk)
+    if (place === 'family') {
+      // (Milestone 19: in the Family Room with their visitor — the free tiles beside it after theirs and the visitor's)
+      const pc = layout.ofDef(VISIT.familyRoom)[0];
+      const tiles = pc ? [2, 3].map((n) => besidePiece(pc, n)).filter(Boolean) : [];
+      if (tiles.length) return tiles.map((t) => `tile:${t.col},${t.row}`);
+      place = 'room';
+    }
     if (place === 'calm') {
       const pc = calmPiece();
       if (pc) return [`${pc.id}.calm2`, `${pc.id}.calm3`];
@@ -564,6 +581,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     closeTask(care, t, status);
     if (status === 'missed' && t.essential) coverage?.recordMissed(); // care recovery (Milestone 7)
     clinicalOver(t, status); // (Milestone 18: a missed round stop / health check; an assessment that didn't happen)
+    if (t.source === 'meeting') meetingOver(t, status); // (Milestone 19: a family meeting that didn't happen moves on)
     bus?.emit('care:task', { id: t.id, type: t.type, status, resident: t.resident });
   }
   const helperName = (id) => first(crew.byId(id)?.name ?? id);
@@ -601,8 +619,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         applyEffects(p, t, helper);
         if (t.type === 'bell') bellState(care, t.resident).cooldownUntil = absNow() + BELL.cooldownHours;
         else if (t.source === 'redirect') endWalk(p, 'redirected', helper); // (Milestone 17: walked back together)
+        else if (t.source === 'meeting') meetingDone(p, t, q); // (Milestone 19: the family meeting was held)
         else log(p, personal ? `${t.name} with ${helperName(helper)}: ${personal}` : `${t.name} (with ${helperName(helper)})`);
         if (t.type === 'hydration') p.state.hydration = { last: absNow() }; // (Milestone 15: their last drink)
+        if (t.optionId === SO_VISITS.option && t.type === 'visit') familyCall(p, helper); // (Milestone 19: SO07's family call)
         clinicalDone(p, t, q); // (Milestone 18: a round stop, a health check, an assessment — and noticing an alert)
         const kind = goalKind(t);
         if (kind) rehabSession(p, kind, helper); // (Milestone 16: therapy, walks and transfers move rehab goals)
@@ -713,6 +733,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
     if (!m.matched) log(p, `Not ${theirOf(p.id)} menu today: nobody on shift could make ${dietWords(m.diet)}, so ${theyOf(p)} had the standard one`);
     else if (m.late && kitchenNow()) log(p, m.tray ? 'The tray came late' : 'The meal came late'); // (no Kitchen: the Dining Room card says so, not every meal)
+    if (m.late && m.tray && familyOf(p)) noteSeen(familyOf(p), day, 'lateTray', m.meal.name, bandAt(hourNow()).id); // (Milestone 19: families notice)
   }
   // Someone who can't come to the Dining Room today: resting in bed, unwell, or still not up. → the reason, or null
   function cantCome(p, meal, day) {
@@ -1057,6 +1078,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     dayRecord(cl, t.day).issues++;
     p.state.outcomes.safety = clamp(p.state.outcomes.safety + ISSUES.safety);
     log(p, `Round issue: ${ISSUES.words[kind]}`);
+    if (familyOf(p)) noteSeen(familyOf(p), t.day, 'roundIssue', ISSUES.words[kind], t.band); // (Milestone 19: families are always told)
     bus?.emit('care:roundIssue', { resident: p.id, kind });
   }
   // A round's stops open ROUND.lead hours early (never before their band), so a nurse can fetch the cart in time.
@@ -1470,6 +1492,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function startStep(p, step, day) {
     const st = p.state;
     if (st.memory?.walk) endWalk(p, 'step', null, true); // (Milestone 17: the next step takes over)
+    delete st.familyRoom; // (Milestone 19: the next step takes them out of the Family Room; the visitor goes with them)
     closePrevious(p);
     const t = routineTask(p, step.id, day);
     // Milestone 7, fallback step 4: short-staffed, so the day's activity is scaled back (never held against them)
@@ -1615,6 +1638,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       }
     }
     tickClinical(at); // (Milestone 18)
+    tickFamily(at); // (Milestone 19: visitors arriving, sitting with the resident, leaving; a meeting opening)
     const current = new Set(residents.map((p) => (p.state.step ? routineTask(p, p.state.step.id, p.state.step.day) : null)).filter(Boolean));
     for (const t of care.tasks) {
       if (current.has(t) || t.type === 'bell' || !(t.status === 'open' || t.status === 'claimed') || t.due > at) continue;
@@ -1701,6 +1725,683 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (!avail.length || !free.length) return;
     for (const { task, person } of choosePairs(avail, free, scoreFor)) claim(task, person);
   }
+
+  // --- Milestone 19: family trust, visits, meetings, compliments, complaints, requests ------------------------------------
+  // (src/systems/family.js, data/family.js) Every Trust change is a fixed amount for a named reason, logged on the family's
+  // record. A complaint makes an improvement task with an evidence trail; it never costs Credits or a score on its own.
+  const fh = (care.family = ensureFamilyHome(care.family));
+  care.families ??= {};
+  const visitors = []; // { kind: 'visitor', id, name, resident, relation, gender, agent, v (its saved state in fh.visits) }
+  const familyOf = (p) => (p && !p.state.guest ? (care.families[p.id] = ensureFamily(care.families[p.id], p.def, clock.totalDays, seed)) : null);
+  const hasFamily = (p) => !!familyOf(p)?.contact;
+  const callFor = (p) => callOf(familyOf(p)?.contact, p.def);
+  const fromWord = (p) => whoOf(familyOf(p)?.contact);
+  const soOf = (p) => p.state.plan?.SO === SO_VISITS.option;
+  const shiftOfBand = (band) => SHIFT_IDS.find((sid) => SHIFT_TEMPLATES[sid].bands.includes(band)) ?? 'morning';
+  const dayWord = (d) => (d === clock.totalDays ? 'today' : d === clock.totalDays + 1 ? 'tomorrow' : `day ${d}`);
+  const signedN = (v) => `${v > 0 ? '+' : v < 0 ? '−' : ''}${Math.abs(Math.round(v * 10) / 10)}`;
+  // Every Trust change: a fixed amount for a named reason (× F29's +12% when it is a gain and the Centre is placed).
+  function trust(p, amount, reason, kind, parts = null) {
+    const rec = familyOf(p);
+    if (!rec || (!amount && kind !== 'visit')) return 0; // (a visit is always logged, even when its parts add to nothing)
+    const change = changeTrust(rec, amount, { day: clock.totalDays, t: now(), reason, kind, partnership: hasPiece(TRUST.partnership), parts });
+    bus?.emit('care:trust', { resident: p.id, change, reason, kind, trust: rec.trust });
+    return change;
+  }
+  const missedCare = (p, days = FAMILY_NOTICE.missed.days) => care.tasks.filter((t) => t.resident === p.id && t.essential && t.status === 'missed' && t.day > clock.totalDays - days);
+
+  // --- visits ---
+  // Today's visits: anyone whose visit day has come (or passed while they were away), a booked meeting, a birthday party.
+  function planVisits(day) {
+    if (fh.planned === day) return;
+    fh.planned = day;
+    for (const p of seated()) {
+      const rec = familyOf(p);
+      if (!rec?.contact) continue;
+      rec.nextVisit ??= nextVisitDay(rec, day - 1, seed, soOf(p));
+      const meeting = rec.meeting?.day === day;
+      const party = rec.party === day;
+      if (!(rec.nextVisit != null && rec.nextVisit <= day) && !meeting && !party) continue;
+      if (fh.visits.some((v) => v.resident === p.id && v.day === day)) continue;
+      addVisit(p, day, { meeting, party });
+    }
+  }
+  function addVisit(p, day, { meeting = false, party = false } = {}) {
+    const rng = new Rng(`${seed}:visitAt:${p.id}:${day}`);
+    let at = VISIT.arriveFrom + rng.next() * (VISIT.arriveTo - VISIT.arriveFrom);
+    if (party) at = Math.min(at, (dayStep(p, 'cards', day)?.at ?? 13.5) - 0.25); // (in time for the birthday tea)
+    if (meeting) at = Math.min(at, MEETING.at);
+    const v = { id: `v${fh.nextId++}`, resident: p.id, day, at: absHour(day, at), phase: 'due', meeting, party, start: null, end: null, room: false, roomTile: null, greeter: null, favourite: null, communicatorPct: 0, task: null, follow: null };
+    fh.visits.push(v);
+    return v;
+  }
+  const visitorOf = (v) => visitors.find((x) => x.id === v.id) ?? null;
+  const visitOf = (residentId) => fh.visits.find((v) => v.resident === residentId && (v.phase === 'arriving' || v.phase === 'with')) ?? null;
+  function spawnVisitor(v, pos = null) {
+    const p = byResident(v.resident);
+    const c = familyOf(p).contact;
+    const x = { kind: 'visitor', id: v.id, name: c.name, resident: v.resident, relation: c.relation, gender: c.gender, agent: new Agent({ id: v.id, name: c.name, speed: RESIDENT.speed * WALK.speedMultiplier * VISIT.speed, noPathTeleportSec: 3 }), v, target: null };
+    if (pos) {
+      x.agent.x = pos.x;
+      x.agent.y = pos.y;
+    } else x.agent.placeAtTile(grid, ENTRANCE.col, ENTRANCE.row);
+    visitors.push(x);
+    return x;
+  }
+  function removeVisitor(v) {
+    const i = visitors.findIndex((x) => x.id === v.id);
+    if (i >= 0) visitors.splice(i, 1);
+    fh.visits = fh.visits.filter((o) => o !== v);
+  }
+  // Where the resident is (or is walking to), and a free tile beside it for their visitor.
+  const destTile = (a) => {
+    const pt = a.state === 'walking' && a.path.length ? a.path[a.path.length - 1] : a;
+    return grid.worldToTile(pt.x, pt.y);
+  };
+  function besideTile(t, avoid) {
+    for (const [dc, dr] of [[1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [1, -1], [-1, -1]]) {
+      const c = t.col + dc;
+      const r = t.row + dr;
+      if (c < 0 || r < 0 || c >= MAX_FLOOR.cols || r >= MAX_FLOOR.rows || !layout.isOpen(c, r) || grid.isBlocked(c, r) || avoid.has(`${c},${r}`)) continue;
+      return { col: c, row: r };
+    }
+    return t;
+  }
+  // The visitor goes where the resident goes (or to their seat in the Family Room).
+  function follow(x) {
+    const p = byResident(x.resident);
+    const t = x.v.room && p.state.familyRoom ? x.v.roomTile : destTile(p.agent);
+    if (!t) return;
+    const key = `${t.col},${t.row}`;
+    if (x.v.follow === key && (x.agent.state === 'walking' || x.target)) return;
+    x.v.follow = key;
+    // (not on another visitor's tile, nor where anyone is sitting or heading: beside the resident, never on a neighbour)
+    const avoid = new Set(visitors.filter((o) => o !== x && o.target).map((o) => `${o.target.col},${o.target.row}`));
+    for (const q of world.people) {
+      if (q === p) continue;
+      const d = destTile(q.agent);
+      if (d) avoid.add(`${d.col},${d.row}`);
+    }
+    const b = x.v.room && p.state.familyRoom ? t : besideTile(t, avoid);
+    x.target = b;
+    x.agent.walkTo(grid, b.col, b.row);
+  }
+  // Free for the Family Room: sitting (not walking, not being helped), awake, the step under way for a while (or in their
+  // room), and the next step at least VISIT.freeHours away.
+  function freeForVisit(p) {
+    const s = p.state.step;
+    if (!s || p.agent.state === 'walking' || world.isAsleep(p) || !['doing', 'refused', 'missed'].includes(s.status) || p.state.memory?.walk) return false;
+    if (care.tasks.some((t) => t.resident === p.id && t.status === 'working' && t.source !== 'meeting')) return false;
+    const steps = stepsFor(p, s.day);
+    const i = steps.findIndex((x) => x.id === s.id);
+    const next = steps[i + 1];
+    const h = hourNow();
+    if (next && next.at - h < VISIT.freeHours) return false;
+    const step = steps[i];
+    return !!step && (step.place === 'room' || h - step.at >= 1.5);
+  }
+  // With the Family Room placed, the two of them go there as soon as the resident is free (in the first half of the visit).
+  function tryFamilyRoom(v, p) {
+    if (v.room || absNow() > v.start + VISIT.hours / 2) return;
+    const pc = layout.ofDef(VISIT.familyRoom)[0];
+    if (!pc || !freeForVisit(p)) return;
+    const rt = besidePiece(pc, 0);
+    const vt = besidePiece(pc, 1);
+    if (!rt || !vt || (rt.col === vt.col && rt.row === vt.row)) return;
+    v.room = true;
+    v.roomTile = vt;
+    p.state.familyRoom = { col: rt.col, row: rt.row, visit: v.id };
+    p.agent.walkTo(grid, rt.col, rt.row);
+    v.follow = null;
+    log(p, `To the Family Room with ${fromWord(p)}`);
+  }
+  function startVisit(v, x, p) {
+    v.phase = 'with';
+    v.start = absNow();
+    v.end = absNow() + VISIT.hours;
+    // who says hello (someone on shift who knows them well), their favourite on shift, a Family Communicator on shift
+    const on = onShiftNow().filter((q) => !q.agency);
+    const best = topFamiliar(care, { residentId: p.id }, on.map((q) => q.id), 1)[0];
+    v.greeter = best && best.familiarity >= FAMILY_NOTICE.greeted.familiarity ? best.staff : null;
+    const fav = p.state.favourite?.staff;
+    v.favourite = fav && on.some((q) => q.id === fav) ? fav : null;
+    v.communicatorPct = Math.max(0, ...on.map((q) => familyPct(q.model.traits)));
+    const first = fh.firsts.visit == null;
+    if (first) fh.firsts.visit = clock.totalDays;
+    log(p, `${fromWord(p)} came to visit${v.meeting ? ' for a care-plan meeting' : v.party ? ' for a birthday party' : ''}`);
+    tryFamilyRoom(v, p);
+    if (v.meeting) openMeeting(v, p);
+    bus?.emit('care:visit', { resident: p.id, name: p.name, visitor: x.name, from: fromWord(p), first, art: first ? FIRSTS.visitArt : null });
+  }
+  // The visit ends: what they noticed moves Trust (each part a fixed amount), a line in the log, perhaps a compliment or
+  // a complaint, then the visitor walks out.
+  function endVisit(v, x, p) {
+    const rec = familyOf(p);
+    const call = callFor(p);
+    const st = p.state;
+    const parts = visitParts({
+      mood: st.outcomes.mood, comfort: st.outcomes.comfort, missed: missedCare(p).map((t) => t.name),
+      bell: !!openBell(care, p.id), alert: !!world.clinical.wordOf(p.id),
+      tidy: care.tasks.some((t) => t.resident === p.id && t.type === 'roomCheck' && t.day === clock.totalDays && t.status === 'done'),
+      greeter: v.greeter ? helperName(v.greeter) : null, favourite: v.favourite && v.favourite !== v.greeter ? helperName(v.favourite) : null,
+      so: soOf(p), party: v.party, call,
+    });
+    const total = visitTotal(parts, { communicatorPct: v.communicatorPct });
+    const change = trust(p, total, `Visit: ${parts.map((x2) => x2.text).join(', ')}`, 'visit', parts);
+    log(p, `${fromWord(p)} visited — ${visitWords(parts, call)} (Family Trust ${signedN(change)})`);
+    st.outcomes.connection = clamp(st.outcomes.connection + VISIT.connection);
+    if (v.party) st.outcomes.mood = clamp(st.outcomes.mood + REQUESTS.birthdayParty.partyTrust);
+    const ms = memoryOf(p);
+    if (ms?.family) ms.family.connection = clamp(ms.family.connection + VISIT.memoryConnection); // (Milestone 17's stored connection)
+    rec.lastVisit = clock.totalDays;
+    rec.visits = (rec.visits ?? 0) + 1;
+    if (rec.nextVisit != null && rec.nextVisit <= clock.totalDays) rec.nextVisit = nextVisitDay(rec, clock.totalDays, seed, soOf(p));
+    if (v.party) rec.party = null;
+    // what they saw: a compliment when it went very well, a complaint when something visibly went wrong
+    const C = COMPLIMENTS.visit;
+    if (total >= C.visitTotal && st.outcomes.mood >= C.mood && parts.every((x2) => x2.value >= 0)) compliment(p, 'visit'); // (nothing they were unhappy about)
+    const missed = missedCare(p);
+    if (missed.length >= COMPLAINTS.missedCare.visitCount) raiseComplaint(p, 'missedCare', { detail: missed[missed.length - 1].name.toLowerCase(), band: missed[missed.length - 1].band, lastEvent: missed[missed.length - 1].day });
+    for (const kind of ['lateTray', 'roundIssue']) {
+      const seen = seenOf(rec, kind, clock.totalDays - COMPLAINTS[kind].within + 1);
+      if (seen.length >= COMPLAINTS[kind].visitCount) raiseComplaint(p, kind, { detail: seen[seen.length - 1].detail, band: seen[seen.length - 1].band, lastEvent: seen[seen.length - 1].day });
+    }
+    leaveVisit(v, x);
+    bus?.emit('care:visitEnd', { resident: p.id, change, parts });
+  }
+  function leaveVisit(v, x) {
+    const p = byResident(v.resident);
+    v.phase = 'leaving';
+    if (p?.state.familyRoom?.visit === v.id) {
+      delete p.state.familyRoom;
+      if (!p.state.leaving && !p.state.away) {
+        const t = placeTile(p, residentPlace(p) === 'walking' ? 'room' : residentPlace(p));
+        p.agent.walkTo(grid, t.col, t.row);
+      }
+    }
+    const t = v.task && care.tasks.find((o) => o.id === v.task);
+    if (t && isOpen(t)) finish(t, 'gone');
+    if (x) {
+      x.target = null;
+      x.agent.walkTo(grid, ENTRANCE.col, ENTRANCE.row);
+    }
+  }
+  // The day's visit could not happen (away, going home, not yet settled): tomorrow instead.
+  function postponeVisit(v, p) {
+    fh.visits = fh.visits.filter((o) => o !== v);
+    if (!p) return;
+    const rec = familyOf(p);
+    if (v.meeting && rec.meeting) moveMeeting(p, `${first(p.name)} wasn't free`);
+    if (v.party) rec.party = null;
+  }
+  function tickFamily(at) {
+    for (const v of [...fh.visits]) {
+      const p = byResident(v.resident);
+      let x = visitorOf(v);
+      if (v.phase === 'due') {
+        if (at < v.at) continue;
+        if (!p || !inCare(p) || world.isAsleep(p) || !hasFamily(p)) {
+          postponeVisit(v, p);
+          continue;
+        }
+        x = spawnVisitor(v);
+        v.phase = 'arriving';
+        v.follow = null;
+      }
+      if (v.phase === 'arriving' || v.phase === 'with') {
+        if (!x) x = spawnVisitor(v);
+        if (!p || !inCare(p)) {
+          leaveVisit(v, x);
+          continue;
+        }
+        follow(x);
+        if (v.phase === 'arriving') {
+          const near = x.agent.state !== 'walking' && Math.hypot(x.agent.x - p.agent.x, x.agent.y - p.agent.y) <= REACH * 1.8;
+          if (near || at >= v.at + 1.5) startVisit(v, x, p);
+        } else if (at >= v.end && !meetingOpen(v)) endVisit(v, x, p);
+        else tryFamilyRoom(v, p);
+        continue;
+      }
+      if (v.phase === 'leaving') {
+        if (!x) removeVisitor(v);
+        else if (x.agent.state !== 'walking') {
+          const t = grid.worldToTile(x.agent.x, x.agent.y);
+          if (t && Math.abs(t.col - ENTRANCE.col) + Math.abs(t.row - ENTRANCE.row) <= 1) removeVisitor(v);
+          else x.agent.walkTo(grid, ENTRANCE.col, ENTRANCE.row);
+        }
+      }
+    }
+  }
+
+  // --- care-plan meetings ---
+  // The one who attends: the Founder when on shift, else the Registered Nurse on shift with the best people skills.
+  function attendeeNow() {
+    const f = crew.byId(staffState.founder.id);
+    if (f && !f.leftTeam && roster.onShift(f.id)) return f;
+    return [...nursesOn()].filter((q) => !q.agency).sort((a, b) => (b.model.stats?.SOC ?? 0) - (a.model.stats?.SOC ?? 0) || b.model.level - a.model.level)[0] ?? null;
+  }
+  // Someone who could attend on that day's afternoon (rostered): the Founder, or any nurse.
+  const attendeeRostered = () => team().some((q) => (q.id === staffState.founder.id || q.role === 'RN') && !!roster.shiftOf(q.id)?.bands.includes('afternoon'));
+  function openMeeting(v, p) {
+    const q = attendeeNow();
+    if (!q) {
+      v.meeting = false;
+      return moveMeeting(p, 'no nurse or the Founder on shift');
+    }
+    const inst = bandInstance(hourNow(), clock.totalDays);
+    const t = addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: 'visit', name: 'Family meeting', source: 'meeting', visit: v.id, place: 'resident', roles: [q.role], pinned: q.id, urgency: MEETING.urgency, minutes: MEETING.minutes, drops: {}, outcomes: {}, opens: absNow(), due: Math.max(bandEnd(inst.band, inst.day), absNow() + 2) });
+    v.task = t.id;
+  }
+  const meetingOpen = (v) => {
+    const t = v.task && care.tasks.find((o) => o.id === v.task);
+    return !!t && isOpen(t);
+  };
+  function moveMeeting(p, why) {
+    const rec = familyOf(p);
+    const m = rec?.meeting;
+    if (!m) return;
+    m.tries = (m.tries ?? 0) + 1;
+    if (m.tries >= MEETING.tries) {
+      rec.meeting = null;
+      log(p, `The family meeting couldn't be held (${why}): book another from ${theirOf(p.id)} card`);
+      return;
+    }
+    m.day = clock.totalDays + 1;
+    log(p, `The family meeting moves to tomorrow (${why})`);
+  }
+  function meetingOver(t, status) {
+    if (status === 'done') return;
+    const p = byResident(t.resident);
+    if (p && status !== 'gone') moveMeeting(p, "it didn't happen today");
+  }
+  // The family's wish, noted on the plan (the first rule that fits).
+  function familyNote(p) {
+    const st = p.state;
+    const disliked = DOMAINS.map((d) => st.plan?.[d.id]).find((o) => o && ['dislike', 'refuse'].includes(optionPrefOf(st, o)));
+    for (const n of NOTES) {
+      if (n.when === 'dislikedOption' && disliked) return n.text(optionById(disliked).name);
+      if (n.when === 'lowMood' && st.outcomes.mood < FAMILY_NOTICE.mood.low + 5) return n.text();
+      if (n.when === 'interest' && st.wouldEnjoy) return n.text(activityById(st.wouldEnjoy)?.name ?? p.def.interest);
+      if (n.when === 'default') return n.text();
+    }
+    return null;
+  }
+  function meetingDone(p, t, q) {
+    const rec = familyOf(p);
+    const m = rec.meeting ?? { kind: 'meeting', review: false };
+    const pct = (hasPiece(VISIT.familyRoom) ? MEETING.familyRoomPct : 0);
+    const lift = MEETING.lift * (1 + pct / 100) * (1 + familyPct(q.model.traits) / 100) * (specialtiesOf(q.id).includes('family') ? 1 + MEETING.liaisonPct / 100 : 1);
+    const note = familyNote(p);
+    rec.notes = [...(rec.notes ?? []), { day: clock.totalDays, text: note, with: q.id }].slice(-MEETING.noteKept);
+    rec.untold = null;
+    rec.lastMeeting = clock.totalDays;
+    rec.meeting = null;
+    fh.meetings = (fh.meetings ?? 0) + 1;
+    const change = trust(p, lift, `${MEETING_KINDS[m.kind]?.name ?? 'Care-plan meeting'} with ${helperName(q.id)}${pct ? ' (Family Room)' : ''}`, 'meeting');
+    log(p, `Family meeting with ${helperName(q.id)}: ${fromWord(p)}'s wish noted — "${note}" (Family Trust ${signedN(change)})`);
+    let first = false;
+    if (m.review) {
+      markReviewed(p.state, clock.totalDays);
+      fh.reviews = (fh.reviews ?? 0) + 1;
+      first = fh.firsts.review == null;
+      if (first) fh.firsts.review = clock.totalDays;
+      const f = staffState.founder;
+      if (q.id === f.id) f.history.carePlanReviews = (f.history.carePlanReviews ?? 0) + 1;
+      log(p, `Care plan reviewed with ${fromWord(p)} and ${helperName(q.id)}`);
+    }
+    bus?.emit('care:meeting', { resident: p.id, name: p.name, staff: q.id, change, note, review: !!m.review, first });
+  }
+  // SO07's family call: they hear how things are (and anything new on the plan).
+  function familyCall(p, helper) {
+    const rec = familyOf(p);
+    if (!rec?.contact) return;
+    rec.lastCall = clock.totalDays;
+    rec.untold = null;
+    const ms = memoryOf(p);
+    if (ms?.family) ms.family.connection = clamp(ms.family.connection + 1);
+    trust(p, SO_VISITS.callTrust, `A family call with ${helperName(helper)} (Family Connection Plan)`, 'call');
+  }
+  // Book a meeting: this afternoon when there is still time, else tomorrow. → { ok, reason, day }
+  function bookMeeting(p, { review = false, kind = review ? 'review' : 'meeting' } = {}) {
+    const rec = familyOf(p);
+    if (!rec?.contact) return { ok: false, reason: 'No family to meet' };
+    if (p.state.leaving || p.state.away) return { ok: false, reason: 'Not here right now' };
+    if (MEETING_KINDS[kind]?.stored) return { ok: false, reason: 'Comes in a later update' };
+    if (rec.meeting) return { ok: false, reason: `Booked for ${dayWord(rec.meeting.day)} afternoon` };
+    if (!attendeeRostered()) return { ok: false, reason: 'Needs the Founder or a nurse on the Afternoon shift' };
+    const today = clock.totalDays;
+    const day = hourNow() < MEETING.at - 0.5 && fh.planned === today ? today : today + 1;
+    rec.meeting = { day, kind, review, tries: 0, booked: today };
+    fh.asks = fh.asks.filter((a) => a.resident !== p.id);
+    if (day === today) {
+      const v = fh.visits.find((o) => o.resident === p.id && o.day === today && o.phase === 'due');
+      if (v) {
+        v.meeting = true;
+        v.at = Math.min(v.at, absHour(today, MEETING.at));
+      } else addVisit(p, today, { meeting: true });
+    }
+    log(p, `Family meeting booked: ${dayWord(day)} afternoon${review ? ' (a care-plan review with the family)' : ''}`);
+    return { ok: true, reason: null, day };
+  }
+
+  // --- compliments and complaints ---
+  // The staff a compliment names: their favourite (Milestone 13) on the team, else the one who knows them best.
+  function namedStaff(p) {
+    const ids = team().map((q) => q.id);
+    const fav = p.state.favourite?.staff;
+    if (fav && ids.includes(fav)) return [fav];
+    const best = topFamiliar(care, { residentId: p.id }, ids, 1)[0];
+    return best && best.familiarity > 0 ? [best.staff] : [];
+  }
+  function compliment(p, kind, { amount = null, staff = null } = {}) {
+    const rec = familyOf(p);
+    if (!rec?.contact) return null;
+    const K = COMPLIMENTS[kind];
+    if (kind !== 'discharge' && rec.lastCompliment != null && clock.totalDays - rec.lastCompliment < COMPLIMENT.gapDays) return null;
+    const named = staff ?? namedStaff(p);
+    const text = K.text({ from: fromWord(p), call: callFor(p) });
+    const change = trust(p, amount ?? K.trust, `Compliment: ${text}`, 'compliment');
+    for (const id of named) {
+      const q = crew.byId(id);
+      if (q && !q.agency) q.model.morale = clamp(q.model.morale + K.morale);
+    }
+    const first = fh.firsts.compliment == null;
+    if (first) fh.firsts.compliment = clock.totalDays;
+    const c = { id: `k${fh.nextId++}`, day: clock.totalDays, resident: p.id, name: p.name, from: fromWord(p), kind, text, staff: named, trust: change, morale: K.morale };
+    fh.compliments.push(c);
+    if (fh.compliments.length > COMPLIMENT.kept) fh.compliments.shift();
+    rec.lastCompliment = clock.totalDays;
+    log(p, `A compliment from ${fromWord(p)}${named.length ? ` for ${named.map(helperName).join(' and ')} (Morale +${K.morale})` : ''} · Family Trust ${signedN(change)}`);
+    bus?.emit('care:compliment', { id: c.id, resident: p.id, name: p.name, text, first, art: first ? COMPLIMENT.firstArt : null });
+    return c;
+  }
+  const trail = (c, text) => c.trail.push({ day: clock.totalDays, t: now(), text });
+  // The default owner: the Founder (still on the team), or the senior nurse on the team for clinical ones.
+  function ownerFor(kind) {
+    const t = team();
+    const f = t.find((q) => q.id === staffState.founder.id);
+    if (kind === 'nurse') {
+      const rn = t.filter((q) => q.role === 'RN').sort((a, b) => b.model.level - a.model.level || (b.model.stats?.CLN ?? 0) - (a.model.stats?.CLN ?? 0))[0];
+      if (rn) return rn;
+    }
+    return f ?? t[0] ?? null;
+  }
+  // A complaint: the family's Trust dips (a fixed amount), and an improvement task is made with a plain description, a
+  // suggested fix, an owner and a due date. No Credits and no score: only the task.
+  function raiseComplaint(p, kind, { detail = null, band = null, lastEvent = clock.totalDays, alert = null, option = null, domain = null } = {}) {
+    const rec = familyOf(p);
+    if (!rec?.contact) return null;
+    if (fh.complaints.some((c) => c.resident === p.id && c.kind === kind && c.status === 'open')) return null;
+    if (rec.lastComplaint != null && clock.totalDays - rec.lastComplaint < COMPLAINT.gapDays) return null;
+    const K = COMPLAINTS[kind];
+    const shift = shiftOfBand(band ?? 'morning');
+    const owner = ownerFor(K.owner);
+    const text = K.text({ from: fromWord(p), call: callFor(p), detail });
+    const fixText = FIXES[K.fix].text({ shift: SHIFT_TEMPLATES[shift].name, name: first(p.name), their: theirWord(p.def), relation: rec.contact.relation.toLowerCase() });
+    const c = { id: `c${fh.nextId++}`, resident: p.id, name: p.name, from: fromWord(p), kind, text, fix: K.fix, fixText, shift, owner: owner?.id ?? null, raised: clock.totalDays, due: clock.totalDays + COMPLAINT.dueDays, status: 'open', drop: 0, drifted: 0, improved: null, resolved: null, recovered: 0, lastEvent, alert, option, domain, trail: [] };
+    c.drop = trust(p, K.drop, `Complaint: ${text}`, 'complaint');
+    trail(c, `Raised: ${text} (Family Trust ${signedN(c.drop)})`);
+    trail(c, `Improvement task: ${fixText} · owner ${owner ? helperName(owner.id) : 'nobody yet'} · due in ${COMPLAINT.dueDays} days`);
+    rec.lastComplaint = clock.totalDays;
+    fh.complaints.push(c);
+    const closed = fh.complaints.filter((o) => o.status !== 'open');
+    if (closed.length > COMPLAINT.kept) fh.complaints = fh.complaints.filter((o) => o.status === 'open' || closed.indexOf(o) >= closed.length - COMPLAINT.kept);
+    log(p, `A complaint from ${fromWord(p)}: an improvement task is open (Quality)`);
+    bus?.emit('care:complaint', { id: c.id, resident: p.id, name: p.name, text });
+    return c;
+  }
+  // Has the underlying thing improved? → { ok, text } (the text says how far along it is, in plain words)
+  function improvement(c) {
+    const p = byResident(c.resident);
+    if (!p || p.state.leaving) return { ok: true, text: `${first(c.name)} has gone home` };
+    const rec = familyOf(p);
+    const K = COMPLAINTS[c.kind];
+    const day = clock.totalDays;
+    if (c.kind === 'lingeringAlert') {
+      const open = cl.alerts.some((a) => a.id === c.alert && a.status === 'open');
+      return open ? { ok: false, text: `Not yet: ${first(p.name)} still seems unwell` } : { ok: true, text: 'Improved: the alert is settled' };
+    }
+    if (c.kind === 'untoldPlan') {
+      if ((rec.lastMeeting ?? -1) >= c.raised || (rec.lastCall ?? -1) >= c.raised) return { ok: true, text: 'Improved: the family has been told' };
+      if (c.domain && p.state.plan?.[c.domain] !== c.option) return { ok: true, text: 'Improved: the option has been changed' };
+      return { ok: false, text: 'Not yet: the family still has not heard (a meeting or a family call)' };
+    }
+    const events = c.kind === 'missedCare' ? care.tasks.filter((t) => t.resident === p.id && t.essential && t.status === 'missed').map((t) => t.day) : seenOf(rec, c.kind, c.raised - K.within).map((s) => s.day);
+    const last = Math.max(c.lastEvent, ...events);
+    const clean = day - last - 1; // full days since the last one
+    if (last > c.lastEvent) c.lastEvent = last;
+    if (clean >= K.fixDays) return { ok: true, text: `Improved: ${K.fixDays} full days with no repeat` };
+    return { ok: false, text: `Improving: ${Math.max(0, clean)} of ${K.fixDays} full days with no repeat${last >= day - 1 && last > c.raised ? ' (it happened again)' : ''}` };
+  }
+  function resolveComplaint(c, by = 'player') {
+    if (c.status !== 'open') return { ok: false, reason: 'Already resolved' };
+    const imp = improvement(c);
+    if (!imp.ok) return { ok: false, reason: imp.text };
+    const p = byResident(c.resident);
+    c.status = 'resolved';
+    c.resolved = clock.totalDays;
+    c.recovered = p && !p.state.leaving ? trust(p, -c.drop + COMPLAINT.bonus, `Complaint resolved: ${c.text}`, 'resolved') : 0;
+    const owner = c.owner ? helperName(c.owner) : null;
+    trail(c, `Resolved${owner ? ` (${owner})` : ''}: ${imp.text.replace(/^Improved: /, '')}${c.recovered ? ` · Family Trust ${signedN(c.recovered)}` : ''}`);
+    if (p) log(p, `${fromWord(p)}'s complaint is resolved (Family Trust ${signedN(c.recovered)})`);
+    bus?.emit('care:complaintResolved', { id: c.id, resident: c.resident, recovered: c.recovered, by });
+    return { ok: true, reason: null, recovered: c.recovered };
+  }
+  // Each day for an open complaint: improvement noticed (trail), and past its due date Trust drifts down slowly.
+  function complaintDay(c) {
+    if (c.status !== 'open') return;
+    const imp = improvement(c);
+    if (imp.ok && c.improved == null) {
+      c.improved = clock.totalDays;
+      trail(c, `${imp.text}: ready to mark done`);
+    } else if (!imp.ok && c.improved != null) {
+      c.improved = null;
+      trail(c, imp.text);
+    }
+    const p = byResident(c.resident);
+    if (!p || p.state.leaving || clock.totalDays <= c.due) return;
+    const step = Math.max(COMPLAINT.driftCap - c.drifted, COMPLAINT.driftPerDay);
+    if (step >= 0) return;
+    if (!c.drifted) trail(c, 'Past its due date: Family Trust drifts down slowly while it stays open');
+    c.drifted += trust(p, step, `Complaint still open past its due date: ${c.text}`, 'drift');
+  }
+
+  // --- requests (room moves, a family birthday party) and meeting asks ---
+  const roomCentre = (r) => ({ col: r.box.col + r.box.w / 2, row: r.box.row + r.box.h / 2 });
+  const dist = (a, b) => Math.abs(a.col - b.col) + Math.abs(a.row - b.row);
+  function viewScore(room) {
+    const g = layout.ofDef(VIEW.garden)[0];
+    return g ? dist(roomCentre(room), { col: g.box.col + g.box.w / 2, row: g.box.row + g.box.h / 2 }) : roomCentre(room).col - VIEW.windowCol;
+  }
+  const roomOf = (p) => roomList().find((r) => r.id === p.state.room) ?? null;
+  // The room a request would move them to (null when none is better by enough).
+  function requestRoom(p, kind, friendId = null) {
+    const cur = roomOf(p);
+    if (!cur) return null;
+    const free = roomsFor(p.def);
+    if (kind === 'gardenView') {
+      const best = [...free].sort((a, b) => viewScore(a) - viewScore(b))[0];
+      return best && viewScore(cur) - viewScore(best) >= REQUESTS.gardenView.betterBy ? best : null;
+    }
+    const fr = byResident(friendId);
+    const fRoom = fr && roomOf(fr);
+    if (!fRoom) return null;
+    const near = (r) => dist(roomCentre(r), roomCentre(fRoom));
+    const best = [...free].sort((a, b) => near(a) - near(b))[0];
+    return best && near(cur) - near(best) >= REQUESTS.nearFriend.betterBy ? best : null;
+  }
+  function moveRoom(p, roomId) {
+    const old = roomOf(p);
+    const nr = roomList().find((r) => r.id === roomId);
+    if (!nr || nr.residentId) return false;
+    if (old) old.residentId = null;
+    nr.residentId = p.id;
+    p.state.room = roomId;
+    noteChange(memoryOf(p), 'room'); // (Milestone 17: a room move is a change for them)
+    if (residentPlace(p) === 'room') {
+      const t = placeTile(p, 'room');
+      p.agent.walkTo(grid, t.col, t.row);
+    }
+    log(p, `Moved to room ${layout.roomNumber(roomId)}`);
+    return true;
+  }
+  function requestText(q) {
+    const p = byResident(q.resident);
+    if (!p) return '';
+    const who = fromWord(p);
+    if (q.kind === 'gardenView') return `${who} asks if ${first(p.name)} could have a room with a garden view: room ${layout.roomNumber(q.room)} is free`;
+    if (q.kind === 'nearFriend') return `${who} asks if ${first(p.name)} could move closer to ${first(byResident(q.friend)?.name ?? '')}: room ${layout.roomNumber(q.room)} is free`;
+    return `${who} would like to hold a family birthday party for ${first(p.name)} at the birthday tea (${dayWord(q.party)})`;
+  }
+  function newRequests(day) {
+    const open = fh.requests.filter((q) => q.status === 'open');
+    if (open.length >= REQUEST.perHome) return;
+    for (const p of seated()) {
+      if (fh.requests.filter((q) => q.status === 'open').length >= REQUEST.perHome) return;
+      const rec = familyOf(p);
+      if (!rec?.contact || !joined(p) || fh.requests.some((q) => q.resident === p.id && q.status === 'open')) continue;
+      for (const kind of Object.keys(REQUESTS)) {
+        const R = REQUESTS[kind];
+        if (!R.patterns.includes(rec.pattern)) continue;
+        const q = { id: `q${fh.nextId}`, resident: p.id, kind, day, until: day + REQUEST.expireDays, status: 'open' };
+        if (kind === 'birthdayParty') {
+          const k = [];
+          for (let d = R.daysAhead[0]; d <= R.daysAhead[1]; d++) if (dayOfYear(day + d) === birthdayOf(p.id)) k.push(day + d);
+          const year = k.length ? clock.dateOf(k[0]).year : null;
+          if (!k.length || rec.asked?.party === year) continue;
+          rec.asked = { ...(rec.asked ?? {}), party: year };
+          q.party = k[0];
+          q.until = Math.min(q.until, k[0] - 1);
+        } else if (kind === 'nearFriend') {
+          const best = topFriends(care, p.id, seated().map((o) => o.id), 1)[0];
+          if (!best || best.friendship < FRIENDSHIP.friendAt) continue;
+          q.friend = best.other;
+          q.room = requestRoom(p, kind, best.other)?.id ?? null;
+          if (!q.room) continue;
+        } else {
+          q.room = requestRoom(p, kind)?.id ?? null;
+          if (!q.room) continue;
+        }
+        if (new Rng(`${seed}:request:${kind}:${p.id}:${day}`).next() >= R.chance) continue;
+        fh.nextId++;
+        fh.requests.push(q);
+        bus?.emit('care:familyRequest', { id: q.id, resident: p.id, kind });
+        break;
+      }
+    }
+  }
+  function answerRequest(q, agree, auto = false) {
+    if (!q || q.status !== 'open') return { ok: false, reason: 'Already answered' };
+    const p = byResident(q.resident);
+    if (!p) {
+      q.status = 'gone';
+      return { ok: false, reason: 'They are not here' };
+    }
+    const R = REQUESTS[q.kind];
+    if (agree) {
+      if (q.kind === 'birthdayParty') {
+        familyOf(p).party = q.party;
+        log(p, `Family birthday party agreed for ${dayWord(q.party)}: the family will come to the birthday tea`);
+      } else {
+        const room = roomList().find((r) => r.id === q.room);
+        const still = room && !room.residentId ? room : requestRoom(p, q.kind, q.friend);
+        if (!still) return { ok: false, reason: 'That room has been taken: no better room is free now' };
+        moveRoom(p, still.id);
+      }
+      q.status = 'agreed';
+      trust(p, R.agreeTrust, `Request agreed: ${R.title.toLowerCase()}`, 'request');
+    } else {
+      q.status = auto ? 'lapsed' : 'declined';
+      trust(p, REQUEST.declineTrust, `${auto ? 'No answer to' : 'Kindly declined'}: ${R.title.toLowerCase()}`, 'request');
+    }
+    q.answered = clock.totalDays;
+    fh.requests = fh.requests.filter((o) => o.status === 'open' || o.answered >= clock.totalDays - 28);
+    return { ok: true, reason: null };
+  }
+  // The family asks for a care-plan meeting (the Inbox): Trust has fallen low, or the plan is due for review.
+  function newAsks(day) {
+    for (const p of seated()) {
+      const rec = familyOf(p);
+      if (!rec?.contact || !joined(p) || rec.meeting || fh.asks.some((a) => a.resident === p.id)) continue;
+      if (rec.asked?.meeting != null && day - rec.asked.meeting < MEETING_ASK.gapDays) continue;
+      if (rec.lastMeeting != null && day - rec.lastMeeting < MEETING_ASK.gapDays) continue;
+      let why = null;
+      if (rec.trust < MEETING_ASK.lowTrust) why = 'low';
+      else if (rec.pattern !== 'Community visitor' && staleReasons(p.state, day).length && new Rng(`${seed}:ask:${p.id}:${day}`).next() < MEETING_ASK.reviewChance) why = 'review';
+      if (!why) continue;
+      rec.asked = { ...(rec.asked ?? {}), meeting: day };
+      fh.asks.push({ id: `m${fh.nextId++}`, resident: p.id, day, why, until: day + MEETING_ASK.expireDays });
+    }
+  }
+  function answerAsk(a, book, auto = false) {
+    const p = byResident(a?.resident);
+    fh.asks = fh.asks.filter((o) => o !== a);
+    if (!a || !p) return { ok: false, reason: 'They are not here' };
+    if (book) {
+      const r = bookMeeting(p, { review: a.why === 'review', kind: a.why === 'review' ? 'review' : 'request' });
+      if (!r.ok) fh.asks.push(a);
+      return r;
+    }
+    trust(p, MEETING_ASK.declineTrust, `${auto ? 'No answer to' : 'Kindly put off'}: a care-plan meeting`, 'request');
+    return { ok: true, reason: null };
+  }
+
+  // --- the day ---
+  // At midnight: what families saw yesterday (missed essential care), day-end complaints (a count reached, a lingering
+  // alert, a plan option they weren't told about), a birthday done well, the open complaints' progress and drift,
+  // requests and asks lapsing or arriving, and today's visits.
+  function familyDay(day) {
+    const y = day - 1;
+    for (const p of seated()) {
+      const rec = familyOf(p);
+      if (!rec?.contact || !joined(p)) continue;
+      const missed = care.tasks.filter((t) => t.resident === p.id && t.day === y && t.essential && t.status === 'missed');
+      const K = COMPLAINTS.missedCare;
+      const recent = care.tasks.filter((t) => t.resident === p.id && t.day > y - K.within && t.essential && t.status === 'missed');
+      if (missed.length && recent.length >= K.count) raiseComplaint(p, 'missedCare', { detail: missed[missed.length - 1].name.toLowerCase(), band: missed[missed.length - 1].band, lastEvent: y });
+      for (const kind of ['lateTray', 'roundIssue']) {
+        const seen = seenOf(rec, kind, y - COMPLAINTS[kind].within + 1);
+        if (seen.some((s) => s.day === y) && seen.length >= COMPLAINTS[kind].count) raiseComplaint(p, kind, { detail: seen[seen.length - 1].detail, band: seen[seen.length - 1].band, lastEvent: y });
+      }
+      const a = cl.alerts.find((x) => x.resident === p.id && x.status === 'open' && x.noticed != null);
+      if (a && absNow() - a.noticed >= COMPLAINTS.lingeringAlert.hours) raiseComplaint(p, 'lingeringAlert', { detail: a.word, alert: a.id, band: bandAt(a.noticed % 24).id });
+      if (rec.untold && day - rec.untold.day >= COMPLAINTS.untoldPlan.days) {
+        raiseComplaint(p, 'untoldPlan', { detail: optionById(rec.untold.option)?.name ?? 'a change', option: rec.untold.option, domain: rec.untold.domain });
+        rec.untold = null;
+      }
+      // a birthday done well: they joined the birthday tea and were in good spirits
+      const bs = acts.session(y, 'afternoon');
+      if (birthdayOf(p.id) === dayOfYear(y) && bs?.joined?.includes(p.id) && p.state.outcomes.mood >= COMPLIMENTS.birthday.mood) compliment(p, 'birthday');
+    }
+    for (const c of fh.complaints) complaintDay(c);
+    for (const q of fh.requests.filter((o) => o.status === 'open' && (o.until < day || !byResident(o.resident)))) answerRequest(q, false, true);
+    for (const a of fh.asks.filter((o) => o.until < day || !byResident(o.resident))) answerAsk(a, false, true);
+    newRequests(day);
+    newAsks(day);
+    planVisits(day);
+  }
+  // A plan option they dislike (or refuse): the family expects to hear about it — a meeting or a family call does it.
+  function familyPlanChange(p, domain, optionId) {
+    const rec = familyOf(p);
+    if (!rec?.contact) return;
+    const pref = optionPrefOf(p.state, optionId);
+    if (pref === 'dislike' || pref === 'refuse') rec.untold = { option: optionId, domain, day: clock.totalDays };
+    else if (rec.untold?.domain === domain) rec.untold = null;
+  }
+  // Homes from before Milestone 19: every family's record now (their M16 trust carried over), and today's visits.
+  for (const p of seated()) familyOf(p);
+  if (!fh.planned) planVisits(clock.totalDays);
+  // Visitors under way in a save come back where they were.
+  for (const v of fh.visits) if (v.phase === 'arriving' || v.phase === 'with' || v.phase === 'leaving') {
+    if (!byResident(v.resident) || !hasFamily(byResident(v.resident))) {
+      v.phase = 'gone';
+      continue;
+    }
+    const x = spawnVisitor(v, v.pos ?? null);
+    v.follow = null;
+    if (v.phase === 'leaving') x.agent.walkTo(grid, ENTRANCE.col, ENTRANCE.row);
+  }
+  fh.visits = fh.visits.filter((v) => v.phase !== 'gone');
 
   // --- going home (Milestone 9) -------------------------------------------------------------------------------------
   // A set stay (Respite, Rehab / Short Stay) ends on its leaveDay at STAY_LEAVE_HOUR (or at once when that has passed,
@@ -1913,6 +2614,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
     mobilityDay(day); // (Milestone 16: rehab progress, mobility levels and aids, ready to go home, falls risk)
     memoryDay(day); // (Milestone 17: steady / unsettled, the Choice signal)
+    familyDay(day); // (Milestone 19: what families saw yesterday, compliments and complaints, requests, today's visits)
     // Milestone 15: yesterday's food (a simple cost per meal served), today's diet tags
     const meals = dining.served(day - 1);
     if (meals) ledger.economy.add('credits', -meals * FOOD_COST.perMeal, `Food: ${meals} meal${meals === 1 ? '' : 's'} served`, 'food');
@@ -2164,6 +2866,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       }
       tickTasks(hours);
       for (const p of residents) p.agent.update(g, grid);
+      for (const x of visitors) x.agent.update(g, grid); // (Milestone 19)
     },
     // Resident card's picker: choose who helps with a step (null = automatic). A role that doesn't fit is refused.
     assign(stepId, staffId, residentId = ARTHUR) {
@@ -2223,6 +2926,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           log(p, pref === 'dislike' ? `Unhappy with ${optionById(optionId).name} (Mood ${mood})` : `Pleased with ${optionById(optionId).name} (Mood +${mood})`);
         }
         r.mood = mood;
+        familyPlanChange(p, domain, optionId); // (Milestone 19: a disliked option — the family expects to hear)
         bus?.emit('care:plan', { resident: p.id, domain, option: optionId });
       }
       return r;
@@ -2430,7 +3134,81 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       care.rewards ??= { reputation: 0, research: 0, positiveOutcomes: 0, discharges: [] };
       return care.rewards;
     },
-    familyOf: (residentId) => care.families?.[residentId] ?? null,
+    familyOf: (residentId) => (byResident(residentId) ? familyOf(byResident(residentId)) : care.families?.[residentId] ?? null),
+    // --- Milestone 19: family trust -------------------------------------------------------------------------------------
+    visitors,
+    family: {
+      get state() {
+        return fh;
+      },
+      // The home's Family Trust (the average over the families of everyone here; null with nobody here)
+      trust: () => homeTrust(care.families, seated().map((p) => p.id)),
+      recordOf: (residentId) => (byResident(residentId) ? familyOf(byResident(residentId)) : null),
+      callOf: (residentId) => (byResident(residentId) ? callFor(byResident(residentId)) : ''),
+      whoOf: (residentId) => (byResident(residentId) ? fromWord(byResident(residentId)) : ''),
+      patternOf: (residentId) => PATTERNS[familyOf(byResident(residentId))?.pattern] ?? PATTERNS.None,
+      visitOf: (residentId) => visitOf(residentId),
+      visitsToday: () => fh.visits.filter((v) => v.day === clock.totalDays),
+      book: (residentId, opts = {}) => (byResident(residentId) ? bookMeeting(byResident(residentId), opts) : { ok: false, reason: 'No such resident.' }),
+      canBook: () => attendeeRostered(),
+      complaints: () => fh.complaints,
+      open: () => fh.complaints.filter((c) => c.status === 'open'),
+      compliments: () => fh.compliments,
+      improvement: (id) => {
+        const c = fh.complaints.find((x) => x.id === id);
+        return c ? improvement(c) : { ok: false, text: '' };
+      },
+      markDone: (id) => resolveComplaint(fh.complaints.find((x) => x.id === id) ?? { status: 'none' }),
+      setOwner(id, staffId) {
+        const c = fh.complaints.find((x) => x.id === id);
+        const q = crew.byId(staffId);
+        if (!c || c.status !== 'open' || !q) return { ok: false, reason: 'Nothing to change' };
+        c.owner = q.id;
+        trail(c, `Owner: ${helperName(q.id)}`);
+        return { ok: true, reason: null };
+      },
+      // The player took the suggested fix (the trail records it)
+      noteAction(id, text) {
+        const c = fh.complaints.find((x) => x.id === id);
+        if (c?.status === 'open') trail(c, `Action: ${text}`);
+      },
+      requests: () => fh.requests.filter((q) => q.status === 'open' && byResident(q.resident)).map((q) => ({ ...q, text: requestText(q), title: REQUESTS[q.kind].title })),
+      answerRequest: (id, agree) => answerRequest(fh.requests.find((q) => q.id === id), agree),
+      asks: () => fh.asks.filter((a) => byResident(a.resident)),
+      answerAsk: (id, book) => answerAsk(fh.asks.find((a) => a.id === id), book),
+      seenComplaint(id) {
+        if (!fh.seenComplaints.includes(id)) fh.seenComplaints = [...fh.seenComplaints, id].slice(-60);
+      },
+      unseen: () => fh.complaints.filter((c) => c.status === 'open' && !fh.seenComplaints.includes(c.id)),
+      meetingKinds: MEETING_KINDS,
+      // Tests and ?debug=1
+      visitNowForTests(residentId, opts = {}) {
+        const p = byResident(residentId);
+        if (!p || !hasFamily(p)) return null;
+        const v = addVisit(p, clock.totalDays, opts);
+        v.at = absNow();
+        return v;
+      },
+      complainForTests: (residentId, kind, opts = {}) => (byResident(residentId) ? raiseComplaint(byResident(residentId), kind, opts) : null),
+      complimentForTests: (residentId, kind = 'visit') => (byResident(residentId) ? compliment(byResident(residentId), kind) : null),
+      requestForTests(residentId, kind) {
+        const p = byResident(residentId);
+        if (!p || !hasFamily(p)) return null;
+        const q = { id: `q${fh.nextId++}`, resident: p.id, kind, day: clock.totalDays, until: clock.totalDays + REQUEST.expireDays, status: 'open' };
+        if (kind === 'birthdayParty') q.party = clock.totalDays + 3;
+        else if (kind === 'nearFriend') {
+          q.friend = topFriends(care, p.id, seated().map((o) => o.id), 1)[0]?.other ?? null;
+          q.room = requestRoom(p, kind, q.friend)?.id ?? roomsFor(p.def)[0]?.id ?? null;
+        } else q.room = requestRoom(p, kind)?.id ?? roomsFor(p.def)[0]?.id ?? null;
+        fh.requests.push(q);
+        return q;
+      },
+      askForTests(residentId, why = 'review') {
+        const a = { id: `m${fh.nextId++}`, resident: residentId, day: clock.totalDays, why, until: clock.totalDays + MEETING_ASK.expireDays };
+        fh.asks.push(a);
+        return a;
+      },
+    },
     // A successful discharge: every goal met. They walk out with family, the room frees, the rewards and a positive
     // care outcome are counted, their family's trust rises. → { ok, reason, first }
     discharge(residentId, { auto = false } = {}) {
@@ -2445,10 +3223,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       r.positiveOutcomes += 1;
       r.discharges.push({ id: p.id, name: p.name, day: clock.totalDays, auto, days: clock.totalDays - (p.state.admittedDay ?? p.state.rehab.startDay) });
       if (r.discharges.length > 40) r.discharges.shift();
-      care.families ??= {};
-      const fam = (care.families[p.id] ??= { trust: 50, history: [] });
-      fam.trust = Math.min(100, fam.trust + R.familyTrust);
-      fam.history = [...fam.history, { day: clock.totalDays, event: 'discharge', trust: R.familyTrust }].slice(-12);
+      // (Milestone 19: the family's thank-you is a compliment carrying M16's Family Trust reward)
+      compliment(p, 'discharge', { amount: R.familyTrust });
       p.state.rehab.dischargedDay = clock.totalDays;
       startLeaving(p, { discharge: true });
       bus?.emit('care:discharge', { resident: p.id, name: p.name, first, auto, art: first ? DISCHARGE.firstArt : null });
@@ -2530,6 +3306,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         return st.away.out ? `At the hospital service: back in about ${left} day${left === 1 ? '' : 's'} (${who} room is held)` : 'Going to the hospital service for a few days';
       }
       if (st.leaving) return `Going home today: walking out to the front door`;
+      if (st.familyRoom) return `In the Family Room with ${fromWord(p)}`; // (Milestone 19)
       if (!joined(p)) return p.agent.state === 'walking' ? `Arriving: walking to ${who} room` : `Settling in to ${who} room`;
       const step = st.step && dayStep(p, st.step.id, st.step.day);
       if (!step) return `In ${who} room`;
@@ -2665,6 +3442,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         p.state.pos = { x: p.agent.x, y: p.agent.y, ...(p.agent.state === 'walking' && p.agent.path.length ? { path: p.agent.path.map((pt) => ({ x: pt.x, y: pt.y })) } : {}) }; // (Milestone 13: the path too)
         if (p.state.review) p.state.review.reasons = staleReasons(p.state, clock.totalDays).map((r) => r.text); // (Milestone 8)
       }
+      for (const x of visitors) x.v.pos = { x: x.agent.x, y: x.agent.y }; // (Milestone 19: where each visitor is)
       for (const a of staffState.roster.agency) a.model = sys.get(a.id)?.toJSON() ?? null;
       const agencyIds = new Set(staffState.roster.agency.map((a) => a.id));
       const gone = new Set(crew.people.filter((q) => q.leftTeam).map((q) => q.id)); // (Milestone 11: let go, on their way out)
@@ -2693,9 +3471,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     syncPlaced();
     for (const r of roomList()) r.residentId = residents.find((p) => p.state.room === r.id && !p.state.leaving && !p.state.guest)?.id ?? null;
     const tileOf = (a) => grid.worldToTile(a.x, a.y);
-    for (const q of world.people) {
+    for (const q of [...world.people, ...visitors]) {
       const a = q.agent;
       let t = tileOf(a);
+      if (q.kind === 'visitor') q.v.follow = null; // (Milestone 19: a visitor finds their resident again)
       if (moved && t && t.col >= moved.from.col && t.col < moved.from.col + moved.box.w && t.row >= moved.from.row && t.row < moved.from.row + moved.box.h) {
         const dc = moved.to.col - moved.from.col;
         const dr = moved.to.row - moved.from.row;
@@ -2717,6 +3496,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (a.state === 'walking' && a.goal) a.walkTo(grid, a.goal.col, a.goal.row, a._onArrive);
     }
     for (const q of crew.people) if (q.task?.spot) crew.retarget(q.id, q.task.spot);
+    // (Milestone 19: a Family Room visit carries on where they are: the room's tiles may have moved)
+    for (const x of visitors) x.v.room = false;
+    for (const p of residents) delete p.state.familyRoom;
     for (const p of residents) {
       const st = p.state;
       if (st.leaving || st.guest || !st.step || !(st.step.status === 'walking' || st.step.status === 'waiting')) continue;

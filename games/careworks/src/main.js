@@ -82,6 +82,7 @@ import { DIETS, dishById, dishesOf, mealById, SAT_REASONS, HYDRATION, KITCHENS, 
 import { AIDS, GOALS, DISCHARGE, REHAB_FUNDING } from '../data/mobility.js';
 import { WALKING } from '../data/memory.js';
 import { ACTIONS, ACTION_IDS, CLINICIAN, HOSPITAL } from '../data/clinical.js';
+import { TRUST, MEETING, MEETING_ASK, COMPLAINT, COMPLAINTS, FIXES, REQUESTS, REQUEST, FAMILY_ICONS } from '../data/family.js';
 import { yearsEmployed } from './systems/staffTeam.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
@@ -462,7 +463,7 @@ const topBar = createTopBar({
   },
   onStats: () => openLedger(),
   onInbox: () => openInbox(),
-  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting(), // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home; Milestone 18: alerts waiting for a choice)
+  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting(), // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home; Milestone 18: alerts waiting for a choice; Milestone 19: family asks, requests, new complaints)
   onHelp: () => openTopSheet('help'),
   onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_LOCKED, accent: COL.progress, sections: [] })),
 });
@@ -484,7 +485,7 @@ const markMissedSeen = (residentId = null) => {
 const bottomBar = createBottomBar({
   layout,
   assets,
-  items: BOTTOM_SLOTS.map((s) => ({ id: s.id, label: s.label, icon: s.icon, badge: s.id === 'care' ? careBadge : s.id === 'staff' ? staffBadge : null })),
+  items: BOTTOM_SLOTS.map((s) => ({ id: s.id, label: s.label, icon: s.icon, badge: s.id === 'care' ? careBadge : s.id === 'staff' ? staffBadge : s.id === 'quality' ? () => qualityBadge() : null })), // (Milestone 19: Quality — new complaints, and ones ready to mark done)
   open: (id) => openBottom(id),
 });
 const vfx = new VfxSystem({ assets, width: W, height: renderer.height, font: THEME.family, maxTexts: 4, maxEffects: 16 });
@@ -543,6 +544,24 @@ bus.on('care:discharge', ({ resident, name, first: isFirst, art }) => {
   dayBeat.showText(`${first(name)} goes home with family: rehab complete`, true);
   if (isFirst && art) bigBeat = { title: 'A first rehab discharge', text: `${first(name)} is back on ${theirOf(resident)} feet and home with family`, art, age: 0 };
 });
+// Milestone 19: a first family visit (the big beat with its picture; later visits only a quiet line when nothing else
+// is showing), compliments (the first with the thank-you card), complaints, meetings held
+bus.on('care:visit', ({ name, visitor, first: isFirst, art }) => {
+  if (!open || router.currentName !== 'home') return;
+  if (isFirst && art) bigBeat = { title: 'A first family visit', text: `${visitor} comes to see ${first(name)}`, art, age: 0 };
+  else if (!dayBeat.current && !bigBeat) dayBeat.showText(`${visitor} is visiting ${first(name)}`, false);
+});
+bus.on('care:compliment', ({ name, first: isFirst, art }) => {
+  if (!open || router.currentName !== 'home') return;
+  dayBeat.showText(`A compliment from ${first(name)}'s family`, true);
+  if (isFirst && art) bigBeat = { title: 'A first compliment', text: `${first(name)}'s family says thank you`, art, age: 0 };
+});
+bus.on('care:complaint', ({ name }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`A complaint from ${first(name)}'s family: an improvement task (Quality)`, false);
+});
+bus.on('care:meeting', ({ name, change, review, first: isFirst }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(isFirst ? `A first family review: ${first(name)}'s plan` : `Family meeting for ${first(name)}: Family Trust ${signed1(change)}`, true);
+});
 bus.on('care:notice', () => {
   if (open && router.currentName === 'home' && !dayBeat.current && !bigBeat) dayBeat.showText('A notice in the Inbox', false);
 });
@@ -564,6 +583,7 @@ function openBottom(id) {
   else if (r.sheet === 'roster') openRoster();
   else if (r.slot.id === 'business') openBusiness();
   else if (r.slot.id === 'develop') openDevelop();
+  else if (r.slot.id === 'quality') openQuality(); // (Milestone 19: Compliments & complaints)
   else openPlaceholder(r.slot);
   lastRoute = r.sheet;
 }
@@ -862,6 +882,7 @@ function openInbox() {
     for (const a of w.clinical.alerts()) sections.push(alertSection(w, a, 'inbox'));
     // Milestone 16: residents ready to go home — send them home now, or it happens on its own
     for (const r of w.readyToGoHome()) sections.push(readyNotice(w, r, 'inbox'));
+    sections.push(...familyInbox(w)); // (Milestone 19: a meeting the family asked for, requests, new complaints)
     for (const n of notices) {
       const can = w.activities.canAccept(n.uid);
       sections.push({ title: n.def.name, lines: [n.def.text, { text: `${dayName(w, n.day)} afternoon (in ${n.day - w.clock.totalDays} day${n.day - w.clock.totalDays === 1 ? '' : 's'}) · runs as ${activityById(n.def.activity).name.toLowerCase()} with a bigger lift`, color: COL.actionDark }], columns: 2, buttons: [
@@ -878,7 +899,7 @@ function openInbox() {
     }
     const past = w.activities.history().slice(-4).reverse();
     sections.push({ title: 'Earlier', lines: past.length ? past.map((h) => ({ text: `${h.def.name}: ${h.accepted ? 'accepted' : h.auto ? 'no answer (let go)' : 'declined'}`, color: COL.textMuted })) : [{ text: notices.length ? '' : 'Nothing yet. Letters from families, partners and inspectors will arrive here too.', color: COL.textMuted }] });
-    const waiting = notices.length + alertsWaiting();
+    const waiting = notices.length + alertsWaiting() + familyWaiting();
     return { title: 'Inbox', subtitle: waiting ? `${waiting} waiting` : 'Nothing waiting', art: 'care_ui_01', accent: accentNow(), sections };
   });
 }
@@ -1160,6 +1181,165 @@ function clinicalLedger(w, range) {
     { text: 'The home\'s quality scores arrive in a later update; this one is shown for now.', color: COL.textMuted },
   ] };
 }
+// --- Milestone 19: family trust, visits, meetings, compliments and complaints ----------------------------------------------
+// Every Family Trust change shows with its reason; a complaint is an improvement task with an evidence trail, never a cost.
+const trustColour = (v) => (v == null ? COL.textMuted : v >= 70 ? COL.good : v >= 50 ? COL.actionDark : COL.warn);
+const signed1 = (v) => `${v > 0 ? '+' : v < 0 ? '−' : '±'}${Math.abs(Math.round(v * 10) / 10)}`;
+const agoWord = (w, d) => {
+  const n = w.clock.totalDays - d;
+  return n <= 0 ? 'today' : n === 1 ? 'yesterday' : `${n} days ago`;
+};
+const aheadWord = (w, d) => {
+  const n = d - w.clock.totalDays;
+  return n <= 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`;
+};
+const familyShown = new Set(); // resident cards showing every Trust change (not just the last few)
+let familyMessage = null; // why a request couldn't be agreed (the Inbox shows it)
+function bookMeeting(w, residentId, opts, onDone = null) {
+  const r = w.family.book(residentId, opts);
+  if (r.ok) autosave.request('family');
+  onDone?.(r);
+  return r;
+}
+// The resident card's Family section: who, how often they come, Family Trust and why it moved, the family's wishes,
+// an open complaint, and booking a care-plan meeting.
+function familySection(w, it) {
+  const rec = w.family.recordOf(it.id);
+  if (!rec?.contact) return { title: 'Family', lines: [{ text: 'No regular visitors', color: COL.textMuted }] };
+  const v = w.family.visitOf(it.id);
+  const lines = [
+    { text: `${w.family.whoOf(it.id)} · visits ${w.family.patternOf(it.id).word}`, color: COL.actionDark },
+    { text: v ? `${rec.contact.name} is visiting now` : `Last visit: ${rec.lastVisit == null ? 'not yet' : agoWord(w, rec.lastVisit)}${rec.nextVisit != null ? ` · next: ${aheadWord(w, rec.nextVisit)}` : ''}`, color: v ? COL.good : COL.textMuted },
+  ];
+  if (rec.meeting) lines.push({ text: `Care-plan meeting booked: ${aheadWord(w, rec.meeting.day)} afternoon${rec.meeting.review ? ' (a review with the family)' : ''}`, color: COL.actionDark });
+  if (rec.untold) lines.push({ text: `Not told yet: ${optionById(rec.untold.option)?.name ?? 'a plan change'} (they dislike it). A meeting or a family call tells the family.`, color: COL.warn });
+  for (const n of (rec.notes ?? []).slice(-2)) lines.push({ text: `Family wish (${agoWord(w, n.day)}): ${n.text}`, color: COL.actionDark });
+  for (const c of w.family.open().filter((x) => x.resident === it.id)) lines.push({ text: `Complaint open: ${c.text}. ${w.family.improvement(c.id).text}`, color: COL.warn });
+  const all = familyShown.has(it.id);
+  const hist = [...rec.history].reverse().slice(0, all ? 40 : 5);
+  lines.push({ text: hist.length ? 'Why Family Trust moved (newest first):' : `No change yet: every family starts at ${TRUST.start}`, color: COL.textMuted });
+  for (const h of hist) lines.push({ text: `${signed1(h.change)}  ${agoWord(w, h.day)}: ${h.reason}${h.parts ? ` (${h.parts.map((p) => signed1(p.value)).join(' ')})` : ''}`, color: h.change > 0 ? COL.good : h.change < 0 ? COL.bad : COL.textMuted });
+  const can = w.family.canBook();
+  const buttons = [
+    { id: `family:meet:${it.id}`, label: rec.meeting ? 'Meeting booked' : 'Book a care-plan meeting', sub: rec.meeting ? `${aheadWord(w, rec.meeting.day)} afternoon` : can ? `The Founder or a nurse meets ${rec.contact.name} for an hour (Family Trust +${MEETING.lift})` : 'Needs the Founder or a nurse on the Afternoon shift', disabled: !!rec.meeting || !can, accent: COL.action, onTap: () => bookMeeting(w, it.id, {}) },
+  ];
+  if (rec.history.length > 5) buttons.push({ id: `family:all:${it.id}`, label: all ? 'Show fewer' : `Show all ${rec.history.length} changes`, accent: COL.progress, onTap: () => (all ? familyShown.delete(it.id) : familyShown.add(it.id)) });
+  return { title: 'Family', lines, bars: [{ label: 'Family Trust', value: rec.trust, color: trustColour(rec.trust), text: `${Math.round(rec.trust)}` }], columns: 1, buttons };
+}
+// A complaint as a card section: the improvement task (description, suggested fix, owner, due date) and its trail.
+function complaintSection(w, c, from) {
+  const imp = w.family.improvement(c.id);
+  const overdue = c.status === 'open' && w.clock.totalDays > c.due;
+  const lines = [
+    { text: c.text, color: COL.actionDark },
+    { text: `Suggested fix: ${c.fixText}`, color: COL.actionDark },
+    { text: `Owner: ${c.owner ? w.byId(c.owner)?.name ?? c.owner : 'nobody yet'} · due ${aheadWord(w, c.due)}${overdue ? ': past due, Family Trust drifting down' : ''}`, color: overdue ? COL.bad : COL.textMuted },
+    { text: imp.text, color: imp.ok ? COL.good : COL.warn },
+    { text: 'Evidence trail:', color: COL.textMuted },
+    ...c.trail.map((t) => ({ text: `${agoWord(w, t.day)} ${t.t ?? ''}  ${t.text}`, color: COL.textMuted })),
+  ];
+  const team = w.team.filter((q) => !q.agency && !q.leftTeam);
+  const nextOwner = team[(team.findIndex((q) => q.id === c.owner) + 1) % Math.max(1, team.length)];
+  const fix = FIXES[c.fix];
+  const buttons = [
+    { id: `complaint:${from}:fix:${c.id}`, label: fix.opens === 'roster' ? 'Open the roster' : fix.opens === 'card' ? `${first(c.name)}'s card` : 'Book a care-plan meeting', sub: c.fixText, accent: COL.action, onTap: () => {
+      if (fix.opens === 'roster') {
+        w.family.noteAction(c.id, 'the roster was opened to add cover');
+        openRoster();
+      } else if (fix.opens === 'card') {
+        w.family.noteAction(c.id, `${first(c.name)}'s card was opened`);
+        openHomeSheet(c.resident);
+      } else bookMeeting(w, c.resident, { kind: 'complaint' }, (r) => w.family.noteAction(c.id, r.ok ? `a care-plan meeting was booked (${aheadWord(w, r.day)})` : `a meeting could not be booked: ${r.reason}`));
+    } },
+    { id: `complaint:${from}:done:${c.id}`, label: 'Mark done', sub: imp.ok ? `Family Trust back up (+${Math.abs(c.drop) + COMPLAINT.bonus})` : imp.text, disabled: !imp.ok, accent: COL.good, onTap: () => {
+      const r = w.family.markDone(c.id);
+      if (r.ok) autosave.request('complaint');
+    } },
+  ];
+  if (nextOwner && team.length > 1) buttons.push({ id: `complaint:${from}:owner:${c.id}`, label: 'Change owner', sub: `Hand it to ${first(nextOwner.name)}`, accent: COL.progress, onTap: () => w.family.setOwner(c.id, nextOwner.id) });
+  return { title: `${first(c.name)}: ${COMPLAINTS[c.kind]?.title ?? 'Complaint'}`, titleDot: imp.ok ? COL.good : COL.warn, lines, columns: 2, buttons };
+}
+// Quality → Compliments & complaints: the home's Family Trust, open improvement tasks with their trails, the resolved ones,
+// and the compliments list.
+function openQuality() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    for (const c of w.family.unseen()) w.family.seenComplaint(c.id);
+    const t = w.family.trust();
+    const openList = w.family.open();
+    const resolved = w.family.complaints().filter((c) => c.status === 'resolved').slice(-6).reverse();
+    const compliments = [...w.family.compliments()].reverse().slice(0, 10);
+    const n = w.residents.filter((p) => !p.state.leaving && w.family.recordOf(p.id)?.contact).length;
+    return {
+      title: 'Compliments & complaints',
+      subtitle: `Family Trust ${t == null ? '—' : Math.round(t)} / 100 · ${openList.length} open · ${compliments.length ? `${w.family.compliments().length} compliments` : 'no compliments yet'}`,
+      art: FAMILY_ICONS.trust,
+      accent: accentNow(),
+      sections: [
+        { lines: [{ text: t == null ? 'No families yet.' : `Family Trust: ${Math.round(t)} / 100, the average over ${n} famil${n === 1 ? 'y' : 'ies'}`, color: trustColour(t) }, { text: 'A complaint becomes an improvement task: fix what went wrong, then mark it done to win the family’s trust back. Complaints never cost Credits. Left past the due date, trust drifts down slowly.', color: COL.textMuted }], bars: t == null ? [] : [{ label: 'Family Trust', value: t, color: trustColour(t), text: `${Math.round(t)}` }] },
+        ...(openList.length ? openList.map((c) => complaintSection(w, c, 'quality')) : [{ title: 'Open complaints', lines: [{ text: 'None open.', color: COL.good }] }]),
+        { title: 'Resolved', lines: resolved.length ? resolved.flatMap((c) => [{ text: `${first(c.name)}: ${COMPLAINTS[c.kind]?.title ?? ''} · raised ${agoWord(w, c.raised)}, resolved ${agoWord(w, c.resolved)} · Family Trust ${signed1(c.drop)} then ${signed1(c.recovered)}${c.drifted ? ` (drifted ${signed1(c.drifted)})` : ''}`, color: COL.actionDark }, ...c.trail.map((x) => ({ text: `   ${agoWord(w, x.day)}  ${x.text}`, color: COL.textMuted }))]) : [{ text: 'Nothing resolved yet.', color: COL.textMuted }] },
+        { title: `Compliments${compliments.length ? ` (${w.family.compliments().length})` : ''}`, lines: compliments.length ? compliments.map((k) => ({ text: `${agoWord(w, k.day)}: ${k.text}${k.staff.length ? ` · ${k.staff.map((id) => first(w.byId(id)?.name ?? id)).join(', ')} +${k.morale} Morale` : ''} · Family Trust ${signed1(k.trust)}`, color: COL.good })) : [{ text: 'None yet. Good visits, birthdays done well and residents going home after rehab bring them.', color: COL.textMuted }] },
+      ],
+    };
+  });
+}
+// The Inbox's family items: a meeting the family asked for, a room or party request, a new complaint.
+function familyInbox(w) {
+  const out = [];
+  const can = w.family.canBook();
+  for (const a of w.family.asks()) {
+    const p = w.residentById(a.resident);
+    out.push({ title: `${w.family.whoOf(a.resident)}: a care-plan meeting`, lines: [{ text: `${w.family.whoOf(a.resident)} would like a care-plan meeting about ${w.family.callOf(a.resident)}${a.why === 'low' ? ': they are not happy with how things are going' : ': the plan is due for a review'}.`, color: COL.actionDark }], columns: 2, buttons: [
+      { id: `ask:book:${a.id}`, label: a.why === 'review' ? 'Book a review with them' : 'Book a meeting', sub: can ? `The Founder or a nurse attends for an hour · Family Trust +${MEETING.lift}` : 'Needs the Founder or a nurse on the Afternoon shift', disabled: !can, accent: COL.good, onTap: () => {
+        const r = w.family.answerAsk(a.id, true);
+        if (r.ok) autosave.request('family');
+      } },
+      { id: `ask:later:${a.id}`, label: 'Not now', sub: `Kindly · Family Trust ${signed1(MEETING_ASK.declineTrust)}`, accent: COL.progress, onTap: () => {
+        w.family.answerAsk(a.id, false);
+        autosave.request('family');
+      } },
+      ...(p ? [{ id: `ask:card:${a.id}`, label: `${first(p.name)}'s card`, sub: 'Their plan and family', accent: COL.progress, onTap: () => openHomeSheet(p.id) }] : []),
+    ] });
+  }
+  const message = familyMessage;
+  for (const q of w.family.requests()) {
+    const R = REQUESTS[q.kind];
+    out.push({ title: q.title, lines: [{ text: q.text, color: COL.actionDark }, ...(message ? [{ text: message, color: COL.bad }] : []), { text: `An answer by ${aheadWord(w, q.until + 1)}; no answer is taken as a kind no.`, color: COL.textMuted }], columns: 2, buttons: [
+      { id: `request:yes:${q.id}`, label: 'Agree', sub: `${q.kind === 'birthdayParty' ? 'The family comes to the birthday tea' : `Moves to room ${w.roomNumber(q.room)} now`} · Family Trust +${R.agreeTrust}`, accent: COL.good, onTap: () => {
+        const r = w.family.answerRequest(q.id, true);
+        familyMessage = r.ok ? null : r.reason;
+        if (r.ok) autosave.request('family');
+      } },
+      { id: `request:no:${q.id}`, label: 'Kindly decline', sub: `Family Trust ${signed1(REQUEST.declineTrust)}`, accent: COL.progress, onTap: () => {
+        w.family.answerRequest(q.id, false);
+        autosave.request('family');
+      } },
+    ] });
+  }
+  for (const c of w.family.unseen()) out.push({ title: `A complaint from ${c.from}`, titleDot: COL.warn, lines: [{ text: c.text, color: COL.actionDark }, { text: `Improvement task: ${c.fixText} · no Credits lost`, color: COL.textMuted }], columns: 1, buttons: [{ id: `complaint:inbox:${c.id}`, label: 'Open the improvement task', sub: 'Quality → Compliments & complaints', accent: COL.action, onTap: () => openQuality() }] });
+  return out;
+}
+const familyWaiting = () => (open?.world?.family ? open.world.family.asks().length + open.world.family.requests().length + open.world.family.unseen().length : 0);
+// Quality's badge: new complaints, and open ones ready to mark done.
+const qualityBadge = () => (open?.world?.family ? open.world.family.unseen().length + open.world.family.open().filter((c) => open.world.family.improvement(c.id).ok).length || null : null);
+// The Reception / Family Desk card: Family Trust, today's visits, meetings booked, what is waiting.
+function familyDeskSections(w) {
+  const t = w.family.trust();
+  const today = w.family.visitsToday();
+  const booked = w.residents.map((p) => ({ p, m: w.family.recordOf(p.id)?.meeting })).filter((x) => x.m);
+  const low = w.residents.filter((p) => !p.state.leaving && w.family.recordOf(p.id)?.contact).map((p) => ({ p, t: w.family.recordOf(p.id).trust })).sort((a, b) => a.t - b.t).slice(0, 3);
+  const lines = [
+    { text: t == null ? 'Family Trust: no families yet' : `Family Trust: ${Math.round(t)} / 100 (the home's average)`, color: trustColour(t) },
+    ...today.map((v) => ({ text: `${w.family.whoOf(v.resident)} → ${first(w.residentById(v.resident)?.name ?? '')}: ${v.phase === 'due' ? `expected at ${clockText(v.at % 24)}` : v.phase === 'leaving' ? 'on the way out' : v.phase === 'with' ? 'visiting now' : 'arriving'}${v.meeting ? ' (care-plan meeting)' : v.party ? ' (birthday party)' : ''}`, color: v.phase === 'with' ? COL.good : COL.textMuted })),
+    ...(today.length ? [] : [{ text: 'No visitors expected today.', color: COL.textMuted }]),
+    ...booked.map((x) => ({ text: `Meeting: ${first(x.p.name)}'s family, ${aheadWord(w, x.m.day)} afternoon`, color: COL.actionDark })),
+    ...(low.length ? [{ text: `Lowest trust: ${low.map((x) => `${first(x.p.name)} ${Math.round(x.t)}`).join(' · ')}`, color: COL.textMuted }] : []),
+  ];
+  const waiting = familyWaiting();
+  return [{ title: 'Families', lines, bars: t == null ? [] : [{ label: 'Family Trust', value: t, color: trustColour(t), text: `${Math.round(t)}` }], columns: 1, buttons: [{ id: 'desk:quality', label: 'Compliments & complaints', sub: `${w.family.open().length} open · ${w.family.compliments().length} compliments${waiting ? ` · ${waiting} in the Inbox` : ''}`, icon: FAMILY_ICONS.complaint, accent: COL.action, onTap: () => openQuality() }] }];
+}
 // --- Milestone 16: mobility, rehab goals, falls risk, discharge ----------------------------------------------------------
 const REHAB_COLOUR = { 'Ready to go home': COL.good, 'On track': COL.good, Slow: COL.warn, 'Just started': COL.actionDark };
 function readyNotice(w, r, from) {
@@ -1369,12 +1549,14 @@ function openBusiness() {
   const slot = BOTTOM_SLOTS.find((s) => s.id === 'business');
   sheet.open(() => {
     const b = balanceNow();
+    const t = open?.world?.family?.trust() ?? null; // (Milestone 19: the home's Family Trust, in the top area)
     return {
       title: slot.title,
       subtitle: slot.text,
       art: slot.icon,
       accent: accentNow(),
       sections: [
+        { lines: [{ text: t == null ? 'Family Trust: no families yet' : `Family Trust: ${Math.round(t)} / 100 (every family's average)`, color: trustColour(t) }], bars: t == null ? [] : [{ label: 'Family Trust', value: t, color: trustColour(t), text: `${Math.round(t)}` }], columns: 1, buttons: [{ id: 'business:family', label: 'Compliments & complaints', sub: open?.world ? `${open.world.family.open().length} open · ${open.world.family.compliments().length} compliments` : '', icon: FAMILY_ICONS.trust, accent: COL.action, onTap: () => openQuality() }] },
         {
           columns: 1,
           lines: ['Your home saves itself as you play.'],
@@ -1805,6 +1987,7 @@ function residentSections(w, it) {
     { title: 'Call bells', lines: bellLines(w, it, they) },
     familiarSection(w, it),
     friendsSection(w, it),
+    familySection(w, it), // (Milestone 19)
     activitySection(w, it),
     mealsSection(w, it),
     ...rehabSections(w, it),
@@ -1828,6 +2011,9 @@ function planSection(w, it) {
     w.reviewPlan(it.id);
     autosave.request('review');
   } });
+  // Milestone 19: a review can include the family (a care-plan meeting; reviewed when it is held)
+  const rec = w.family.recordOf(it.id);
+  if (rec?.contact) buttons.push({ id: 'plan:reviewFamily', label: 'Review with family', sub: rec.meeting ? `Meeting booked: ${aheadWord(w, rec.meeting.day)} afternoon` : w.family.canBook() ? `With ${rec.contact.name}: reviewed when the meeting is held (Family Trust +${MEETING.lift})` : 'Needs the Founder or a nurse on the Afternoon shift', disabled: !!rec.meeting || !w.family.canBook(), accent: COL.action, onTap: () => bookMeeting(w, it.id, { review: true }) });
   return { title: stale.length ? 'Care Plan · review due' : 'Care Plan', titleDot: stale.length ? COL.warn : null, lines, buttons, columns: 1 };
 }
 const PREF_WORDS = { prefer: 'likes this', dislike: 'dislikes this', refuse: 'refuses this' };
@@ -2127,6 +2313,9 @@ function openHomeSheet(id, from = null) {
     if (it.defId === 'F02') lines.push({ text: 'The Medication Cart is kept here: each medicine round starts here (round safety +8%)', color: COL.actionDark });
     if (it.defId === 'F23') lines.push({ text: 'Moderate alerts can be handled in-house: assessments and senior reviews go further', color: COL.actionDark });
     if (it.defId === 'F28') lines.push({ text: 'Medicine rounds are safer and better recorded (round safety +10%)', color: COL.actionDark });
+    if (it.defId === 'F09') sections.push(...familyDeskSections(w)); // (Milestone 19)
+    if (it.defId === 'F15') lines.push({ text: `Visits happen here when the resident is free, and family meetings go ${MEETING.familyRoomPct}% further`, color: COL.actionDark });
+    if (it.defId === 'F29') lines.push({ text: `Every Family Trust gain goes ${TRUST.partnershipPct}% further`, color: COL.actionDark });
     if (it.defId === 'F09') sections.push({ columns: 1, buttons: [{ id: 'place:recruit', label: 'Recruit', sub: `${w.staffing.board.length} candidates · Staff ${w.team.length} / ${w.staffing.cap}`, accent: COL.action, onTap: () => openRecruit() }] });
     if (it.defId === 'F11') {
       const trainees = w.team.filter((q) => w.roster.isTraining(q.id));
@@ -2219,7 +2408,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openMenu, openDishPicker, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openQuality, openBusiness, openMenu, openDishPicker, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

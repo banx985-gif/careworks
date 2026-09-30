@@ -133,6 +133,8 @@ export const namedTrait = (def) => def.traits.find((t) => TRAITS[t]?.signature) 
 //                                                 safety, and their assessments and senior reviews resolve pct% more
 //     { kind: 'rehab', pct, goals? }              Milestone 16: rehab goals move pct% more in sessions they lead (only
 //                                                 these goals, if given)
+//     { kind: 'family', pct }                     Milestone 19: a visit's good parts go pct% further while they are on
+//                                                 shift, and a family meeting they attend lifts Family Trust pct% more
 //     { kind: 'dining', pct }                     Milestone 15: meals they serve lift Social Connection pct% more, and
 //                                                 dining satisfaction a little (data/dining.js SATISFACTION.host)
 //   or pendingSystem: 'Mnn'  the effect needs a system built in that milestone: stored and shown, a no-op until then
@@ -160,7 +162,7 @@ export const TRAITS = {
   // Rare (Milestone 11 lines)
   skinWise: live('Skin Wise', 'Skin and health checks are more thorough', task(['observation'], 8)),
   sugarWatch: live('Sugar Watch', 'Keeps a closer eye at health checks and meals', task(['observation', 'meal'], 8)), // (Milestone 18: live)
-  familyCommunicator: later('Family Communicator', 'Families feel better informed', 'M19', { familyTrustPct: 6 }),
+  familyCommunicator: live('Family Communicator', 'Families feel better informed: visits and family meetings go 6% better', { kind: 'family', pct: 6 }), // (Milestone 19: live)
   medicationFocus: live('Medication Focus', 'Medicine rounds go further', task(['meds'], 8)),
   dignityFirst: live('Dignity First', 'Personal care keeps dignity and choice', task(['personal'], 8)),
   fastResponse: later('Fast Response', 'Answers call bells a little faster', 'M25', { bellResponsePct: -10 }),
@@ -203,7 +205,7 @@ export const TRAITS = {
   perfectPath: sig('Perfect Path', 'Every resident walks a little further', 'M16', 'perfectPath', { independencePct: 20 }),
   homeFeast: sig('Home Feast', 'A monthly feast lifts the whole home', 'M15', 'homeFeast', { feastMood: 10 }),
 };
-export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift', 'diet', 'dining', 'rehab', 'memory', 'clinical'];
+export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift', 'diet', 'dining', 'rehab', 'memory', 'clinical', 'family'];
 
 // Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator; taskTypes = data/tasks.js
 // TASK_TYPES ids (optional: the trait task checks).

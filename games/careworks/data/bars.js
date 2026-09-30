@@ -13,7 +13,7 @@ export const BOTTOM_SLOTS = [
   },
   {
     id: 'quality', label: 'Quality', icon: 'care_ui_04', opens: 'placeholder',
-    title: 'Quality', text: 'Accreditation, benchmarks against peer homes and your records will live here.',
+    title: 'Quality', text: 'Compliments & complaints (Milestone 19: src/main.js opens it); accreditation, benchmarks against peer homes and your records will live here too.',
   },
   {
     id: 'business', label: 'Business', icon: 'care_ui_05', opens: 'placeholder',

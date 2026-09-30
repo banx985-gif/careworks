@@ -13,6 +13,7 @@ import { ACTIVITIES, BIRTHDAY } from './activities.js';
 import { TROLLEYS } from './dining.js';
 import { DISCHARGE } from './mobility.js';
 import { ROUND } from './clinical.js';
+import { FAMILY_ICONS, FIRSTS, COMPLIMENT } from './family.js';
 
 const art = (folder, key) => [key, `assets/images/${folder}/${key}.png`];
 
@@ -45,6 +46,10 @@ export const ASSETS = {
   ...Object.fromEntries([art('events', DISCHARGE.firstArt)]),
   // Milestone 18: the Medication Cart (pushed on the medicine round; beside the Medication Room otherwise)
   ...Object.fromEntries([art('equipment', ROUND.cart)]),
+  // Milestone 19: the Family Trust / complaint / compliment icons, the First Family Visit picture, the Family Thank-You
+  // Card (the first compliment)
+  ...Object.fromEntries(Object.values(FAMILY_ICONS).map((k) => art('ui', k))),
+  ...Object.fromEntries([art('events', FIRSTS.visitArt), art('rewards', COMPLIMENT.firstArt)]),
   // Milestone 0 loader test (?screen=test): the placeholder PWA icon as a real image, and one deliberately missing file.
   m0Real: 'assets/branding/pwa/icon-192.png',
   m0Missing: 'assets/m0-missing-test.png',
