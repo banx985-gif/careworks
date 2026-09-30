@@ -5,7 +5,8 @@
 //   eligibilityOf(option, ctx) → { ok, reason }          every rule in option.eligibility must pass; reason = the first
 //     ctx = { name, needs, level, support, stay, visitors,             that fails, in plain words
 //             teamRoles: Set, shiftRoles: { morning: Set, … }, shiftCounts: { morning: n, … },
-//             rooms: Set (room templates the home can place), facilities: Set (placed facility ids), programs: Set }
+//             rooms: Set (room templates the home can place), facilities: Set (placed facility ids), programs: Set,
+//             dietSkills: Set (Milestone 15: the special menus someone on the team can make — src/systems/dining.js) }
 //   optionPrefOf(st, optionId) → 'prefer' | 'accept' | 'dislike' | 'refuse'
 //   staleReasons(st, today) → [{ key: 'first' | 'need' | 'missed' | 'period', text }]   (empty: up to date)
 //   markReviewed(st, today) · noteDay(st, day, missedEssential)   (the missed-essential streak)
@@ -38,6 +39,8 @@ function passes(r, ctx) {
       return !!ctx.facilities?.has(r.facility);
     case 'program':
       return !!ctx.programs?.has(r.program);
+    case 'dietSkill': // Milestone 15: someone on the team who can make that menu, or a Nutrition Office (F17)
+      return !!ctx.facilities?.has('F17') || !!ctx.dietSkills?.has(r.diet);
     default:
       return false;
   }

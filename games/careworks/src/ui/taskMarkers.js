@@ -6,7 +6,7 @@
 const INK = '#3B342C';
 const COLOURS = {
   bell: '#F2B530', pill: '#E0645A', sun: '#F2B530', moon: '#5E6FB8', bowl: '#C8834E', drop: '#3E9BD6', cross: '#E0645A',
-  steps: '#8A6CC0', cup: '#3E9BD6', star: '#E0913F', heart: '#E0645A', house: '#6FA86A', rest: '#5E6FB8', tired: '#D98A00',
+  steps: '#8A6CC0', cup: '#3E9BD6', pot: '#D9822B', star: '#E0913F', heart: '#E0645A', house: '#6FA86A', rest: '#5E6FB8', tired: '#D98A00',
 };
 
 export function drawTaskMarker(ctx, x, y, r, icon, { ring = INK } = {}) {
@@ -137,6 +137,20 @@ function drawIcon(ctx, icon, s) {
       ctx.beginPath();
       ctx.ellipse(s * 0.35, -s * 0.25, s * 0.26, s * 0.5, 0.2, 0, Math.PI * 2);
       fillStroke();
+      break;
+    case 'pot': // (Milestone 15: kitchen prep — a cooking pot with a lid and steam)
+      ctx.roundRect(-s * 0.7, -s * 0.2, s * 1.4, s * 0.95, [0, 0, s * 0.35, s * 0.35]);
+      fillStroke();
+      ctx.beginPath();
+      ctx.moveTo(-s * 0.95, -s * 0.2);
+      ctx.lineTo(s * 0.95, -s * 0.2);
+      ctx.stroke();
+      ctx.beginPath();
+      for (const dx of [-0.25, 0.25]) {
+        ctx.moveTo(s * dx, -s * 0.45);
+        ctx.quadraticCurveTo(s * (dx + 0.18), -s * 0.65, s * dx, -s * 0.9);
+      }
+      ctx.stroke();
       break;
     case 'cup':
       ctx.roundRect(-s * 0.65, -s * 0.55, s * 1.05, s * 1.25, [0, 0, s * 0.3, s * 0.3]);

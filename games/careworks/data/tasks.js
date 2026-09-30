@@ -16,18 +16,23 @@ export const TASK_TYPES = {
   activity: { name: 'Activity', urgency: 1, essential: false, icon: 'star' },
   visit: { name: 'One-to-one time', urgency: 1, essential: false, icon: 'heart' },
   roomCheck: { name: 'Room check', urgency: 1, essential: false, icon: 'house' },
+  prep: { name: 'Kitchen prep', urgency: 2, essential: false, icon: 'pot' }, // Milestone 15: the kitchen gets a meal ready (no resident)
 };
 
 // Arthur's routine steps (data/routine.js) as tasks: which type each is and the band it must be done in. A routine task
 // also closes when his next step starts (help that comes after that is too late). minutes: time with him. lead: hours
 // before the step that it opens, so a helper on the far side of the home is there in time (a walk across the home takes
 // about 1.5 game hours); it never opens before its band starts. The help itself starts when he is there.
+// Milestone 15: meals are a service — the server brings the trolley and serves the residents at their seats in turn, so a
+// meal is 8 minutes a resident (it was 20: one-to-one help from start to finish). A plan that needs help at the table
+// (NU05 Texture-Modified Meals) still makes it longer.
 export const ROUTINE_TASKS = {
   wake: { type: 'wake', band: 'morning', minutes: 20, lead: 1 },
-  breakfast: { type: 'meal', band: 'morning', minutes: 20, lead: 0.5 },
+  breakfast: { type: 'meal', band: 'morning', minutes: 8, lead: 0.5 },
   rest: { type: 'observation', band: 'afternoon', minutes: 20, lead: 0.5 },
+  lunch: { type: 'meal', band: 'afternoon', minutes: 8, lead: 0.5 }, // (Milestone 15)
   cards: { type: 'activity', band: 'afternoon', minutes: 20, lead: 0.5 },
-  dinner: { type: 'meal', band: 'evening', minutes: 20, lead: 0.5 },
+  dinner: { type: 'meal', band: 'evening', minutes: 8, lead: 0.5 },
   morningActivity: { type: 'activity', band: 'morning', minutes: 45, lead: 0.5 }, // (Milestone 14: the Morning activity slot)
   settle: { type: 'settle', band: 'evening', minutes: 20, lead: 0.5 },
 };

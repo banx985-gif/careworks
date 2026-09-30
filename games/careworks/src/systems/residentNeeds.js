@@ -46,6 +46,9 @@ export function newResidentState(def, { room = null } = {}) {
     seats: null, // Milestone 13: { dining, lounge } seat numbers (null: the one after their room number — src/systems/homeWorld.js)
     activityCounts: {}, // Milestone 13: activity step id → sessions joined (activity groups)
     favourite: null, // Milestone 13: { staff, since } — their favourite staff member (store only, for later milestones)
+    diet: null, // Milestone 15: their menu tag from the Nutrition plan (data/dining.js DIETS; src/systems/dining.js dietOf)
+    dining: null, // Milestone 15: { avg, n, last, favDay } — their dining satisfaction
+    hydration: null, // Milestone 15: { last } — the game hour of their last drink
     needs: { ...def.needs },
     outcomes: { ...def.outcomes },
     prefs: { ...def.prefs },
@@ -79,6 +82,8 @@ export function ensureResidentState(saved, def, { room = null } = {}) {
   out.seats = saved.seats ? { ...saved.seats } : null;
   out.activityCounts = { ...(saved.activityCounts ?? {}) };
   out.favourite = saved.favourite ?? null;
+  out.dining = saved.dining ? { ...saved.dining } : null; // (Milestone 15; an M14 save: none yet)
+  out.hydration = saved.hydration ? { ...saved.hydration } : null;
   out.room = saved.room ?? room;
   out.log = Array.isArray(saved.log) ? saved.log : [];
   return out;

@@ -7,7 +7,7 @@
 //   / wing / program / score: that system comes later, so it stays locked with the reason shown; secret: an SEC-FAC
 //   reward, never listed anywhere (F34 Centenarian Garden, F35 Legacy House)
 //   cost (Credits), effect { key, value, text } (the §25 effect as data, one plain line; stored and shown — only the ones
-//   earlier milestones built are live: wired), w / h (footprint in tiles; every picture is drawn at one scale, 3 × 3),
+//   earlier milestones built are live: wired — Milestone 15 wires F04, F16 and F17 in src/systems/dining.js), w / h (footprint in tiles; every picture is drawn at one scale, 3 × 3),
 //   art (facilities/facility_fNN.png)
 //   essential   the home can't run without one (the task AI and routine use it): the last one can't be sold
 //   spots       named tiles relative to the footprint's back corner (they move with it): staff posts, seats (the
@@ -34,7 +34,7 @@ export const FACILITIES = [
     },
     seats: ['dining', 'seat2', 'seat3', 'seat4'],
   }),
-  f('F04', 'Kitchen', 'Maker', start, 1900, fx('mealQualityPct', 8, 'Meal quality +8%'), { text: 'Cooks every meal the home serves' }),
+  f('F04', 'Kitchen', 'Maker', start, 1900, fx('mealQualityPct', 8, 'Meal quality +8%', true), { text: 'Cooks every meal the home serves' }),
   f('F05', 'Activity Lounge', 'Rest/Lifestyle', start, 1400, fx('groupActivityCapacity', 8, 'Group activity capacity +8', true), {
     essential: true, text: 'Group activities and a comfortable place to relax',
     spots: {
@@ -59,8 +59,8 @@ export const FACILITIES = [
   f('F13', 'Library Corner', 'Lifestyle', rank('D'), 1200, fx('quietInterest', 6, 'Quiet-interest satisfaction +6'), { text: 'Books, papers and a good chair' }),
   f('F14', 'Courtyard Garden', 'Lifestyle', rank('D'), 2200, fx('outdoorMood', 8, 'Outdoor mood +8'), { text: 'Fresh air, flowers and a bench in the sun' }),
   f('F15', 'Family Room', 'Front desk', rank('C'), 1700, fx('familyTrustMeetingPct', 8, 'Family Trust meeting bonus +8%'), { text: 'A private room for family visits' }),
-  f('F16', 'Commercial Kitchen', 'Maker', rank('C'), 5200, fx('mealProductionPct', 15, 'Meal production +15%; diet plans'), { text: 'A bigger kitchen for a bigger home' }),
-  f('F17', 'Nutrition Office', 'Specialist', research('Nutrition', 3), 4600, fx('nutritionOutcomes', 10, 'Nutrition outcomes +10'), { text: 'Plans special diets and monitors meals' }),
+  f('F16', 'Commercial Kitchen', 'Maker', rank('C'), 5200, fx('mealProductionPct', 15, 'Meal production +15%; diet plans', true), { text: 'A bigger kitchen for a bigger home' }),
+  f('F17', 'Nutrition Office', 'Specialist', research('Nutrition', 3), 4600, fx('nutritionOutcomes', 10, 'Nutrition outcomes +10', true), { text: 'Plans special diets and monitors meals' }),
   f('F18', 'Rehabilitation Gym', 'Specialist', rank('C'), 5800, fx('rehabMobilityPct', 15, 'Rehab / mobility +15%'), { text: 'Equipment for getting back on your feet' }),
   f('F19', 'Falls Prevention Lab', 'Specialist', research('Mobility', 4), 5200, fx('fallsRiskReductionPct', 12, 'Falls risk reduction +12%'), { text: 'Balance checks and safer walking' }),
   f('F20', 'Memory Activity Room', 'Lifestyle', research('Memory', 3), 5000, fx('memoryActivitiesPct', 15, 'Memory-care activities +15%'), { text: 'Familiar things and gentle activities' }),

@@ -659,7 +659,14 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     characterPose(poseAgent, t, m.seed, pose, p.kind === 'resident' ? MOTION.resident : MOTION.staff);
     const f = feetOf(p);
     const r = personRect(p);
+    // Milestone 15: pushing the Hydration Cart on a drinks round, the dining trolley to a tray (beside them, the way they
+    // face, while they walk; at the resident's side it waits out of the way)
+    const cart = p.kind === 'staff' && poseAgent.state === 'walking' ? world.trolleyOf?.(p) : null;
+    const ch = PERSON.height * 0.52;
+    const cw = cart ? ch * assets.aspect(cart) : 0;
+    const cx = f.x + (m.flip ? -1 : 1) * r.w * 0.58 - cw / 2;
     drawCharacter(ctx, assets, p.art, f.x, f.y, r.w, r.h, pose);
+    if (cart) assets.draw(ctx, cart, cx, f.y - ch, cw, ch);
   }
   // An inside wall: a low slab through the middle of its tile (two front faces and the top).
   function drawWall(ctx, t) {

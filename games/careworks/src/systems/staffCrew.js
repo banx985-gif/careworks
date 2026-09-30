@@ -188,7 +188,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
     startTask(id, task, spot) {
       const p = byId(id);
       if (!p) return;
-      p.task = { id: task.id, type: task.type, label: task.label, room: !!task.room, who: task.who, spot, arrived: false };
+      p.task = { id: task.id, type: task.type, label: task.label, room: !!task.room, who: task.who, going: task.going, doing: task.doing, spot, arrived: false };
       walk(p, spot, 'toHelp', () => {
         p.mode = 'helping';
         if (p.task) p.task.arrived = true;
@@ -210,17 +210,18 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       const p = byId(id);
       if (!p) return;
       if (arrived) {
-        p.task = { id: task.id, type: task.type, label: task.label, room: !!task.room, who: task.who, spot, arrived: true };
+        p.task = { id: task.id, type: task.type, label: task.label, room: !!task.room, who: task.who, going: task.going, doing: task.doing, spot, arrived: true };
         p.mode = 'helping';
       } else crew.startTask(id, task, spot);
     },
     // The task is done: Energy, Morale, their task count (and the Founder's history), then back to their post.
-    finishTask(id) {
+    // share (Milestone 15): a light task (one stop on a drinks round) costs and lifts that share of a whole one.
+    finishTask(id, share = 1) {
       const p = byId(id);
       if (!p) return;
       const m = p.model;
-      m.energy = clamp(m.energy + B.energy.perTask);
-      m.morale = clamp(m.morale + B.morale.perTask);
+      m.energy = clamp(m.energy + B.energy.perTask * share);
+      m.morale = clamp(m.morale + B.morale.perTask * share);
       m.counters.tasks = (m.counters.tasks ?? 0) + 1;
       if (m.counters[FOUNDER_FLAG]) state.founder.history.careTasks++;
       p.bandDone = (p.bandDone ?? 0) + 1;
@@ -266,6 +267,8 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
     stateOf(p) {
       const t = p.task;
       const who = t?.who ?? 'Arthur'; // Milestone 6: whichever resident the task is for
+      if (t?.going && p.mode === 'toHelp') return t.going; // (Milestone 15: kitchen prep has no resident)
+      if (t?.doing && p.mode === 'helping') return t.doing;
       if (t && p.mode === 'toHelp') return t.type === 'bell' ? `Answering ${who}'s call bell` : t.room ? `Going to ${who}'s room (${t.label})` : `Going to ${who} (${t.label})`;
       if (t && p.mode === 'helping') return t.type === 'bell' ? `At ${who}'s call bell` : t.room ? `In ${who}'s room: ${t.label}` : `With ${who}: ${t.label}`;
       if (p.mode === 'leaving') return p.leftTeam ? 'Leaving the home: no longer on the team' : 'Agency shift over: leaving the home';

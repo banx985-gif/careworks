@@ -125,6 +125,10 @@ export const namedTrait = (def) => def.traits.find((t) => TRAITS[t]?.signature) 
 //     { kind: 'morale', perHour }                 Morale drifts up this much an hour while they work
 //     { kind: 'familiar', pct }                   Familiar Care builds pct% faster with them
 //     { kind: 'shift', pct }                      their preferred shift lifts Morale pct% more
+//     { kind: 'diet', diets: [diet id], pct }     Milestone 15: they can make these special menus (data/dining.js DIETS),
+//                                                 and a resident on one of them is pct% more satisfied when they cook it
+//     { kind: 'dining', pct }                     Milestone 15: meals they serve lift Social Connection pct% more, and
+//                                                 dining satisfaction a little (data/dining.js SATISFACTION.host)
 //   or pendingSystem: 'Mnn'  the effect needs a system built in that milestone: stored and shown, a no-op until then
 //     (effects keeps its placeholder numbers for that milestone).
 // signature (Legendary / Secret): { hook, params } in the core/StaffSystem signature format; every signature is
@@ -165,9 +169,10 @@ export const TRAITS = {
   fallsWatch: live('Falls Watch', 'Spots a fall risk early: keen on room checks and walks', match(['roomCheck', 'mobility'])),
   independenceFirst: later('Independence First', 'Helps residents do more for themselves', 'M16', { independenceGainPct: 8 }),
   comfortFood: live('Comfort Food', 'Meals go further', task(['meal'], 8)),
-  textureExpert: later('Texture Expert', 'Texture-modified meals are safer and nicer', 'M15', { textureMealPct: 10 }),
-  dietMatch: later('Diet Match', 'Special diets are matched with care', 'M15', { dietPlanPct: 8 }),
-  diningHost: later('Dining Host', 'Mealtimes are more sociable', 'M15', { diningConnectionPct: 8 }),
+  // (Milestone 15: the dining traits are live — src/systems/dining.js)
+  textureExpert: live('Texture Expert', 'Can make the soft menu, and soft meals are nicer', { kind: 'diet', diets: ['texture'], pct: 10 }),
+  dietMatch: live('Diet Match', 'Can make every special menu, and matches it with care', { kind: 'diet', diets: ['diabetes', 'texture', 'smallFrequent', 'highProtein'], pct: 8 }),
+  diningHost: live('Dining Host', 'Mealtimes are more sociable when they serve', { kind: 'dining', pct: 8 }),
   // Elite (Milestone 12)
   clinicalMentor: live('Clinical Mentor', 'A steady hand: rounds and checks go further, and Morale holds up', task(['meds', 'observation'], 10), { kind: 'morale', perHour: 0.2 }),
   complexCareLead: later('Complex Care Lead', 'Leads care for residents with complex clinical needs', 'M18', { complexCarePct: 12 }),
@@ -178,7 +183,7 @@ export const TRAITS = {
   mobilityMentor: live('Mobility Mentor', 'Mobility support goes much further', task(['mobility'], 12)),
   reablementLead: later('Reablement Lead', 'Rehabilitation stays end sooner and better', 'M16', { rehabDischargePct: 12 }),
   kitchenMentor: live('Kitchen Mentor', 'Meals and drinks go further', task(['meal', 'hydration'], 10)),
-  nutritionLead: later('Nutrition Lead', 'Diet plans and nutrition reviews go further', 'M15', { dietPlanPct: 12 }),
+  nutritionLead: live('Nutrition Lead', 'Can make every special menu; diet plans and reviews go further', { kind: 'diet', diets: ['diabetes', 'texture', 'smallFrequent', 'highProtein'], pct: 12 }, task(['hydration'], 5)),
   // Legendary signatures (SEC-STAFF-L1–L5)
   goldenStethoscope: sig('Golden Stethoscope', 'Clinical care across the home is safer while she is on shift', 'M18', 'goldenStethoscope', { clinicalSafetyPct: 10 }),
   heartOfTheHome: sig('Heart of the Home', 'Familiar Care lifts Mood across the home', 'M13', 'heartOfTheHome', { familiarMoodPct: 15 }),
@@ -192,7 +197,7 @@ export const TRAITS = {
   perfectPath: sig('Perfect Path', 'Every resident walks a little further', 'M16', 'perfectPath', { independencePct: 20 }),
   homeFeast: sig('Home Feast', 'A monthly feast lifts the whole home', 'M15', 'homeFeast', { feastMood: 10 }),
 };
-export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift'];
+export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift', 'diet', 'dining'];
 
 // Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator; taskTypes = data/tasks.js
 // TASK_TYPES ids (optional: the trait task checks).

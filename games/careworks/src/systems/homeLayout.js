@@ -268,6 +268,21 @@ export function createLayout({ saved = null, bus = null } = {}) {
   }
   const openCache = new Map();
   let openV = -1;
+  // Milestone 15: a kitchen's cook spots ('F04.cook', 'F04.cook2'): the open cells beside it that can be walked to,
+  // nearest its front first. A kitchen has no spots of its own, so the access check (and older saves' layouts) is
+  // unchanged.
+  function besideTile(p, n) {
+    const b = p.box;
+    const blocked = blockedFor(pieces());
+    const reached = reachFrom(blocked, ENTRANCE);
+    const around = [];
+    for (let c = b.col; c < b.col + b.w; c++) around.push({ col: c, row: b.row + b.h }, { col: c, row: b.row - 1 });
+    for (let r = b.row; r < b.row + b.h; r++) around.push({ col: b.col + b.w, row: r }, { col: b.col - 1, row: r });
+    const front = { col: b.col + Math.floor(b.w / 2), row: b.row + b.h };
+    const open = around.filter((t) => t.col >= 0 && t.row >= 0 && t.col < COLS && t.row < ROWS && reached[t.row * COLS + t.col] === 1);
+    open.sort((x, y) => Math.abs(x.col - front.col) + Math.abs(x.row - front.row) - (Math.abs(y.col - front.col) + Math.abs(y.row - front.row)));
+    return open[n] ?? open[0] ?? openTile(front);
+  }
   // 'F03.dining' (a piece's spot, by its id), an old name ('help.dining', 'rest.2' → that piece's), or a hall spot
   // ('hall.cwPost': where it was, or the nearest open tile if a piece now stands on it).
   function spotTile(ref) {
@@ -283,12 +298,20 @@ export function createLayout({ saved = null, bus = null } = {}) {
       const t = p?.spots[ref.slice(dot + 1)];
       if (t) return t;
     }
-    const base = SPOTS[ref];
-    if (!base) throw new Error(`No spot ${ref}`);
     if (openV !== fs.version) {
       openCache.clear();
       openV = fs.version;
     }
+    const cook = dot > 0 && /^cook([0-9]?)$/.exec(ref.slice(dot + 1));
+    if (cook) {
+      const p = byId(ref.slice(0, dot)) ?? firstOf(ref.slice(0, dot));
+      if (p) {
+        if (!openCache.has(ref)) openCache.set(ref, besideTile(p, cook[1] ? Number(cook[1]) - 1 : 0));
+        return openCache.get(ref);
+      }
+    }
+    const base = SPOTS[ref];
+    if (!base) throw new Error(`No spot ${ref}`);
     if (!openCache.has(ref)) openCache.set(ref, openTile(base));
     return openCache.get(ref);
   }

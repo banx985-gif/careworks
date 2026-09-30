@@ -22,6 +22,10 @@
 // home can grow to Stage 2. After any change the grid is rebuilt, people standing where a piece now stands step to
 // the nearest open tile, residents in a moved room move with it, and everyone walking finds a new way. Admissions give
 // a free room of the right kind (Memory Support / High-Care residents need theirs) up to the stage's capacity.
+// Milestone 15: nutrition and dining (src/systems/dining.js): each meal is a service — the kitchen prepares it (a prep
+// task at the Kitchen for a Hospitality worker), servers bring the dining trolley and serve the residents at their seats
+// in turn, and anyone who can't come has a tray brought to their room; drinks rounds morning and afternoon; each meal's
+// quality, each resident's diet match, favourite dish and dining satisfaction (Mood and the Nutrition need).
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
@@ -72,7 +76,7 @@ import { BELL, FAMILIARITY, BACKUP_HELP } from '../../data/tasks.js';
 import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK } from '../../data/balance.js';
 import { AGENCY } from '../../data/shifts.js';
 import { ensureResidentState, newResidentState, newStay, stayDaysLeft, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog, routineFor } from './residentNeeds.js';
-import { ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, addTask, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar, topFamiliar, noteLeft, noteBack, familiarityOf, fadeFamiliarity } from './careTasks.js';
+import { bandOfHour, ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, addTask, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar, topFamiliar, noteLeft, noteBack, familiarityOf, fadeFamiliarity } from './careTasks.js';
 import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkPct } from './staffTeam.js';
 import { createRoster } from './roster.js';
 import { createCoverage } from './coverage.js';
@@ -90,6 +94,9 @@ import { taskPct, matchesTask, familiarPct } from './traitEffects.js';
 import { compatibility, addFriendship, areFriends, topFriends, groupMembers, favouriteOf, familiarEffects, friendshipOf } from './relationships.js';
 import { FRIENDSHIP, CONTINUITY, ACTIVITY_GROUPS, SEATING } from '../../data/relationships.js';
 import { FOUNDER_FLAG } from '../../data/setup.js';
+import { MEALS, mealById, mealOfStep, KITCHENS, KITCHEN_IDS, PREP, TRAY, HYDRATION, TROLLEYS, DIET_OFFICE, FAVOURITES, FOOD_COST, SATISFACTION, DIETS, dishById } from '../../data/dining.js';
+import { createDining, dietOf, favouritesOf, skillsOf, canMake, dietWords, mealQuality, satisfaction, nutritionMult, moodFrom, noteMeal, avgOf } from './dining.js';
+import { dietPct as traitDietPct, diningPct } from './traitEffects.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
 // own live layout; these are for older saves' upgrades and the tests.
@@ -309,6 +316,19 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const dayOfYear = (day) => (((day % BIRTHDAY.daysPerYear) + BIRTHDAY.daysPerYear) % BIRTHDAY.daysPerYear) + 1;
   const birthdaysOn = (day) => residents.filter((p) => !p.state.leaving && !p.state.guest && birthdayOf(p.id) === dayOfYear(day)).map((p) => p.id);
   acts.setBirthdayCheck((day) => birthdaysOn(day).length > 0);
+  // --- nutrition and dining (Milestone 15) -------------------------------------------------------------------------------
+  const dining = createDining({ care });
+  const kitchenNow = () => KITCHEN_IDS.map((id) => layout.ofDef(id)[0]).find(Boolean) ?? null; // (the best one placed)
+  const hasOffice = () => layout.ofDef(DIET_OFFICE).length > 0;
+  const specialtiesOf = (id) => staffing?.specialtiesOf(id) ?? [];
+  const onShiftNow = () => crew.people.filter((q) => !q.leftTeam && roster.onShift(q.id));
+  // Who on shift could cook a special menu (a Hospitality worker, or anyone with the Nutrition specialty or a diet trait)
+  const cooksOnShift = () => onShiftNow().map((q) => ({ id: q.id, role: q.role, skills: skillsOf({ traits: q.model.traits, specialties: specialtiesOf(q.id) }) }));
+  const hospitalityOn = () => cooksOnShift().some((c) => c.role === 'HN' || c.skills.size > 0);
+  const kitchenPool = () => {
+    const pc = kitchenNow();
+    return PREP.spots.map((s) => `${pc?.id ?? 'F04'}.${s}`);
+  };
   const SLOT_OF = { cards: 'afternoon', morningActivity: 'morning' };
   const sessionInfo = (day, slot) => acts.activityOn(day, slot, slot === 'afternoon' ? birthdaysOn(day) : []);
   const stepsCache = new Map();
@@ -353,7 +373,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const residentPlace = (p) => {
     const st = p.state;
     const step = st.step && dayStep(p, st.step.id, st.step.day);
-    return !step || !joined(p) || st.step.status === 'refused' || st.step.status === 'missed' ? 'room' : step.place;
+    return !step || !joined(p) || st.step.status === 'refused' || st.step.status === 'missed' || st.step.tray ? 'room' : step.place;
   };
   const taskPlace = (t) => {
     const p = byResident(t.resident);
@@ -374,12 +394,23 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   }
   // The helper's spot for a task: the nearest one in the pool nobody else is going to.
   function spotFor(t, staffId) {
+    if (t.source === 'kitchen') {
+      const pool = kitchenPool();
+      return pool.find((ref) => !crew.people.some((q) => q.id !== staffId && q.task && q.task.spot === ref)) ?? pool[0];
+    }
     const p = byResident(t.resident) ?? arthur;
     const pool = helpPool(p, taskPlace(t));
     return pool.find((ref) => !crew.people.some((q) => q.id !== staffId && q.task && q.task.spot === ref)) ?? pool[0];
   }
-  const label = (t) => (t.source === 'routine' ? stepWord(dayStep(byResident(t.resident), t.stepId, t.day)) : t.name.charAt(0).toLowerCase() + t.name.slice(1));
-  const taskInfo = (t) => ({ id: t.id, type: t.type, label: label(t), room: t.place === 'room', resident: t.resident, who: first(byResident(t.resident)?.name ?? 'Arthur') });
+  const label = (t) => (t.source === 'routine' ? `${stepWord(dayStep(byResident(t.resident), t.stepId, t.day))}${t.tray ? ' tray' : ''}` : t.name.charAt(0).toLowerCase() + t.name.slice(1));
+  const taskInfo = (t) => {
+    if (t.source === 'kitchen') {
+      // (Milestone 15: kitchen prep is for the whole home, at the Kitchen)
+      const where = facilityById(kitchenNow()?.defId ?? 'F04').name;
+      return { id: t.id, type: t.type, label: label(t), room: false, resident: null, who: null, going: `Going to the ${where} (${label(t)})`, doing: `In the ${where}: getting ${mealById(t.meal)?.name.toLowerCase() ?? 'the meal'} ready` };
+    }
+    return { id: t.id, type: t.type, label: label(t), room: t.place === 'room', resident: t.resident, who: first(byResident(t.resident)?.name ?? 'Arthur') };
+  };
   // The "who helps" picker's pins: Arthur's keep their Milestone 3 keys (the step id), others are 'RESnn:step'.
   const pinKey = (residentId, stepId) => (residentId === ARTHUR ? stepId : `${residentId}:${stepId}`);
   const pinOf = (t) => {
@@ -412,6 +443,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const pin = pinOf(t);
     if (pin && pin !== q.id) return null;
     if (!pin && t.type !== 'bell' && crew.tooTired(q)) return null;
+    if (t.source === 'kitchen') return scorePair({ task: { ...t, pinned: pin }, person: { id: q.id, role: q.role, energy: q.model.energy }, tiles: tilesBetween(q, kitchenPool()[0]), doneThisBand: q.bandDone ?? 0, now: absNow() });
     const p = byResident(t.resident) ?? arthur;
     // "Is this resident assigned to me" (bible §15): their key worker, or (Milestone 7) staff on the resident's wing
     const assigned = assignedTo(q.id, p);
@@ -465,6 +497,15 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   }
   function completeTask(t, q) {
     const helper = q.id;
+    if (t.source === 'kitchen') {
+      prepDone(t, q);
+      assignSys.unassign(t, helper);
+      closeTask(care, t, 'done');
+      t.slots = [helper];
+      crew.finishTask(helper);
+      bus?.emit('care:task', { id: t.id, type: t.type, status: 'done', staff: helper, resident: null });
+      return;
+    }
     const p = byResident(t.resident);
     // Milestone 13: someone they know well lifts their Mood a little (never an agency worker: they build no Familiar Care)
     const fx = familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, helper));
@@ -474,6 +515,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       else {
         applyEffects(p, t, helper);
         if (t.type === 'bell') bellState(care, t.resident).cooldownUntil = absNow() + BELL.cooldownHours;
+        if (t.type === 'hydration') p.state.hydration = { last: absNow() }; // (Milestone 15: their last drink)
         else log(p, `${t.name} (with ${helperName(helper)})`);
       }
     }
@@ -481,8 +523,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     closeTask(care, t, 'done');
     t.slots = [helper];
     // agency workers build no Familiar Care (bible §14); Milestone 12: a 'familiar' trait builds it faster
-    if (!q.agency) addFamiliarity(care, t.resident, helper, FAMILIARITY.perTask * (1 + familiarPct(q.model.traits) / 100), clock.totalDays);
-    crew.finishTask(helper);
+    // (Milestone 15: one stop on a drinks round is light work — a share of the Familiar Care, Energy and Morale)
+    const share = t.source === 'round' ? HYDRATION.stopShare : 1;
+    if (!q.agency) addFamiliarity(care, t.resident, helper, FAMILIARITY.perTask * share * (1 + familiarPct(q.model.traits) / 100), clock.totalDays, share < 1);
+    crew.finishTask(helper, share);
     bus?.emit('care:task', { id: t.id, type: t.type, status: 'done', staff: helper, resident: t.resident });
   }
 
@@ -492,6 +536,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const isCurrent = (p, step, day) => !!step && p.state.step?.id === step.id && p.state.step.day === day;
   function completeRoutine(p, step, day, helper, note = null) {
     const st = p.state;
+    const meal = mealOfStep(step.id);
+    const served = meal ? serveMeal(p, meal, step, day, helper) : null; // (Milestone 15: the meal service)
+    if (served) step = { ...step, drops: served.drops };
     const dropped = completeStep(st, step, day, now(), {
       needMult: helper ? (need) => helpMult(helper, need, step.taskType) : null,
       activityMult: 1 + perkPct(perks, helper, 'activityWellbeingPct') / 100,
@@ -502,10 +549,158 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       st.step.status = 'doing';
       st.step.dropped = dropped;
       st.step.helper = helper;
-      together(p, step, day);
+      if (!st.step.tray) together(p, step, day); // (a tray in their room: no company)
       if (step.activity && step.slot) activityOutcome(p, step, day);
     }
-    bus?.emit('care:step', { resident: st.id, step: step.id, status: 'done', helper });
+    if (served) afterMeal(p, served, day);
+    bus?.emit('care:step', { resident: st.id, step: step.id, status: 'done', helper, ...(served ? { sat: served.sat, tray: served.tray } : {}) });
+  }
+  // --- Milestone 15: the meal service -----------------------------------------------------------------------------------
+  const theyOf = (p) => (p.def.pronoun === 'she' ? 'she' : 'he');
+  // One resident served one meal (at their seat or on a tray): the meal's quality, their diet, favourite, how long they
+  // waited, their company and the room → their dining satisfaction, which scales the meal's Nutrition drop and nudges
+  // Mood. → { drops, sat, tray, … } (completeRoutine applies the drops)
+  function serveMeal(p, meal, step, day, helper) {
+    const st = p.state;
+    const rec = dining.record(day, meal.id);
+    const kitchen = kitchenNow();
+    const t = routineTask(p, step.id, day);
+    const tray = !!(isCurrent(p, step, day) && st.step.tray) || !!t?.tray;
+    const prepStatus = kitchen ? rec.prep.status : 'noKitchen';
+    const prepDoneNow = prepStatus === 'done' || prepStatus === 'late';
+    const cookQ = prepDoneNow && rec.prep.by ? crew.byId(rec.prep.by) : null;
+    const hosp = hospitalityOn();
+    const q = mealQuality({ kitchen: kitchen?.defId ?? null, prep: prepStatus === 'done' ? 'onTime' : prepStatus === 'late' ? 'late' : 'none', cook: cookQ ? { nut: cookQ.model.stats?.NUT ?? 0, traits: cookQ.model.traits } : null, hospitalityOn: hosp });
+    // their menu: made if someone on shift can (or the Nutrition Office plans it)
+    const diet = dietOf(st);
+    st.diet = diet;
+    const cooks = cooksOnShift();
+    const matched = canMake(diet, { office: hasOffice(), onShift: cooks });
+    const dietBonus = matched && diet !== 'standard' ? Math.max(0, ...cooks.map((c) => traitDietPct(crew.byId(c.id)?.model.traits ?? [], diet))) : 0;
+    // today's dish, and whether it's a favourite (NU07 doubles it)
+    const dish = dining.dishAt(day, meal.id);
+    const fav = !!dish && favouritesOf(p.def, st).includes(dish);
+    const boost = st.plan?.NU === 'NU07' && st.optionPrefs?.NU07 !== 'refuse';
+    // on time: served within onTimeHours of being ready (at their seat, or the tray asked for), and the kitchen ready
+    const ready = (tray ? t?.readyAt : st.step?.readyAt) ?? absNow();
+    const waited = absNow() - Math.max(ready, absHour(day, step.at));
+    const late = !kitchen || !prepDoneNow || waited > SATISFACTION.onTimeHours;
+    // company and the room: friends eating at the same Dining Room, more diners than its seats
+    const others = tray ? [] : residents.filter((o) => o !== p && !o.state.guest && !o.state.leaving && isCurrent(o, step, day) && !o.state.step.tray && ['waiting', 'doing'].includes(o.state.step.status) && seatPiece(o, 'dining') === seatPiece(p, 'dining'));
+    const friends = others.filter((o) => areFriends(care, p.id, o.id)).length;
+    const crowded = others.length + 1 > SEATING.perRoom;
+    const server = helper ? crew.byId(helper) : null;
+    const hostPct = server ? diningPct(server.model.traits) : 0;
+    const club = acts.session(day, 'afternoon');
+    const baking = meal.id === 'dinner' && !!club && club.activity === 'cooking' && club.joined.includes(p.id);
+    const s = satisfaction({ quality: q.quality, mismatch: !matched, dietPct: dietBonus, favourite: fav, boost, late, tray, friends, crowded, host: hostPct > 0, baking });
+    const drops = { ...(step.drops ?? {}) };
+    if (drops.nutrition) drops.nutrition *= nutritionMult(s.sat, hasOffice());
+    if (hostPct && drops.social) drops.social *= 1 + hostPct / 100;
+    rec.kitchen = kitchen?.defId ?? null;
+    rec.served++;
+    if (tray) rec.trays++;
+    if (late) rec.late++;
+    if (!matched) rec.mismatched++;
+    if (fav) rec.favourites++;
+    if (!hosp) rec.byCare++;
+    rec.qualitySum += q.quality;
+    rec.satSum += s.sat;
+    dining.countServed(day);
+    return { drops, sat: s.sat, parts: s.parts, reason: s.reason, quality: q.quality, tray, late, matched, diet, fav, boost, dish, meal };
+  }
+  function afterMeal(p, m, day) {
+    const st = p.state;
+    st.outcomes.mood = clamp(st.outcomes.mood + moodFrom(m.sat));
+    const d = noteMeal(st, { day, meal: m.meal.id, sat: m.sat, quality: m.quality, reason: m.reason, late: m.late, tray: m.tray, mismatch: !m.matched });
+    st.hydration = { last: absNow() }; // (drinks at every meal)
+    if (m.fav && d.favDay !== day) {
+      d.favDay = day;
+      const lift = FAVOURITES.mood * (m.boost ? FAVOURITES.boost : 1);
+      st.outcomes.mood = clamp(st.outcomes.mood + lift);
+      log(p, `Enjoyed the ${dishById(m.dish)?.name.toLowerCase()}: a favourite${m.boost ? ' (Favourite-Food Boost)' : ''}`);
+    }
+    if (!m.matched) log(p, `Not ${theirOf(p.id)} menu today: nobody on shift could make ${dietWords(m.diet)}, so ${theyOf(p)} had the standard one`);
+    else if (m.late && kitchenNow()) log(p, m.tray ? 'The tray came late' : 'The meal came late'); // (no Kitchen: the Dining Room card says so, not every meal)
+  }
+  // Someone who can't come to the Dining Room today: resting in bed, unwell, or still not up. → the reason, or null
+  function cantCome(p, meal, day) {
+    const n = p.state.needs;
+    if (n.mobility >= TRAY.bedMobility) return 'resting in bed today';
+    if (n.clinical >= TRAY.unwellClinical) return 'feeling unwell';
+    if (meal.id === 'breakfast' && routineTask(p, 'wake', day)?.status === 'missed') return 'still in bed';
+    return null;
+  }
+  // Their meal comes to their room on a tray: the task moves there (whoever is bringing it goes to the room instead).
+  function toTray(p, t, why) {
+    if (t.tray) return;
+    t.tray = true;
+    t.place = 'room';
+    t.readyAt = absNow();
+    if (t.status !== 'working') {
+      t.minutes = TRAY.minutes;
+      t.workLeft = TRAY.minutes / 60;
+    }
+    const q = t.slots[0] && crew.byId(t.slots[0]);
+    if (q?.task?.id === t.id) {
+      Object.assign(q.task, { room: true, label: label(t) });
+      t.reached = false;
+      crew.retarget(q.id, spotFor(t, q.id));
+    }
+    const meal = mealOfStep(t.stepId);
+    log(p, `${meal?.name ?? 'The meal'} on a tray in ${theirOf(p.id)} room (${why})`);
+    bus?.emit('care:tray', { resident: p.id, meal: meal?.id, why });
+  }
+  // Still waiting to be got up a little after their breakfast time: breakfast comes to them on a tray.
+  function trayInBed(p) {
+    const s = p.state.step;
+    if (!s) return;
+    const t = routineTask(p, 'breakfast', s.day);
+    const at = dayStep(p, 'breakfast', s.day)?.at ?? 8.5;
+    const wake = routineTask(p, 'wake', s.day);
+    const coming = wake && (wake.status === 'claimed' || wake.status === 'working'); // (someone is on the way to get them up: breakfast at the table)
+    if (t && isOpen(t) && !t.tray && !coming && absNow() >= absHour(s.day, at) + TRAY.afterWaking) toTray(p, t, 'still in bed');
+  }
+  // --- kitchen prep, drinks rounds (planned with the band's tasks) ---
+  function planKitchen(inst, at) {
+    const roles = rolesOnShift(inst.band.id);
+    for (const meal of MEALS) {
+      if (bandOfHour(meal.prepAt) !== inst.band) continue;
+      const rec = dining.record(inst.day, meal.id);
+      const kitchen = kitchenNow();
+      if (!kitchen) {
+        rec.prep.status = 'noKitchen';
+        continue;
+      }
+      if (!PREP.roles.some((r) => roles.has(r))) {
+        rec.prep.status = 'noStaff';
+        continue;
+      }
+      const due = absHour(inst.day, meal.at + PREP.dueAfter);
+      if (due <= at) continue;
+      const t = addTask(care, { resident: null, day: inst.day, band: inst.band.id, type: 'prep', name: `${meal.name} prep`, source: 'kitchen', meal: meal.id, place: 'kitchen', roles: [...PREP.roles], rolePenalty: { CW: PREP.careWorkerPenalty }, minutes: Math.round(PREP.minutes / KITCHENS[kitchen.defId].prepRate), opens: Math.max(absHour(inst.day, meal.prepAt), at), due, at: meal.prepAt });
+      rec.prep = { status: 'waiting', by: null, doneAt: null, task: t.id };
+    }
+  }
+  function prepDone(t, q) {
+    const meal = mealById(t.meal);
+    const rec = dining.record(t.day, t.meal);
+    rec.prep = { ...rec.prep, status: absNow() <= absHour(t.day, meal.at) + 1e-9 ? 'done' : 'late', by: q.id, doneAt: absNow() };
+    bus?.emit('care:prep', { meal: t.meal, day: t.day, staff: q.id, status: rec.prep.status });
+  }
+  function prepOver(t, status) {
+    const rec = dining.record(t.day, t.meal);
+    if (rec.prep.task === t.id) rec.prep.status = status;
+  }
+  function planRounds(p, inst, at) {
+    const roles = rolesOnShift(inst.band.id);
+    if (!HYDRATION.roles.some((r) => roles.has(r))) return;
+    for (const r of HYDRATION.rounds) {
+      if (r.band !== inst.band.id) continue;
+      const due = absHour(inst.day, r.at + HYDRATION.dueAfter);
+      if (due <= at) continue;
+      addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: 'hydration', name: r.name, source: 'round', round: r.id, place: 'resident', roles: [...HYDRATION.roles], minutes: HYDRATION.minutes, drops: { ...HYDRATION.drops }, outcomes: {}, opens: absHour(inst.day, r.at), due, at: r.at });
+    }
   }
   // Milestone 14: joining lifts Mood / Social Connection / Independence by how much they like it (less when crowded; more
   // at a community event or a birthday); a liked one resets their "nothing they like for a while" clock.
@@ -560,6 +755,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function arrived(p, step, day) {
     if (!isCurrent(p, step, day)) return;
     const st = p.state;
+    if (!st.step.arthurThere) st.step.readyAt = absNow(); // (Milestone 15: when they sat down, for "served on time")
     st.step.arthurThere = true;
     if (st.step.status === 'doing') return;
     const t = routineTask(p, step.id, day);
@@ -572,7 +768,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     completeRoutine(p, step, day, null);
   }
   function walkResident(p, step, day) {
-    const t = placeTile(p, step.place);
+    const t = placeTile(p, isCurrent(p, step, day) && p.state.step.tray ? 'room' : step.place); // (Milestone 15: a tray)
     const here = grid.worldToTile(p.agent.x, p.agent.y);
     if (here && here.col === t.col && here.row === t.row && p.agent.state !== 'walking') return arrived(p, step, day);
     p.agent.walkTo(grid, t.col, t.row, () => arrived(p, step, day));
@@ -659,6 +855,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       walkResident(p, step, day);
       return;
     }
+    // Milestone 15: breakfast already brought on a tray while they were still in bed — they have had it
+    const meal = mealOfStep(step.id);
+    if (meal && t?.status === 'done' && t.tray) {
+      st.step = { id: step.id, day, status: 'doing', tray: true, helper: t.slots[0] ?? null, arthurThere: true };
+      bus?.emit('care:step', { resident: st.id, step: step.id, status: 'started', tray: true });
+      return;
+    }
     const answer = decide(st, step, day, seed, mult);
     if (st.prefs?.[step.id] === 'dislike') countDislike(st, answer === 'refuse');
     if (answer === 'refuse') {
@@ -670,7 +873,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       bus?.emit('care:step', { resident: st.id, step: step.id, status: 'refused' });
       return;
     }
-    st.step = { id: step.id, day, status: 'walking', helper: t?.slots[0] ?? null, arthurThere: false };
+    // Milestone 15: someone who can't come to the Dining Room has the meal on a tray in their room
+    const why = meal && t && isOpen(t) ? cantCome(p, meal, day) : null;
+    if (why) toTray(p, t, why);
+    st.step = { id: step.id, day, status: 'walking', helper: t?.slots[0] ?? null, arthurThere: false, ...(meal && t?.tray ? { tray: true } : {}) };
     bus?.emit('care:step', { resident: st.id, step: step.id, status: 'started' });
     walkResident(p, step, day);
   }
@@ -689,7 +895,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   for (const t of care.tasks) {
     if (t.status !== 'claimed' && t.status !== 'working') continue;
     const q = crew.byId(t.slots[0]);
-    if (!q || !byResident(t.resident)) {
+    if (!q || (!byResident(t.resident) && t.source !== 'kitchen')) {
       t.status = 'open';
       t.slots = [null];
       continue;
@@ -726,6 +932,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (!care.gen[inst.key]) {
       care.gen[inst.key] = true;
       pruneTasks(care, clock.totalDays);
+      dining.prune(clock.totalDays);
+      planKitchen(inst, at); // (Milestone 15: kitchen prep for the band's meals, and each resident's drinks rounds)
+      for (const p of residents) if (inCare(p)) planRounds(p, inst, at);
       for (const p of residents) if (inCare(p)) logRefused(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p), steps: stepsFor(p, inst.day) }));
     }
     for (const p of residents) {
@@ -739,6 +948,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const current = new Set(residents.map((p) => (p.state.step ? routineTask(p, p.state.step.id, p.state.step.day) : null)).filter(Boolean));
     for (const t of care.tasks) {
       if (current.has(t) || t.type === 'bell' || !(t.status === 'open' || t.status === 'claimed') || t.due > at) continue;
+      if (t.source === 'kitchen') {
+        finish(t, 'unprepped'); // (Milestone 15: never a missed care task — the kitchen sends what it can)
+        prepOver(t, 'unprepped');
+        continue;
+      }
       const missed = t.staffable;
       finish(t, missed ? 'missed' : 'unstaffed');
       const p = byResident(t.resident);
@@ -749,7 +963,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (t.status !== 'claimed' && t.status !== 'working') continue;
       const q = crew.byId(t.slots[0]);
       const p = byResident(t.resident);
-      if (!q || q.task?.id !== t.id || !p) {
+      const kitchenTask = t.source === 'kitchen';
+      if (kitchenTask && !kitchenNow()) {
+        finish(t, 'unprepped'); // (the Kitchen was sold)
+        prepOver(t, 'unprepped');
+        continue;
+      }
+      if (!q || q.task?.id !== t.id || (!p && !kitchenTask)) {
         // their shift ended (or they were sent elsewhere): back on the board
         if (q) assignSys.unassign(t, q.id);
         t.status = 'open';
@@ -763,7 +983,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       }
       if (!t.reached) {
         let reached;
-        if (t.place === 'room') reached = q.task.arrived;
+        if (t.place === 'room' || kitchenTask) reached = q.task.arrived;
         else if (t.place === 'step') reached = q.task.arrived && isCurrent(p, routineStep(t.stepId), t.day) && !!p.state.step.arthurThere;
         else reached = (q.task.arrived && p.agent.state !== 'walking') || Math.hypot(q.agent.x - p.agent.x, q.agent.y - p.agent.y) <= REACH;
         if (!reached) continue;
@@ -773,6 +993,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           recordResponse(care, t.resident, { day: clock.totalDays, t: now(), minutes, staffId: q.id, need: t.need });
           log(p, `Call bell answered by ${helperName(q.id)} (${minutes} min)`);
           bus?.emit('care:bell', { resident: p.id, status: 'answered', staff: q.id, minutes });
+        }
+        if (kitchenTask) {
+          t.status = 'working';
+          dining.record(t.day, t.meal).prep.status = 'cooking';
+          continue;
         }
         const refused = decideTask(p.state, t, seed, familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, q.id)).dislikeMult) === 'refuse';
         if ((t.pref && p.state.prefs?.[t.pref] === 'dislike') || (t.optionId && p.state.optionPrefs?.[t.optionId] === 'dislike')) countDislike(p.state, refused);
@@ -784,13 +1009,15 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         t.status = 'working';
       }
       // Milestone 13: a familiar helper works a little faster (communication / routine efficiency, bible §6)
-      t.workLeft -= hours * (1 + familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, q.id)).speedUp);
+      // (Milestone 15: a Care Worker preps more slowly than a Hospitality worker)
+      const rate = kitchenTask ? (q.role === 'HN' || specialtiesOf(q.id).includes('nutrition') ? 1 : PREP.careWorkerRate) : 1 + familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, q.id)).speedUp;
+      t.workLeft -= hours * rate;
       if (t.workLeft <= 1e-9) completeTask(t, q);
     }
     // free staff pick their next task (bible §15 order: src/systems/careTasks.js scorePair)
     const bandId = bandAt(hourNow()).id;
     const shiftRoles = new Set(crew.people.filter((q) => roster.onShift(q.id)).map((q) => q.role));
-    const avail = care.tasks.filter((t) => t.status === 'open' && t.opens <= at && byResident(t.resident));
+    const avail = care.tasks.filter((t) => t.status === 'open' && t.opens <= at && (byResident(t.resident) || (t.source === 'kitchen' && kitchenNow())));
     for (const t of avail) if (t.roles.some((r) => shiftRoles.has(r))) t.staffable = true;
     const free = crew.people.filter((q) => crew.isFree(q));
     if (!avail.length || !free.length) return;
@@ -900,7 +1127,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       for (const r of standIns(q)) shiftRoles[sid].add(r);
       shiftCounts[sid]++;
     }
-    return { name: p.name, needs: p.state.needs, level: supportLevel(p.def), support: p.def.support, stay: p.def.stay, visitors: p.def.visitors, teamRoles: roles, shiftRoles, shiftCounts, rooms: roomTemplatesHere(), facilities: facilityIds(), programs: new Set() };
+    // Milestone 15: the special menus someone on the team can make (a diet trait, or the Nutrition specialty)
+    const dietSkills = new Set(team().flatMap((q) => [...skillsOf({ traits: q.model.traits, specialties: specialtiesOf(q.id) })]));
+    return { name: p.name, needs: p.state.needs, level: supportLevel(p.def), support: p.def.support, stay: p.def.stay, visitors: p.def.visitors, teamRoles: roles, shiftRoles, shiftCounts, rooms: roomTemplatesHere(), facilities: facilityIds(), programs: new Set(), dietSkills };
   }
   // End of a day: who had essential care missed (a run of such days makes their plan stale).
   function noteMissed(day) {
@@ -927,6 +1156,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const want = [];
     const bday = birthdaysOn(day).length > 0;
     if (bday) want.push({ art: activityById('birthday').prop, place: 'lounge' });
+    // Milestone 15: the dining trolley stands by the Dining Room through each meal service
+    for (const m of MEALS) if (h >= m.at - TROLLEYS.before && h <= m.at + TROLLEYS.serviceHours[m.id]) want.push({ art: TROLLEYS.meal, place: 'dining' });
     for (const [slot, def] of Object.entries(TIMETABLE.slots)) {
       const info = sessionInfo(day, slot);
       if (!info || info.birthday || !info.activity.prop) continue;
@@ -996,6 +1227,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         st.wouldEnjoy = SCHEDULABLE.map((a) => ({ a, f: feelingOf(p.def, st, a) })).sort((x, y) => (y.f === 'love') - (x.f === 'love') || (y.f === 'like') - (x.f === 'like'))[0]?.a.id ?? null;
       }
     }
+    // Milestone 15: yesterday's food (a simple cost per meal served), today's diet tags
+    const meals = dining.served(day - 1);
+    if (meals) ledger.economy.add('credits', -meals * FOOD_COST.perMeal, `Food: ${meals} meal${meals === 1 ? '' : 's'} served`, 'food');
+    for (const p of inSession()) p.state.diet = dietOf(p.state);
     bus?.emit('care:dayEnd', world.daySummary(day - 1));
     if (shortStaffing) coverage.dayEnd(day - 1); // care recovery for yesterday's missed essential tasks (Milestone 7)
     noteMissed(day - 1); // Milestone 8: the missed-essential streak (plan review)
@@ -1223,7 +1458,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         }
         const r = routineAt(hourNow(), clock.totalDays, stepsFor(p, clock.totalDays));
         if (!p.state.step || p.state.step.id !== r.step.id || p.state.step.day !== r.day) {
-          if (waitsInBed(p)) continue; // (Milestone 13: help is on the way — they stay in bed for it)
+          if (waitsInBed(p)) {
+            trayInBed(p); // (Milestone 15: breakfast comes to them on a tray)
+            continue; // (Milestone 13: help is on the way — they stay in bed for it)
+          }
           startStep(p, r.step, r.day);
         }
       }
@@ -1355,6 +1593,58 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     get decor() {
       return decorNow();
     },
+    // --- Milestone 15 ------------------------------------------------------------------------------------------
+    // Nutrition and dining: the weekly menu, the meal records, each resident's diet and favourites, the kitchen.
+    dining,
+    kitchen: () => kitchenNow(),
+    hasNutritionOffice: () => hasOffice(),
+    hospitalityOn: () => hospitalityOn(),
+    menuOn: (day = clock.totalDays) => dining.menuOn(day),
+    // Change a dish on the weekly menu (Mon = 0 … Sun = 6, 'main' | 'pudding').
+    setDish: (dow, kind, dishId) => dining.setDish(dow, kind, dishId),
+    dietOf: (residentId) => (byResident(residentId) ? dietOf(byResident(residentId).state) : null),
+    // Could their menu be made now (someone on shift who can, or the Nutrition Office)? And by anyone on the team?
+    dietMadeNow: (residentId) => (byResident(residentId) ? canMake(dietOf(byResident(residentId).state), { office: hasOffice(), onShift: cooksOnShift() }) : false),
+    dietMadeByTeam: (residentId) => {
+      const p = byResident(residentId);
+      if (!p) return false;
+      const all = team().map((q) => ({ id: q.id, role: q.role, skills: skillsOf({ traits: q.model.traits, specialties: specialtiesOf(q.id) }) }));
+      return canMake(dietOf(p.state), { office: hasOffice(), onShift: all });
+    },
+    favouritesOf: (residentId) => (byResident(residentId) ? favouritesOf(byResident(residentId).def, byResident(residentId).state) : []),
+    mealRecord: (mealId, day = clock.totalDays) => dining.peek(day, mealId),
+    // The next meal service: { meal, day, at, dish, prep }
+    nextMeal() {
+      const h = hourNow();
+      const today = MEALS.find((m) => h < m.at + 1);
+      const meal = today ?? MEALS[0];
+      const day = today ? clock.totalDays : clock.totalDays + 1;
+      return { meal, day, at: meal.at, dish: dining.dishAt(day, meal.id), prep: dining.peek(day, meal.id)?.prep ?? null };
+    },
+    // The Dining Room card: the home's average satisfaction, the lowest few (with their reason), the last meals, and
+    // plain warnings (no Kitchen, no Hospitality on shift, a special menu nobody on the team can make).
+    diningSummary() {
+      const here = seated().filter((p) => p.state.dining?.avg != null);
+      const avg = here.length ? Math.round((here.reduce((a, p) => a + p.state.dining.avg, 0) / here.length) * 10) / 10 : null;
+      const lowest = [...here].sort((a, b) => a.state.dining.avg - b.state.dining.avg).slice(0, SATISFACTION.lowestShown).map((p) => ({ id: p.id, name: p.name, avg: p.state.dining.avg, reason: p.state.dining.last?.reason ?? 'none' }));
+      const recent = dining.recent().map((r) => ({ day: r.day, meal: r.meal, name: mealById(r.meal)?.name, quality: avgOf(r, 'qualitySum'), sat: avgOf(r, 'satSum'), served: r.served, trays: r.trays, late: r.late, mismatched: r.mismatched, favourites: r.favourites, prep: r.prep.status, kitchen: r.kitchen }));
+      const warnings = [];
+      if (!kitchenNow()) warnings.push('No Kitchen: meals arrive late from the hatch and quality drops. Build a Kitchen (F04) in Build Mode.');
+      if (!hospitalityOn() && seated().length) warnings.push('No Hospitality worker on shift: care staff serve (quality a little lower).');
+      const unmet = seated().filter((p) => dietOf(p.state) !== 'standard' && !world.dietMadeByTeam(p.id));
+      if (unmet.length) warnings.push(`${unmet.map((p) => first(p.name)).join(', ')}: nobody on the team can make ${unmet.length === 1 ? dietWords(dietOf(unmet[0].state)) : 'their menus'} (the Nutrition specialty or a Nutrition Office would).`);
+      return { avg, lowest, recent, warnings, served: here.length };
+    },
+    // The trolley a staff member is pushing (the home screen draws it beside them while they walk): the Hydration Cart
+    // on a drinks round, the dining trolley taking a tray to a room. (Serving at the table, the trolley stands by the
+    // Dining Room: world.decor.)
+    trolleyOf(q) {
+      const t = q?.task ? care.tasks.find((x) => x.id === q.task.id) : null;
+      if (!t) return null;
+      if (t.source === 'round') return TROLLEYS.round;
+      if (t.source === 'routine' && t.tray && mealOfStep(t.stepId)) return TROLLEYS.meal;
+      return null;
+    },
     // --- Milestone 13 ------------------------------------------------------------------------------------------
     // Continuity groups (bible §14): pin a team member to up to CONTINUITY.maxResidents residents.
     continuityOf: (staffId) => groupOf(staffId).filter((id) => byResident(id)),
@@ -1411,6 +1701,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const t = routineTask(p, step.id, st.step.day);
       const going = step.going.replace(/\bhis\b/g, who);
       const doing = step.doing.replace(/\bhis\b/g, who);
+      if (st.step.tray) {
+        // (Milestone 15: a meal on a tray in their room)
+        const word = stepWord(step);
+        if (st.step.status === 'doing') return `Had ${word} on a tray in ${who} room`;
+        return helper ? `Waiting in ${who} room: ${helper} is bringing a ${word} tray` : `Waiting in ${who} room for a ${word} tray`;
+      }
       if (st.step.status === 'waiting' && helper && t?.status === 'working') return `${doing} · ${helper} is helping`;
       if (st.step.status === 'waiting') return helper ? `Waiting for ${helper} (${stepWord(step)})` : `Waiting for help (${stepWord(step)})`;
       if (st.step.status === 'walking') return helper ? `${going} · ${helper} is coming` : going;
@@ -1440,7 +1736,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     // How a day went (Milestone 5's end-of-day beat): care tasks done and missed that day, every resident (bells not
     // counted; a task no one on shift could do is not a miss).
     daySummary(day) {
-      const tasks = care.tasks.filter((t) => t.day === day && t.type !== 'bell');
+      const tasks = care.tasks.filter((t) => t.day === day && t.type !== 'bell' && t.source !== 'kitchen'); // (Milestone 15: prep is the kitchen's, not care)
       return { day, done: tasks.filter((t) => t.status === 'done').length, missed: tasks.filter((t) => t.status === 'missed').length };
     },
     // --- Milestone 7 ------------------------------------------------------------------------------------------

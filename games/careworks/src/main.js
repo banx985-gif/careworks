@@ -78,6 +78,7 @@ import { WAKE } from '../data/routine.js';
 import { CONTINUITY, FRIENDSHIP, ACTIVITY_GROUPS } from '../data/relationships.js';
 import { ACTIVITIES, SCHEDULABLE, activityById, TIMETABLE, COMMUNITY_EVENTS } from '../data/activities.js';
 import { facilityById } from '../data/facilities.js';
+import { DIETS, dishById, dishesOf, mealById, SAT_REASONS, HYDRATION, KITCHENS, TROLLEYS } from '../data/dining.js';
 import { yearsEmployed } from './systems/staffTeam.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
@@ -579,6 +580,11 @@ function openResidents() {
             : [];
         })(),
         { title: 'Activities', columns: 1, buttons: [{ id: 'care:activities', label: 'Activities', sub: activitiesSub(w), icon: 'care_ui_01', accent: COL.action, onTap: () => openActivities() }] },
+        // Milestone 15: meals — the Dining Room card (satisfaction, the kitchen, the weekly menu)
+        { title: 'Meals', columns: 1, buttons: [{ id: 'care:meals', label: 'Meals and the menu', sub: mealsSub(w), icon: TROLLEYS.meal, accent: COL.action, onTap: () => {
+          const room = w.placed.find((x) => x.defId === 'F03');
+          if (room) openHomeSheet(room.id);
+        } }] },
         { title: 'Admissions', columns: 1, buttons: [{ id: 'admissions', label: 'Admissions', sub: `${adm.board.length} applying · ${adm.waiting.length} on the waiting list`, icon: CARE_ICONS.admissions, badge: adm.board.length || null, accent: COL.action, onTap: () => openAdmissions() }] },
         ...(debug.enabled && !spawn ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'debug:spawn60', label: 'Spawn all 60', sub: 'A test home (never saved): everyone comes in, walks to a spot, has their card opened once, then it clears', accent: COL.progress, onTap: () => startSpawnCheck() }] }] : []),
       ],
@@ -851,6 +857,146 @@ function activitySection(w, it) {
     { text: `Birthday: Month ${Math.floor((bd - 1) / 28) + 1}, day ${((bd - 1) % 28) + 1}`, color: COL.textMuted },
   ];
   return { title: 'Activities', lines };
+}
+// --- Milestone 15: nutrition and dining -------------------------------------------------------------------------------
+const todayDow = (w) => ((w.clock.totalDays % 7) + 7) % 7;
+const satColor = (v) => (v >= 70 ? COL.good : v >= 45 ? COL.actionDark : COL.warn);
+// The resident card's Meals section: their menu (from the care plan), favourites and when they are on, their dining
+// satisfaction and last drink.
+function mealsSection(w, it) {
+  const st = it.state;
+  const they = theirOf(it.id) === 'her' ? 'she' : 'he';
+  const diet = w.dietOf(it.id);
+  const d = DIETS[diet];
+  const rota = w.dining.rota();
+  const today = todayDow(w);
+  const favs = w.favouritesOf(it.id).map((id) => {
+    const days = [];
+    for (let i = 0; i < 7; i++) {
+      const dow = (today + i) % 7;
+      if (rota[dow].main === id || rota[dow].pudding === id) days.push(i === 0 ? 'today' : TIMETABLE.days[dow]);
+    }
+    return `${dishById(id).name} (${days.length ? `on the menu ${days.join(', ')}` : 'not on the menu this week'})`;
+  });
+  const lines = [{ text: diet === 'standard' ? 'Menu: the standard menu' : `Menu: ${d.menu} (${d.name}, from the care plan)`, color: COL.actionDark }];
+  if (diet !== 'standard' && !w.dietMadeByTeam(it.id)) lines.push({ text: `Nobody on the team can make ${d.menu}, so ${they} has the standard one (the Nutrition specialty or a Nutrition Office would)`, color: COL.warn });
+  lines.push(`Favourite${favs.length === 1 ? '' : 's'}: ${favs.join(' · ')}`);
+  const dn = st.dining;
+  if (dn?.avg != null) {
+    const why = dn.last.reason !== 'none' ? ` (${SAT_REASONS[dn.last.reason]})` : '';
+    lines.push({ text: `Dining satisfaction ${Math.round(dn.avg)} · last meal: ${mealById(dn.last.meal)?.name.toLowerCase()} ${Math.round(dn.last.sat)}${why}`, color: satColor(dn.avg) });
+  } else lines.push({ text: 'No meals here yet', color: COL.textMuted });
+  if (st.hydration?.last != null) {
+    const since = w.clock.totalDays * 24 + w.hour - st.hydration.last;
+    lines.push({ text: `Last drink ${clockText(st.hydration.last % 24)}${since > HYDRATION.gapHours && !w.isAsleep(it) ? ' · due a drink' : ''}`, color: since > HYDRATION.gapHours && !w.isAsleep(it) ? COL.warn : COL.textMuted });
+  }
+  return { title: 'Meals', lines };
+}
+// "Kitchen: Sam is getting lunch ready" — the next meal's prep.
+const PREP_WORDS = { waiting: 'prep not started yet', done: 'ready on time', late: 'ready late', unprepped: 'nobody got it ready: plain meals', noStaff: 'nobody on shift to cook', noKitchen: 'from the hatch (no Kitchen)' };
+function prepLine(w, next) {
+  if (!w.kitchen()) return { text: 'Meals come from the Dining Room hatch (no Kitchen)', color: COL.textMuted };
+  const p = next.prep;
+  const meal = next.meal.name.toLowerCase();
+  const cook = w.staff.find((q) => w.taskOf(q)?.type === 'prep');
+  if (cook) return { text: `Kitchen: ${first(cook.name)} is ${cook.mode === 'helping' ? 'getting' : 'on the way to get'} ${w.taskOf(cook).meal === next.meal.id ? meal : mealById(w.taskOf(cook).meal)?.name.toLowerCase()} ready`, color: COL.actionDark };
+  if (!p) return { text: `Kitchen: ${meal} prep starts at ${clockText(next.meal.prepAt)}`, color: COL.textMuted };
+  const by = p.by ? ` (${first(w.byId(p.by)?.name ?? '')})` : '';
+  return { text: `Kitchen: ${meal} ${PREP_WORDS[p.status] ?? p.status}${by}`, color: p.status === 'done' ? COL.good : p.status === 'waiting' ? COL.textMuted : COL.warn };
+}
+// The Dining Room card: warnings, the next meal, the home's satisfaction and the lowest three, the last few meals.
+function diningSections(w) {
+  const s = w.diningSummary();
+  const next = w.nextMeal();
+  const lines = s.warnings.map((x) => ({ text: x, color: COL.warn }));
+  lines.push({ text: `Next: ${next.meal.name} at ${clockText(next.at)}${next.dish ? ` · ${dishById(next.dish).name}` : ''}${next.day !== w.clock.totalDays ? ' (tomorrow)' : ''}`, color: COL.actionDark });
+  lines.push(prepLine(w, next));
+  const sat = [];
+  if (s.avg == null) sat.push({ text: 'No meals served yet', color: COL.textMuted });
+  else {
+    sat.push({ text: `Home average: ${Math.round(s.avg)}`, color: satColor(s.avg) });
+    for (const x of s.lowest) sat.push({ text: `${first(x.name)} ${Math.round(x.avg)}${x.reason !== 'none' ? ` · ${SAT_REASONS[x.reason]}` : ''}`, color: satColor(x.avg) });
+  }
+  const dayWord = (d) => (d === w.clock.totalDays ? 'today' : d === w.clock.totalDays - 1 ? 'yesterday' : `${w.clock.totalDays - d} days ago`);
+  const meals = s.recent.map((r) => ({ text: `${r.name} ${dayWord(r.day)} · quality ${Math.round(r.quality)} · ${r.served} served${r.trays ? ` (${r.trays} on trays)` : ''}${r.late ? ` · ${r.late} late` : ''}${r.mismatched ? ` · ${r.mismatched} not their menu` : ''}`, color: r.quality >= 70 ? COL.good : r.quality >= 45 ? COL.actionDark : COL.warn }));
+  return [
+    { title: 'Meals', lines, columns: 1, buttons: [{ id: 'dining:menu', label: 'Weekly menu', sub: menuSub(w), icon: TROLLEYS.meal, accent: COL.action, onTap: () => openMenu() }] },
+    { title: 'Dining satisfaction', lines: sat },
+    { title: 'Last meals', lines: meals.length ? meals : [{ text: 'None yet', color: COL.textMuted }] },
+  ];
+}
+// The Care sheet's Meals line: the home's dining satisfaction and the next meal (a warning first, if there is one).
+function mealsSub(w) {
+  const s = w.diningSummary();
+  const next = w.nextMeal();
+  const head = !w.kitchen() ? 'No Kitchen yet' : s.avg != null ? `Dining satisfaction ${Math.round(s.avg)}` : 'No meals yet';
+  return `${head} · next: ${next.meal.name} ${clockText(next.at)}`;
+}
+function menuSub(w) {
+  const r = w.menuOn();
+  return `Today: ${dishById(r.main).name} · ${dishById(r.pudding).name}`;
+}
+// The Kitchen (F04 / F16): the next meal's prep, who can cook on shift, the weekly menu.
+function kitchenSections(w, it) {
+  const next = w.nextMeal();
+  const cooks = w.staff.filter((q) => q.role === 'HN' && w.roster.onShift(q.id)).map((q) => first(q.name));
+  const best = w.kitchen();
+  const lines = [prepLine(w, next), { text: cooks.length ? `Hospitality on shift: ${cooks.join(', ')}` : 'No Hospitality worker on shift: a Care Worker may cook (more slowly)', color: cooks.length ? COL.actionDark : COL.warn }];
+  if (best && best.id !== it.id) lines.push({ text: `The ${KITCHENS[best.defId].name} does the cooking`, color: COL.textMuted });
+  return [{ title: 'Cooking', lines, columns: 1, buttons: [{ id: 'kitchen:menu', label: 'Weekly menu', sub: menuSub(w), icon: TROLLEYS.meal, accent: COL.action, onTap: () => openMenu() }] }];
+}
+// The weekly menu (a 7-day rota): tap a day to choose its main (lunch) and pudding (the evening meal).
+function openMenu() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const rota = w.dining.rota();
+    const today = todayDow(w);
+    const here = w.residents.filter((r) => !r.state.leaving && !r.state.guest);
+    const fans = (id) => here.filter((r) => w.favouritesOf(r.id).includes(id)).map((r) => first(r.name));
+    const rows = [];
+    for (let i = 0; i < 7; i++) {
+      const dow = (today + i) % 7;
+      const r = rota[dow];
+      const n = new Set([...fans(r.main), ...fans(r.pudding)]).size;
+      rows.push({ id: `menu:${dow}`, label: `${TIMETABLE.days[dow]}${i === 0 ? ' (today)' : ''}`, sub: `${dishById(r.main).name} · ${dishById(r.pudding).name}${n ? ` · ${n} favourite${n === 1 ? '' : 's'}` : ''}`, accent: n ? COL.good : COL.progress, onTap: () => openDishPicker(dow) });
+    }
+    return {
+      title: 'Weekly menu',
+      subtitle: 'The main is served at lunch, the pudding at the evening meal',
+      art: TROLLEYS.meal,
+      accent: accentNow(),
+      sections: [
+        { lines: [{ text: 'A resident whose favourite is on the menu enjoys that day a little more (twice as much with Favourite-Food Boost). Special menus follow each care plan.', color: COL.textMuted }], columns: 1, buttons: rows },
+      ],
+    };
+  });
+}
+function openDishPicker(dow) {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const cur = w.dining.rota()[dow];
+    const here = w.residents.filter((r) => !r.state.leaving && !r.state.guest);
+    const section = (kind, title) => ({ title, columns: 1, buttons: dishesOf(kind).map((d) => {
+      const fans = here.filter((r) => w.favouritesOf(r.id).includes(d.id)).map((r) => first(r.name));
+      const on = cur[kind] === d.id;
+      return { id: `dish:${kind}:${d.id}`, label: `${on ? '✓ ' : ''}${d.name}`, sub: fans.length ? `A favourite of ${fans.join(', ')}` : 'Nobody here\u2019s favourite', selected: on, accent: on ? COL.good : COL.progress, onTap: () => {
+        w.setDish(dow, kind, d.id);
+        autosave.request('menu');
+      } };
+    }) });
+    return {
+      title: `${TIMETABLE.days[dow]}'s menu`,
+      subtitle: `${dishById(cur.main).name} · ${dishById(cur.pudding).name}`,
+      accent: accentNow(),
+      sections: [
+        { columns: 1, buttons: [{ id: 'dish:back', label: '‹ Back to the weekly menu', accent: COL.progress, onTap: () => openMenu() }] },
+        section('main', 'Main (lunch)'),
+        section('pudding', 'Pudding (evening meal)'),
+      ],
+    };
+  });
 }
 // Milestone 13: pin a team member to a small group of residents (tap to add / remove; up to CONTINUITY.maxResidents).
 function openContinuity(staffId) {
@@ -1443,6 +1589,7 @@ function residentSections(w, it) {
     familiarSection(w, it),
     friendsSection(w, it),
     activitySection(w, it),
+    mealsSection(w, it),
     { title: 'Needs', lines: [{ text: `How much support ${they} needs right now`, color: COL.textMuted }], bars: NEEDS.map((n) => ({ label: n.name, value: st.needs[n.id], color: COL.progress })) },
     { title: 'Outcomes', bars: OUTCOMES.map((o) => ({ label: o.name, value: st.outcomes[o.id], color: COL.good })) },
     { title: 'Today', lines: log.length ? log : ['Nothing yet today'] },
@@ -1748,6 +1895,9 @@ function openHomeSheet(id, from = null) {
         lines.push({ text: members.length ? `${g.name}: ${members.join(', ')}` : `${g.name}: no regulars yet`, color: members.length ? COL.actionDark : COL.textMuted });
       }
     }
+    if (it.defId === 'F03') sections.push(...diningSections(w)); // (Milestone 15)
+    if (it.defId === 'F04' || it.defId === 'F16') sections.push(...kitchenSections(w, it));
+    if (it.defId === 'F17') lines.push({ text: 'Plans every special menu (soft, balanced, small plates, hearty), whoever is cooking', color: COL.actionDark });
     if (it.defId === 'F09') sections.push({ columns: 1, buttons: [{ id: 'place:recruit', label: 'Recruit', sub: `${w.staffing.board.length} candidates · Staff ${w.team.length} / ${w.staffing.cap}`, accent: COL.action, onTap: () => openRecruit() }] });
     if (it.defId === 'F11') {
       const trainees = w.team.filter((q) => w.roster.isTraining(q.id));
@@ -1840,7 +1990,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openMenu, openDishPicker, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

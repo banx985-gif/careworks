@@ -80,9 +80,9 @@ const FIRST_OPTIONS = [
     changes: [],
   },
   {
-    id: 'NU01', domain: 'NU', name: 'Standard Menu', roles: ['HN', 'CW'], minutesPerDay: 10,
-    text: 'Meals from the standard menu, with an afternoon drinks round.',
-    tasks: [{ type: 'hydration', name: 'Afternoon drinks round', at: 15, band: 'afternoon', roles: ['HN', 'CW'], minutes: 10, place: 'resident', drops: { nutrition: 10 } }],
+    id: 'NU01', domain: 'NU', name: 'Standard Menu', roles: ['HN', 'CW'], minutesPerDay: 0,
+    text: 'Meals from the standard menu, and the home’s morning and afternoon drinks rounds.',
+    tasks: [], // (Milestone 15: its afternoon drinks round is now the home's round for everyone — data/dining.js HYDRATION)
     changes: [],
   },
   {
@@ -130,6 +130,9 @@ const CW_RN = ['CW', 'RN'];
 const CARERS = ['CW', 'AH', 'RN'];
 const FOOD = ['HN', 'CW'];
 const TALK = ['LC', 'CW'];
+// Milestone 15: a special menu needs someone who can make it — a Hospitality worker with the Nutrition specialty (or a
+// diet trait: Texture Expert, Diet Match, Nutrition Lead) on the team, or a Nutrition Office (F17).
+const DIET_SKILL = (diet) => ({ type: 'dietSkill', diet, reason: 'Needs a Hospitality worker with the Nutrition specialty (or a diet trait), or a Nutrition Office (F17)' });
 const opt = (o) => ({ changes: [], removes: [], eligibility: [], ...o, minutesPerDay: o.minutesPerDay ?? planMinutes(o) });
 function planMinutes(o) {
   return (o.tasks ?? []).reduce((s, x) => s + x.minutes, 0) + (o.changes ?? []).reduce((s, c) => s + (c.minutes ? c.minutes - 20 : 0), 0);
@@ -310,12 +313,9 @@ const NEW_OPTIONS = [
   // --- Nutrition --------------------------------------------------------------------------------------------------
   opt({
     id: 'NU03', domain: 'NU', name: 'Hydration Plan', roles: FOOD,
-    text: 'Drinks offered through the day: mid-morning, afternoon and evening.',
-    tasks: [
-      t('hydration', 'Mid-morning drinks', 10.5, 'morning', FOOD, 10, { nutrition: 8 }),
-      t('hydration', 'Afternoon drinks', 14, 'afternoon', FOOD, 10, { nutrition: 8 }),
-      t('hydration', 'Evening drinks', 19, 'evening', FOOD, 10, { nutrition: 8 }),
-    ],
+    text: 'An extra drinks round in the evening, as well as the home’s morning and afternoon rounds.',
+    // (Milestone 15: the morning and afternoon rounds are the home's, for everyone; this plan adds the extra round)
+    tasks: [t('hydration', 'Evening drinks round', 19, 'evening', FOOD, 5, { nutrition: 8 })],
   }),
   opt({
     id: 'NU04', domain: 'NU', name: 'Diabetes-Friendly Menu', roles: ['HN'],
@@ -325,17 +325,18 @@ const NEW_OPTIONS = [
       { step: 'breakfast', dropsAdd: { clinical: 3 } },
       { step: 'dinner', dropsAdd: { clinical: 3 } },
     ],
-    eligibility: [{ type: 'roleOnTeam', role: 'HN', reason: 'Needs a Hospitality & Nutrition worker on the roster' }],
+    eligibility: [{ type: 'roleOnTeam', role: 'HN', reason: 'Needs a Hospitality & Nutrition worker on the roster' }, DIET_SKILL('diabetes')],
   }),
   opt({
     id: 'NU05', domain: 'NU', name: 'Texture-Modified Meals', roles: ['HN'],
     text: 'Meals prepared soft and easy to eat, with help at each one.',
-    tasks: [t('meal', 'Midday meal support', 12.5, 'afternoon', FOOD, 20, { nutrition: 12 })],
+    tasks: [], // (Milestone 15: its midday meal is now the lunch service, with help)
     changes: [
       { step: 'breakfast', minutes: 30, roles: FOOD },
+      { step: 'lunch', minutes: 30, roles: FOOD },
       { step: 'dinner', minutes: 30, roles: FOOD },
     ],
-    eligibility: [{ type: 'roleOnTeam', role: 'HN', reason: 'Needs a Hospitality & Nutrition worker on the roster' }],
+    eligibility: [{ type: 'roleOnTeam', role: 'HN', reason: 'Needs a Hospitality & Nutrition worker on the roster' }, DIET_SKILL('texture')],
   }),
   opt({
     id: 'NU06', domain: 'NU', name: 'Small Frequent Meals', roles: FOOD,
@@ -458,7 +459,7 @@ export const CARE_OPTIONS = [...FIRST_OPTIONS.map((o) => ({ changes: [], removes
       outcomes: [...new Set(o.tasks.flatMap((x) => Object.keys(x.outcomes ?? {})))],
     },
   }));
-export const ELIGIBILITY_TYPES = ['roleOnTeam', 'roleOnShifts', 'staffOnShift', 'need', 'supportLevel', 'support', 'visitors', 'room', 'facility', 'program'];
+export const ELIGIBILITY_TYPES = ['roleOnTeam', 'roleOnShifts', 'staffOnShift', 'need', 'supportLevel', 'support', 'visitors', 'room', 'facility', 'program', 'dietSkill']; // (Milestone 15: dietSkill)
 
 // Plan review (bible §9 end): a plan is stale — an amber dot, the Care badge, Care's "Plans to review" — when the
 // resident was just admitted and hasn't had a first review, a need has moved by needChange or more since the last

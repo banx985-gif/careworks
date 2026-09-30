@@ -228,6 +228,7 @@ export const SAVE_MIGRATIONS = {
   11: (record) => ({ ...record, data: upgradeV11(record.data) }),
   12: (record) => record, // (Milestone 13: no friendships / pins saved = none; wake times and seats come from each resident)
   13: (record) => record, // (Milestone 14: no activity state = Cards every afternoon, free mornings — the M2 session carries over)
+  14: (record) => record, // (Milestone 15: no dining state = the default weekly menu; diets, favourites and satisfaction start from each resident)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

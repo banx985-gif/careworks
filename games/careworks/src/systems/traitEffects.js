@@ -7,6 +7,7 @@
 //   moralePerHour(traits)      Morale they gain an hour while working ('morale')
 //   familiarPct(traits)        % faster Familiar Care ('familiar')
 //   shiftPct(traits)           % more Morale from working their preferred shift ('shift')
+//   dietSkillsOf(traits) → Set of diets · dietPct(traits, diet) · diningPct(traits)   Milestone 15 ('diet', 'dining')
 //   isLive(id) · pendingOf(id) → 'Mnn' | null
 import { TRAITS } from '../../data/staff.js';
 
@@ -19,5 +20,9 @@ export const energyPct = (traits, shift) => sum(effectsOf(traits, 'energy').filt
 export const moralePerHour = (traits) => sum(effectsOf(traits, 'morale'), 'perHour');
 export const familiarPct = (traits) => sum(effectsOf(traits, 'familiar'), 'pct');
 export const shiftPct = (traits) => sum(effectsOf(traits, 'shift'), 'pct');
+// Milestone 15: the special menus they can make ('diet'), the satisfaction bonus when they cook one, the dining lift
+export const dietSkillsOf = (traits) => new Set(effectsOf(traits, 'diet').flatMap((fx) => fx.diets));
+export const dietPct = (traits, diet) => sum(effectsOf(traits, 'diet').filter((fx) => fx.diets.includes(diet)), 'pct');
+export const diningPct = (traits) => sum(effectsOf(traits, 'dining'), 'pct');
 export const isLive = (id) => !!TRAITS[id]?.live;
 export const pendingOf = (id) => TRAITS[id]?.pendingSystem ?? null;
