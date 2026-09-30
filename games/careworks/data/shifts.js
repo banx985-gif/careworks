@@ -83,10 +83,11 @@ export const FALLBACK = {
 };
 
 // Agency workers (bible §14: expensive, competent at baseline safety, low Familiar Care, never on records). Generic art
-// (the Start candidates' files), tagged AGENCY. They arrive at the front entrance for their one shift and leave after.
+// (the Start candidates' files), tagged AGENCY (so the Milestone 12 art check leaves them out of "no two staff share
+// art"). They arrive at the front entrance for their one shift and leave after.
 export const AGENCY = {
-  RN: { name: 'Agency Nurse', art: 'staff_rn02', stats: { CLN: 100, PER: 60, MOB: 60, SOC: 50, NUT: 50 } },
-  CW: { name: 'Agency Carer', art: 'staff_cw02', stats: { CLN: 55, PER: 105, MOB: 60, SOC: 55, NUT: 55 } },
+  RN: { name: 'Agency Nurse', art: 'staff_rn02', tag: 'AGENCY', stats: { CLN: 100, PER: 60, MOB: 60, SOC: 50, NUT: 50 } },
+  CW: { name: 'Agency Carer', art: 'staff_cw02', tag: 'AGENCY', stats: { CLN: 55, PER: 105, MOB: 60, SOC: 55, NUT: 55 } },
 };
 
 // A new home's roster (the opening team is three: bible §3.5.4): the Registered Nurse and the Care Worker on Morning

@@ -2,7 +2,7 @@
 // rules on plain state (no walking, no drawing): the home world walks new hires in, takes trainees off the roster and
 // pays through the ledger via the hooks here.
 //
-//   createStaffing({ state, sys, ledger, seed, bus, today, year, teamSize, trainingPlaces }) → staffing
+//   createStaffing({ state, sys, ledger, seed, bus, today, year, teamSize, trainingPlaces, rank, hasFacility, score }) → staffing
 //     state            the run's staff state (its .staffing part is made here when missing: an M10 save → a fresh board)
 //     sys              the run's core/StaffSystem · ledger (src/systems/ledger.js)
 //     today() / year() the game day and year · teamSize() the team without agency workers
@@ -14,17 +14,26 @@
 //   staffing.courses(staffId) → [{ course, ok, reason, preview, capped, specialty }] · staffing.startCourse(courseId, staffId)
 //   staffing.trainingOf(staffId) · staffing.cancelTraining(staffId) · staffing.specialtiesOf(staffId)
 //   staffing.setDebug(on) · staffing.serialize() (writes the core systems' state into state.staffing)
+// Milestone 12: every §12 row carries its eligibility rule (data/staff.js RULES) and a channel only offers people whose
+// rule passes now (staffing.eligible(def) → { ok, reason }):
+//     rank() the home's Rank (Rank is Milestone 26: always E until then) · hasFacility(defId) a facility is built ·
+//     score(id) a §5 headline score (null until Milestone 26)
+//   Standard: always. Rare: Rank D (a role milestone stands in as Rank D until M26). Elite: their Rank + a specialist
+//   facility or an excellence score. Legendary / Secret: never — not on any board, in any channel, even with a debug
+//   unlock (the secret engine brings them, Milestones 29 / 30). ?debug=1: "Open every channel" also counts as the Rank;
+//   "Unlock Elite staff" (staffing.setEliteUnlock) counts as the Elite condition. staffing.eligibleNow(tiers?) → defs.
 // A card: { id, channel, personId, name, role, tier, level, stats, salary, trait, shiftPref, art }.
 import { RecruitmentSystem } from '../../../../core/RecruitmentSystem.js';
 import { TrainingSystem } from '../../../../core/TrainingSystem.js';
 import { Rng } from '../../../../core/Rng.js';
-import { STAFF, staffById } from '../../data/staff.js';
+import { STAFF, staffById, namedTrait } from '../../data/staff.js';
 import { ROLES, ROLE_IDS, STAT_IDS, TIERS } from '../../data/roles.js';
-import { CHANNELS, NEVER_TIERS, TIER_FALLBACK, RECRUIT, EMPLOYEE_CAP, RANK_NOW } from '../../data/recruitment.js';
+import { CHANNELS, NEVER_TIERS, TIER_FALLBACK, RECRUIT, EMPLOYEE_CAP, RANK_NOW, rankAtLeast } from '../../data/recruitment.js';
+import { facilityById } from '../../data/facilities.js';
 import { COURSES, courseById, SPECIALTIES, SPECIALTY_LIMIT } from '../../data/training.js';
 
 export function newStaffingState() {
-  return { recruit: null, nextFree: null, training: null, specialties: {}, departed: [], hires: [], debug: false };
+  return { recruit: null, nextFree: null, training: null, specialties: {}, departed: [], hires: [], debug: false, eliteUnlock: false };
 }
 export function ensureStaffingState(saved) {
   const s = { ...newStaffingState(), ...(saved ?? {}) };
@@ -34,9 +43,9 @@ export function ensureStaffingState(saved) {
   return s;
 }
 const toCoreCourse = (c) => ({ id: c.id, name: c.name, cost: c.cost, days: c.days, requires: null, effect: c.gains ? { kind: 'stats', stats: c.gains } : { kind: 'lowest', count: c.lowest.count, min: c.lowest.min, max: c.lowest.max } });
-const cardOf = (d) => ({ personId: d.id, name: d.name, role: d.role, tier: d.tier, level: d.level, stats: { ...d.stats }, salary: d.salary, trait: d.traits[0], shiftPref: d.shiftPref, art: d.art });
+const cardOf = (d) => ({ personId: d.id, name: d.name, role: d.role, tier: d.tier, level: d.level, stats: { ...d.stats }, salary: d.salary, trait: namedTrait(d), traits: [...d.traits], shiftPref: d.shiftPref, art: d.art });
 
-export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = null, today = () => 0, year = () => 1, teamSize = () => sys.staff.length, trainingPlaces = () => 0 }) {
+export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = null, today = () => 0, year = () => 1, teamSize = () => sys.staff.length, trainingPlaces = () => 0, rank = () => RANK_NOW, hasFacility = () => false, score = () => null }) {
   state.staffing = ensureStaffingState(state.staffing);
   const st = state.staffing;
 
@@ -44,13 +53,41 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
   const employed = () => new Set(sys.staff.map((m) => m.id));
   const never = () => new Set(state.noCandidates ?? []); // the Founder (bible §3.5.4) — never offered, ever
   let building = [];
-  // Who may be on a card of this tier: a §12 row of that tier, not employed, never the Founder, not already on the board.
+  // --- eligibility (Milestone 12) --------------------------------------------------------------------------------------
+  const rankOk = (r) => rankAtLeast(rank(), r) || !!st.debug;
+  // Does this §12 row's rule pass now? { ok, reason } (the reason in plain words when it doesn't).
+  function eligible(d) {
+    const r = d.rule ?? { type: d.eligibility };
+    if (NEVER_TIERS.includes(d.tier) || r.type === 'secret') return { ok: false, reason: 'Arrives by itself when the home earns it' };
+    switch (r.type) {
+      case 'start':
+      case 'candidate':
+        return { ok: true, reason: null };
+      case 'rank':
+      case 'milestone':
+        return rankOk(r.rank) ? { ok: true, reason: null } : { ok: false, reason: `Needs Rank ${r.rank}` };
+      case 'facility':
+        if (st.eliteUnlock) return { ok: true, reason: null };
+        if (!rankOk(r.rank)) return { ok: false, reason: `Needs Rank ${r.rank}` };
+        return hasFacility(r.facility) ? { ok: true, reason: null } : { ok: false, reason: `Needs a ${facilityById(r.facility)?.name ?? r.facility}` };
+      case 'excellence': {
+        if (st.eliteUnlock) return { ok: true, reason: null };
+        if (!rankOk(r.rank)) return { ok: false, reason: `Needs Rank ${r.rank}` };
+        const v = score(r.score);
+        return v != null && v >= r.min ? { ok: true, reason: null } : { ok: false, reason: `Needs ${r.text.replace(/^Rank \w \+ /, '')}` };
+      }
+      default:
+        return { ok: false, reason: 'Unknown rule' };
+    }
+  }
+  // Who may be on a card of this tier: a §12 row of that tier whose rule passes, not employed, never the Founder, not
+  // already on the board. Legendary / Secret: nobody, ever.
   function poolFor(tier) {
     if (NEVER_TIERS.includes(tier)) return [];
     const emp = employed();
     const no = never();
     const onBoard = new Set([...rs.cards, ...building].map((c) => c.personId));
-    return STAFF.filter((d) => d.tier === tier && !emp.has(d.id) && !no.has(d.id) && !onBoard.has(d.id));
+    return STAFF.filter((d) => d.tier === tier && !NEVER_TIERS.includes(d.tier) && !emp.has(d.id) && !no.has(d.id) && !onBoard.has(d.id) && eligible(d).ok);
   }
   const rs = new RecruitmentSystem({
     rng: new Rng(`${seed}:recruit`),
@@ -149,6 +186,34 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
     },
     setDebug(on) {
       st.debug = !!on;
+    },
+    // Milestone 12: eligibility. ?debug=1 "Unlock Elite staff" counts as every Elite condition passing.
+    eligible,
+    get eliteUnlock() {
+      return !!st.eliteUnlock;
+    },
+    setEliteUnlock(on) {
+      st.eliteUnlock = !!on;
+    },
+    // Everyone a board could offer now from the channels that are open, best tier first (never Legendary / Secret):
+    // the ?debug=1 "Fill roster" button hires from this.
+    eligibleNow() {
+      const tiers = new Set(CHANNELS.filter((c) => channelState(c).ok).flatMap((c) => Object.keys(c.weights)));
+      const emp = employed();
+      const no = never();
+      const order = ['elite', 'rare', 'standard'];
+      return STAFF.filter((d) => tiers.has(d.tier) && !NEVER_TIERS.includes(d.tier) && !emp.has(d.id) && !no.has(d.id) && eligible(d).ok).sort((a, b) => order.indexOf(a.tier) - order.indexOf(b.tier));
+    },
+    // Hire straight from the pool (debug "Fill roster" only: the same rules as a card, without a board).
+    takeDirect(defId) {
+      const d = staffById(defId);
+      if (!d || !eligible(d).ok) return { ok: false, reason: 'Not eligible', card: null };
+      if (teamSize() >= cap()) return { ok: false, reason: `The team is at its cap (${cap()} at Rank ${RANK_NOW})`, card: null };
+      if (employed().has(d.id) || never().has(d.id)) return { ok: false, reason: 'Not available', card: null };
+      rs.board = rs.board.filter((c) => c.personId !== d.id);
+      st.hires.push({ id: d.id, day: today(), channel: 'debug' });
+      if (st.hires.length > 40) st.hires.shift();
+      return { ok: true, reason: null, card: { ...cardOf(d), channel: 'debug' }, def: d };
     },
     channels: () => CHANNELS.map((c) => ({ channel: c, ...channelState(c) })),
     // A paid refresh from a channel (Credits through the ledger). The free one comes by itself every 56 days.

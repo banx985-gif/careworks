@@ -1,32 +1,73 @@
-// Staff (bible §12). Milestone 3: the ten Standard rows (RN01/02, CW01/02, LC01/02, AH01/02, HN01/02); Milestone 11
-// adds the twenty Rare rows (xx03–xx06, tier 'rare') for recruitment; the Elite, Legendary and Secret rows arrive in
-// Milestone 12. Plain data only; validateStaff() runs the list through
-// core/DataValidator (staffRoster). Stats are CLN / PER / MOB / SOC / NUT; salary is Credits a month (stored only —
-// nothing is paid until the economy, Milestone 22).
-//   eligibility: 'start' (Start staff) · 'candidate' (Start candidate) · 'rank' (Rank D, the §12 column) ·
-//   'milestone' (Role milestone) — for now every Rare row comes through the recruitment channels that offer Rare
-//   (data/recruitment.js); the rank / milestone gates are Milestone 26's
-//   shiftPref (Milestone 7, bible §11): the shift they prefer — 'morning' · 'afternoon' · 'night' (Night costs Morale unless
-//   it is their preference; working the preferred shift lifts it a little: data/shifts.js SHIFT_MORALE)
-//   trait: an id in TRAITS
+// Staff (bible §12): all 50. Milestone 3: the ten Standard rows (RN01/02, CW01/02, LC01/02, AH01/02, HN01/02);
+// Milestone 11: the twenty Rare rows (xx03–xx06); Milestone 12: the Elite (xx07–08), Legendary (xx09) and Secret (xx10)
+// rows, every trait as data and the eligibility column as rules. Plain data only; validateStaff() runs the list through
+// core/DataValidator (staffRoster: tier caps, trait slots, one signature for Legendary / Secret). Stats are
+// CLN / PER / MOB / SOC / NUT; salary is Credits a month.
+//   eligibility: the §12 column's kind — 'start' (Start staff) · 'candidate' (Start candidate) · 'rank' (Rank D) ·
+//     'milestone' (Role milestone) · 'facility' (Rank B + specialist facility) · 'excellence' (Rank A + excellence
+//     condition) · 'secret' (Secret SEC-STAFF-…)
+//   rule: that column as data (RULES below; src/systems/staffing.js reads it). A recruitment channel only offers people
+//     whose rule passes. Legendary / Secret rules never pass on a board: they arrive through the secret engine
+//     (Milestones 29 / 30), never force-spawned.
+//   shiftPref (Milestone 7, bible §11): the shift they prefer — 'morning' · 'afternoon' · 'night'
+//   traits: ids in TRAITS. Legendary / Secret staff also carry their signature trait (the §12 trait column) after one
+//     (Legendary) or two (Secret) ordinary ones from their role's Elite traits, so their tier's trait slots are used.
 import { ROLES, STAT_IDS, TIERS } from './roles.js';
 
 const stats = (s) => Object.fromEntries(s.split('/').map((v, i) => [STAT_IDS[i], Number(v)]));
-const row = (id, name, role, level, s, salary, trait, eligibility, shiftPref, tier = 'standard') => ({ id, name, role, tier, level, stats: stats(s), salary, traits: [trait], eligibility, shiftPref, art: `staff_${id.toLowerCase()}` });
-const rare = (id, name, role, level, s, salary, trait, eligibility, shiftPref) => row(id, name, role, level, s, salary, trait, eligibility, shiftPref, 'rare');
+
+// --- eligibility rules (bible §12 column) ---------------------------------------------------------------------------
+// type: start / candidate (always), rank (the home's Rank), milestone (a role milestone: its system is Milestone 26's;
+// until then it stands in as Rank D, the tier's own gate), facility (Rank + a built specialist facility), excellence
+// (Rank + a headline quality score: the scores are Milestone 26's, so it can't pass yet), secret (never on a board).
+// ?debug=1 "Unlock Elite staff" counts as passing facility / excellence; nothing unlocks secret.
+export const RULES = {
+  start: () => ({ type: 'start', text: 'Start staff' }),
+  candidate: () => ({ type: 'candidate', text: 'Start candidate' }),
+  rank: (rank) => ({ type: 'rank', rank, text: `Rank ${rank}` }),
+  milestone: (role) => ({ type: 'milestone', role, rank: 'D', pendingSystem: 'M26', text: `A ${ROLES[role].short.toLowerCase()} role milestone (Rank D until Milestone 26)` }),
+  facility: (rank, facility, name) => ({ type: 'facility', rank, facility, text: `Rank ${rank} + a ${name}` }),
+  excellence: (rank, score, min, name) => ({ type: 'excellence', rank, score, min, pendingSystem: 'M26', text: `Rank ${rank} + ${name} ${min}+` }),
+  secret: (secret) => ({ type: 'secret', secret, text: 'Arrives by itself when the home earns it' }),
+};
+export const RULE_TYPES = ['start', 'candidate', 'rank', 'milestone', 'facility', 'excellence', 'secret'];
+
+const row = (id, name, role, tier, level, s, salary, traits, rule, shiftPref) => ({ id, name, role, tier, level, stats: stats(s), salary, traits: Array.isArray(traits) ? traits : [traits], eligibility: rule.type, rule, shiftPref, art: `staff_${id.toLowerCase()}` });
+const std = (id, name, role, level, s, salary, trait, elig, shiftPref) => row(id, name, role, 'standard', level, s, salary, trait, RULES[elig](), shiftPref);
+const rare = (id, name, role, level, s, salary, trait, elig, shiftPref) => row(id, name, role, 'rare', level, s, salary, trait, elig === 'rank' ? RULES.rank('D') : RULES.milestone(role), shiftPref);
+const elite = (id, name, role, level, s, salary, trait, rule, shiftPref) => row(id, name, role, 'elite', level, s, salary, trait, rule, shiftPref);
+
+// The Elite rows' conditions (the §12 column names the kind; which facility / score is Claude Code's call, logged in
+// docs/DECISIONS.md). Facilities are data/facilities.js ids; scores are the five §5 headline scores.
+const FAC = {
+  RN: RULES.facility('B', 'F23', 'Clinical Treatment Room'),
+  CW: RULES.facility('B', 'F12', 'Hair & Grooming Salon'),
+  LC: RULES.facility('B', 'F25', 'Community Day Room'),
+  AH: RULES.facility('B', 'F18', 'Rehabilitation Gym'),
+  HN: RULES.facility('B', 'F16', 'Commercial Kitchen'),
+};
+const EXC = {
+  RN: RULES.excellence('A', 'clinicalSafety', 90, 'Clinical Safety'),
+  CW: RULES.excellence('A', 'residentWellbeing', 90, 'Resident Wellbeing'),
+  LC: RULES.excellence('A', 'familyTrust', 90, 'Family Trust'),
+  AH: RULES.excellence('A', 'clinicalSafety', 88, 'Clinical Safety'),
+  HN: RULES.excellence('A', 'residentWellbeing', 88, 'Resident Wellbeing'),
+};
+// The five headline quality scores (bible §5) an excellence rule may name.
+export const QUALITY_SCORES = { clinicalSafety: 'Clinical Safety', residentWellbeing: 'Resident Wellbeing', familyTrust: 'Family Trust', staffWellbeing: 'Staff Wellbeing', environment: 'Environment & Compliance' };
 
 export const STAFF = [
-  row('RN01', 'Maya Finch', 'RN', 1, '105/57/64/71/78', 520, 'calmRound', 'start', 'morning'),
-  row('RN02', 'Daniel Cross', 'RN', 2, '118/70/77/53/60', 560, 'carefulChart', 'candidate', 'night'),
-  row('CW01', 'Ruby Hale', 'CW', 1, '59/121/73/80/56', 520, 'gentleHands', 'start', 'morning'),
-  row('CW02', 'Arun Moss', 'CW', 2, '72/134/55/62/69', 560, 'morningPerson', 'candidate', 'morning'),
-  row('LC01', 'Zoe Quinn', 'LC', 1, '68/75/51/113/65', 520, 'conversationStarter', 'start', 'afternoon'),
-  row('LC02', 'Oscar Bell', 'LC', 2, '50/57/64/126/78', 560, 'creativeClub', 'candidate', 'afternoon'),
-  row('AH01', 'Nia Foster', 'AH', 1, '77/53/115/67/74', 520, 'steadySteps', 'start', 'morning'),
-  row('AH02', 'Hugo Pike', 'AH', 2, '59/66/128/80/56', 560, 'safeTransfers', 'candidate', 'afternoon'),
-  row('HN01', 'Sam Kitchen', 'HN', 1, '55/62/69/76/107', 520, 'warmWelcome', 'start', 'morning'),
-  row('HN02', 'Noor Price', 'HN', 2, '68/75/51/58/120', 560, 'hydrationEye', 'candidate', 'night'),
-  // Milestone 11: the Rare rows (bible §12)
+  std('RN01', 'Maya Finch', 'RN', 1, '105/57/64/71/78', 520, 'calmRound', 'start', 'morning'),
+  std('RN02', 'Daniel Cross', 'RN', 2, '118/70/77/53/60', 560, 'carefulChart', 'candidate', 'night'),
+  std('CW01', 'Ruby Hale', 'CW', 1, '59/121/73/80/56', 520, 'gentleHands', 'start', 'morning'),
+  std('CW02', 'Arun Moss', 'CW', 2, '72/134/55/62/69', 560, 'morningPerson', 'candidate', 'morning'),
+  std('LC01', 'Zoe Quinn', 'LC', 1, '68/75/51/113/65', 520, 'conversationStarter', 'start', 'afternoon'),
+  std('LC02', 'Oscar Bell', 'LC', 2, '50/57/64/126/78', 560, 'creativeClub', 'candidate', 'afternoon'),
+  std('AH01', 'Nia Foster', 'AH', 1, '77/53/115/67/74', 520, 'steadySteps', 'start', 'morning'),
+  std('AH02', 'Hugo Pike', 'AH', 2, '59/66/128/80/56', 560, 'safeTransfers', 'candidate', 'afternoon'),
+  std('HN01', 'Sam Kitchen', 'HN', 1, '55/62/69/76/107', 520, 'warmWelcome', 'start', 'morning'),
+  std('HN02', 'Noor Price', 'HN', 2, '68/75/51/58/120', 560, 'hydrationEye', 'candidate', 'night'),
+  // Milestone 11: the Rare rows
   rare('RN03', 'Priya Vale', 'RN', 4, '194/115/122/129/136', 1020, 'woundWise', 'rank', 'morning'),
   rare('RN04', 'Noah Mercer', 'RN', 6, '176/128/135/142/118', 1080, 'diabetesSupport', 'milestone', 'afternoon'),
   rare('RN05', 'Hana Reed', 'RN', 8, '189/141/117/124/131', 1140, 'familyCommunicator', 'milestone', 'afternoon'),
@@ -47,59 +88,171 @@ export const STAFF = [
   rare('HN04', 'Leo March', 'HN', 6, '126/133/140/116/178', 1080, 'textureExpert', 'milestone', 'afternoon'),
   rare('HN05', 'Zara Bloom', 'HN', 8, '139/115/122/129/191', 1140, 'dietMatch', 'milestone', 'morning'),
   rare('HN06', 'Dorian Cole', 'HN', 10, '121/128/135/142/173', 1200, 'diningHost', 'milestone', 'night'),
+  // Milestone 12: the Elite rows (Rank B + specialist facility; Rank A + excellence condition)
+  elite('RN07', 'Rafi Stone', 'RN', 14, '324/246/253/229/236', 2200, 'clinicalMentor', FAC.RN, 'morning'),
+  elite('RN08', 'Keira Bell', 'RN', 17, '337/228/235/242/249', 2280, 'complexCareLead', EXC.RN, 'afternoon'),
+  elite('CW07', 'Amaya Lane', 'CW', 14, '248/309/231/238/245', 2200, 'trustedCarer', FAC.CW, 'morning'),
+  elite('CW08', 'Finn West', 'CW', 17, '230/322/244/251/227', 2280, 'familiarFace', EXC.CW, 'afternoon'),
+  elite('LC07', 'Talia Song', 'LC', 14, '226/233/240/332/223', 2200, 'eventLeader', FAC.LC, 'afternoon'),
+  elite('LC08', 'Luca Wynn', 'LC', 17, '239/246/253/314/236', 2280, 'memoryMaker', EXC.LC, 'afternoon'),
+  elite('AH07', 'Ren Ito', 'AH', 14, '235/242/334/225/232', 2200, 'mobilityMentor', FAC.AH, 'morning'),
+  elite('AH08', 'Selene Cross', 'AH', 17, '248/224/316/238/245', 2280, 'reablementLead', EXC.AH, 'morning'),
+  elite('HN07', 'Eva Hearth', 'HN', 14, '244/251/227/234/326', 2200, 'kitchenMentor', FAC.HN, 'morning'),
+  elite('HN08', 'Cassian Reed', 'HN', 17, '226/233/240/247/308', 2280, 'nutritionLead', EXC.HN, 'afternoon'),
+  // Milestone 12: the Legendary (SEC-STAFF-L1–L5) and Secret / Prestige (SEC-STAFF-S1–S5) rows — condition-driven
+  // arrivals only (bible §12, §36): never on a board, never force-spawned
+  row('RN09', 'Dr. Celia Grace', 'RN', 'legendary', 21, '416/338/345/321/328', 4200, ['clinicalMentor', 'goldenStethoscope'], RULES.secret('SEC-STAFF-L1'), 'morning'),
+  row('RN10', 'Nora Nightingale', 'RN', 'secret', 24, '529/420/427/434/441', 5900, ['clinicalMentor', 'complexCareLead', 'nightGuardian'], RULES.secret('SEC-STAFF-S1'), 'night'),
+  row('CW09', 'Joy Mercer', 'CW', 'legendary', 21, '340/432/323/330/337', 4200, ['trustedCarer', 'heartOfTheHome'], RULES.secret('SEC-STAFF-L2'), 'morning'),
+  row('CW10', 'Otis Kind', 'CW', 'secret', 24, '422/514/436/443/450', 5900, ['trustedCarer', 'familiarFace', 'neverRushed'], RULES.secret('SEC-STAFF-S2'), 'night'),
+  row('LC09', 'Cass Melody', 'LC', 'legendary', 21, '349/325/332/424/346', 4200, ['eventLeader', 'joyBringer'], RULES.secret('SEC-STAFF-L3'), 'afternoon'),
+  row('LC10', 'Sunny Day', 'LC', 'secret', 24, '431/438/445/506/428', 5900, ['eventLeader', 'memoryMaker', 'goldenAfternoon'], RULES.secret('SEC-STAFF-S3'), 'afternoon'),
+  row('AH09', 'Aurelia Step', 'AH', 'legendary', 21, '327/334/426/348/324', 4200, ['mobilityMentor', 'goldenStride'], RULES.secret('SEC-STAFF-L4'), 'morning'),
+  row('AH10', 'Kestrel Move', 'AH', 'secret', 24, '440/447/508/430/437', 5900, ['mobilityMentor', 'reablementLead', 'perfectPath'], RULES.secret('SEC-STAFF-S4'), 'afternoon'),
+  row('HN09', 'Mira Harvest', 'HN', 'legendary', 21, '336/343/350/326/418', 4200, ['kitchenMentor', 'goldenTable'], RULES.secret('SEC-STAFF-L5'), 'morning'),
+  row('HN10', 'Sage Spoon', 'HN', 'secret', 24, '449/425/432/439/531', 5900, ['kitchenMentor', 'nutritionLead', 'homeFeast'], RULES.secret('SEC-STAFF-S5'), 'afternoon'),
 ];
 export const staffById = (id) => STAFF.find((s) => s.id === id) ?? null;
+// The trait the §12 table names for this person (a Legendary / Secret person's signature, else their first).
+export const namedTrait = (def) => def.traits.find((t) => TRAITS[t]?.signature) ?? def.traits[0];
 
-// Traits (bible §12 names them; the effects are placeholders — one line each, stored and shown, not applied until the
-// systems they touch exist). effects: numbers for later, in the StaffSystem trait format.
+// --- traits ----------------------------------------------------------------------------------------------------------
+// Every trait §12 names: name, one plain line, and either
+//   live: [effect]   small effects on hooks the game already has (src/systems/traitEffects.js reads them):
+//     { kind: 'task', types: [task type], pct }   tasks of these types ease the resident's needs pct% more when they help
+//     { kind: 'match', types: [task type] }       a specialty-like tip in the task AI on these task types (SPECIALTY_SCORE)
+//     { kind: 'energy', pct, shift? }             Energy used on shift changes by pct% (only on that shift, if given)
+//     { kind: 'morale', perHour }                 Morale drifts up this much an hour while they work
+//     { kind: 'familiar', pct }                   Familiar Care builds pct% faster with them
+//     { kind: 'shift', pct }                      their preferred shift lifts Morale pct% more
+//   or pendingSystem: 'Mnn'  the effect needs a system built in that milestone: stored and shown, a no-op until then
+//     (effects keeps its placeholder numbers for that milestone).
+// signature (Legendary / Secret): { hook, params } in the core/StaffSystem signature format; every signature is
+// pending (no hook is registered, so it does nothing) until its milestone switches it on.
+const live = (name, text, ...fx) => ({ name, text, live: fx });
+const later = (name, text, pendingSystem, effects = {}) => ({ name, text, pendingSystem, effects });
+const sig = (name, text, pendingSystem, hook, params) => ({ name, text, pendingSystem, signature: { hook, params } });
+const task = (types, pct) => ({ kind: 'task', types, pct });
+const match = (types) => ({ kind: 'match', types });
+
 export const TRAITS = {
-  calmRound: { name: 'Calm Round', text: 'Medication rounds run a little steadier', effects: { medRoundDelayPct: -5 } },
-  carefulChart: { name: 'Careful Chart', text: 'Care notes and reviews are more thorough', effects: { reviewQualityPct: 5 } },
-  gentleHands: { name: 'Gentle Hands', text: 'Personal care is a little more comfortable', effects: { comfortGainPct: 5 } },
-  morningPerson: { name: 'Morning Person', text: 'Tires more slowly on the Morning shift', effects: { morningEnergyLossPct: -10 } },
-  conversationStarter: { name: 'Conversation Starter', text: 'Activities lift Social Connection a little more', effects: { connectionGainPct: 5 } },
-  creativeClub: { name: 'Creative Club', text: 'Craft and music activities go further', effects: { creativeActivityPct: 8 } },
-  steadySteps: { name: 'Steady Steps', text: 'Walking support is a little safer', effects: { fallRiskPct: -5 } },
-  safeTransfers: { name: 'Safe Transfers', text: 'Moving and lifting help is safer', effects: { transferRiskPct: -8 } },
-  warmWelcome: { name: 'Warm Welcome', text: 'Meals feel more welcoming', effects: { mealMoodPct: 5 } },
-  hydrationEye: { name: 'Hydration Eye', text: 'Spots when a resident needs a drink', effects: { hydrationPct: 8 } },
-  // Milestone 11: the Rare staff's traits (placeholders like the Standard ones: stored and shown, applied later)
-  woundWise: { name: 'Wound Wise', text: 'Skin and wound checks are more thorough', effects: { skinCarePct: 8 } },
-  diabetesSupport: { name: 'Diabetes Support', text: 'Keeps a closer eye on blood sugar and meals', effects: { mealClinicalPct: 8 } },
-  familyCommunicator: { name: 'Family Communicator', text: 'Families feel better informed', effects: { familyTrustPct: 6 } },
-  medicationFocus: { name: 'Medication Focus', text: 'Medicine rounds are steadier', effects: { medRoundDelayPct: -8 } },
-  dignityFirst: { name: 'Dignity First', text: 'Personal care keeps dignity and choice', effects: { comfortGainPct: 8 } },
-  fastResponse: { name: 'Fast Response', text: 'Answers call bells a little faster', effects: { bellResponsePct: -10 } },
-  memoryFriendly: { name: 'Memory Friendly', text: 'Calmer support for residents with memory needs', effects: { memoryCarePct: 8 } },
-  companion: { name: 'Companion', text: 'One-to-one time lifts Mood a little more', effects: { oneToOneMoodPct: 8 } },
-  gardenLover: { name: 'Garden Lover', text: 'Outdoor and garden activities go further', effects: { gardenActivityPct: 10 } },
-  musicMaker: { name: 'Music Maker', text: 'Music activities lift Social Connection more', effects: { musicActivityPct: 10 } },
-  communityLink: { name: 'Community Link', text: 'Brings visitors and volunteers in', effects: { communityEventPct: 8 } },
-  quietConnector: { name: 'Quiet Connector', text: 'Reaches the residents who keep to themselves', effects: { quietResidentPct: 8 } },
-  balanceCoach: { name: 'Balance Coach', text: 'Walking practice builds confidence', effects: { mobilityGainPct: 8 } },
-  rehabPlanner: { name: 'Rehab Planner', text: 'Rehabilitation plans work a little faster', effects: { rehabSpeedPct: 8 } },
-  fallsWatch: { name: 'Falls Watch', text: 'Spots a fall risk early', effects: { fallRiskPct: -10 } },
-  independenceFirst: { name: 'Independence First', text: 'Helps residents do more for themselves', effects: { independenceGainPct: 8 } },
-  comfortFood: { name: 'Comfort Food', text: 'Favourite meals lift Mood', effects: { mealMoodPct: 8 } },
-  textureExpert: { name: 'Texture Expert', text: 'Texture-modified meals are safer and nicer', effects: { textureMealPct: 10 } },
-  dietMatch: { name: 'Diet Match', text: 'Special diets are matched with care', effects: { dietPlanPct: 8 } },
-  diningHost: { name: 'Dining Host', text: 'Mealtimes are more sociable', effects: { diningConnectionPct: 8 } },
+  // Standard (Milestone 3 lines)
+  calmRound: live('Calm Round', 'Medicine rounds go a little further', task(['meds'], 5)),
+  carefulChart: live('Careful Chart', 'Health checks are a little more thorough', task(['observation'], 5)),
+  gentleHands: live('Gentle Hands', 'Personal care is a little more comfortable', task(['personal'], 5)),
+  morningPerson: live('Morning Person', 'Tires more slowly on the Morning shift', { kind: 'energy', pct: -10, shift: 'morning' }),
+  conversationStarter: live('Conversation Starter', 'Activities go a little further', task(['activity'], 5)),
+  creativeClub: live('Creative Club', 'Group activities go further', task(['activity'], 8)),
+  steadySteps: live('Steady Steps', 'Walking support goes a little further', task(['mobility'], 5)),
+  safeTransfers: live('Safe Transfers', 'Keen to help with moving and walking', match(['mobility', 'wake'])),
+  warmWelcome: live('Warm Welcome', 'Meals feel more welcoming', task(['meal'], 5)),
+  hydrationEye: live('Hydration Eye', 'Spots when a resident needs a drink', task(['hydration'], 8), match(['hydration'])),
+  // Rare (Milestone 11 lines)
+  woundWise: live('Wound Wise', 'Skin and health checks are more thorough', task(['observation'], 8)),
+  diabetesSupport: later('Diabetes Support', 'Keeps a closer eye on blood sugar and meals', 'M18', { mealClinicalPct: 8 }),
+  familyCommunicator: later('Family Communicator', 'Families feel better informed', 'M19', { familyTrustPct: 6 }),
+  medicationFocus: live('Medication Focus', 'Medicine rounds go further', task(['meds'], 8)),
+  dignityFirst: live('Dignity First', 'Personal care keeps dignity and choice', task(['personal'], 8)),
+  fastResponse: later('Fast Response', 'Answers call bells a little faster', 'M25', { bellResponsePct: -10 }),
+  memoryFriendly: later('Memory Friendly', 'Calmer support for residents with memory needs', 'M17', { memoryCarePct: 8 }),
+  companion: live('Companion', 'One-to-one time goes further', task(['visit'], 8)),
+  gardenLover: later('Garden Lover', 'Outdoor and garden activities go further', 'M14', { gardenActivityPct: 10 }),
+  musicMaker: later('Music Maker', 'Music activities lift Social Connection more', 'M14', { musicActivityPct: 10 }),
+  communityLink: later('Community Link', 'Brings visitors and volunteers in', 'M14', { communityEventPct: 8 }),
+  quietConnector: live('Quiet Connector', 'Reaches the residents who keep to themselves', match(['visit'])),
+  balanceCoach: live('Balance Coach', 'Walking practice builds confidence', task(['mobility'], 8)),
+  rehabPlanner: later('Rehab Planner', 'Rehabilitation plans work a little faster', 'M16', { rehabSpeedPct: 8 }),
+  fallsWatch: live('Falls Watch', 'Spots a fall risk early: keen on room checks and walks', match(['roomCheck', 'mobility'])),
+  independenceFirst: later('Independence First', 'Helps residents do more for themselves', 'M16', { independenceGainPct: 8 }),
+  comfortFood: live('Comfort Food', 'Meals go further', task(['meal'], 8)),
+  textureExpert: later('Texture Expert', 'Texture-modified meals are safer and nicer', 'M15', { textureMealPct: 10 }),
+  dietMatch: later('Diet Match', 'Special diets are matched with care', 'M15', { dietPlanPct: 8 }),
+  diningHost: later('Dining Host', 'Mealtimes are more sociable', 'M15', { diningConnectionPct: 8 }),
+  // Elite (Milestone 12)
+  clinicalMentor: live('Clinical Mentor', 'A steady hand: rounds and checks go further, and Morale holds up', task(['meds', 'observation'], 10), { kind: 'morale', perHour: 0.2 }),
+  complexCareLead: later('Complex Care Lead', 'Leads care for residents with complex clinical needs', 'M18', { complexCarePct: 12 }),
+  trustedCarer: live('Trusted Carer', 'Wake-ups, personal care and settling go further', task(['wake', 'personal', 'settle'], 10)),
+  familiarFace: live('Familiar Face', 'Residents get to know them twice as fast', { kind: 'familiar', pct: 100 }),
+  eventLeader: live('Event Leader', 'Leads activities: they go further and they seek them out', task(['activity'], 12), match(['activity'])),
+  memoryMaker: later('Memory Maker', 'Life-story and memory sessions go further', 'M17', { memorySessionPct: 12 }),
+  mobilityMentor: live('Mobility Mentor', 'Mobility support goes much further', task(['mobility'], 12)),
+  reablementLead: later('Reablement Lead', 'Rehabilitation stays end sooner and better', 'M16', { rehabDischargePct: 12 }),
+  kitchenMentor: live('Kitchen Mentor', 'Meals and drinks go further', task(['meal', 'hydration'], 10)),
+  nutritionLead: later('Nutrition Lead', 'Diet plans and nutrition reviews go further', 'M15', { dietPlanPct: 12 }),
+  // Legendary signatures (SEC-STAFF-L1–L5)
+  goldenStethoscope: sig('Golden Stethoscope', 'Clinical care across the home is safer while she is on shift', 'M18', 'goldenStethoscope', { clinicalSafetyPct: 10 }),
+  heartOfTheHome: sig('Heart of the Home', 'Familiar Care lifts Mood across the home', 'M13', 'heartOfTheHome', { familiarMoodPct: 15 }),
+  joyBringer: sig('Joy Bringer', 'Every activity she runs lifts the whole lounge', 'M14', 'joyBringer', { activityMoodPct: 15 }),
+  goldenStride: sig('Golden Stride', 'Rehabilitation residents go home stronger', 'M16', 'goldenStride', { rehabOutcomePct: 15 }),
+  goldenTable: sig('Golden Table', 'Every meal is a favourite meal', 'M15', 'goldenTable', { mealMoodPct: 15 }),
+  // Secret / Prestige signatures (SEC-STAFF-S1–S5)
+  nightGuardian: sig('Night Guardian', 'Nights are calm and safe while she is on shift', 'M25', 'nightGuardian', { nightIncidentPct: -50 }),
+  neverRushed: sig('Never Rushed', 'Care is never hurried: familiarity never fades', 'M13', 'neverRushed', { familiarDecayPct: -100 }),
+  goldenAfternoon: sig('Golden Afternoon', 'Afternoons become the best part of the day', 'M14', 'goldenAfternoon', { afternoonMoodPct: 20 }),
+  perfectPath: sig('Perfect Path', 'Every resident walks a little further', 'M16', 'perfectPath', { independencePct: 20 }),
+  homeFeast: sig('Home Feast', 'A monthly feast lifts the whole home', 'M15', 'homeFeast', { feastMood: 10 }),
 };
+export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift'];
 
-// Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator.
-export function validateStaff(v, list = STAFF) {
+// Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator; taskTypes = data/tasks.js
+// TASK_TYPES ids (optional: the trait task checks).
+export function validateStaff(v, list = STAFF, { taskTypes = null } = {}) {
   v.staffRoster('staff', list, { roles: ROLES, tiers: TIERS, traits: TRAITS, statKeys: STAT_IDS });
   for (const s of list) {
     const who = `staff ${s.id}`;
     v.check(/^(RN|CW|LC|AH|HN)\d{2}$/.test(s.id) && s.id.startsWith(s.role), `${who}: id must be <role>nn`);
+    v.check(Number.isInteger(s.level) && s.level >= 1, `${who}: level`);
     v.check(Number.isInteger(s.salary) && s.salary > 0, `${who}: salary`);
-    v.check(['start', 'candidate', 'rank', 'milestone'].includes(s.eligibility), `${who}: eligibility "${s.eligibility}"`);
-    v.check(s.tier === 'standard' ? ['start', 'candidate'].includes(s.eligibility) : s.tier === 'rare', `${who}: tier ${s.tier} with eligibility ${s.eligibility}`); // (Milestone 11: Standard + Rare only)
+    v.check(RULE_TYPES.includes(s.eligibility) && s.rule?.type === s.eligibility && !!s.rule.text, `${who}: eligibility "${s.eligibility}"`);
+    const tierRules = { standard: ['start', 'candidate'], rare: ['rank', 'milestone'], elite: ['facility', 'excellence'], legendary: ['secret'], secret: ['secret'] };
+    v.check(tierRules[s.tier]?.includes(s.eligibility), `${who}: tier ${s.tier} with eligibility ${s.eligibility}`);
+    if (s.rule?.rank) v.check(['E', 'D', 'C', 'B', 'A', 'S'].includes(s.rule.rank), `${who}: rule rank ${s.rule.rank}`);
+    if (s.eligibility === 'excellence') v.check(!!QUALITY_SCORES[s.rule.score] && s.rule.min > 0 && s.rule.min <= 100, `${who}: excellence score`);
+    if (s.eligibility === 'secret') v.check(/^SEC-STAFF-[LS][1-5]$/.test(s.rule.secret) && s.rule.secret[10] === (s.tier === 'legendary' ? 'L' : 'S'), `${who}: secret id ${s.rule.secret}`);
     v.check(s.art === `staff_${s.id.toLowerCase()}`, `${who}: art key`);
     v.check(['morning', 'afternoon', 'night'].includes(s.shiftPref), `${who}: shift preference "${s.shiftPref}"`);
     // the role's primary stat is their best
     const best = STAT_IDS.reduce((a, k) => (s.stats[k] > s.stats[a] ? k : a), STAT_IDS[0]);
     v.check(best === ROLES[s.role]?.primaryStat, `${who}: primary stat is not their highest`);
   }
+  for (const [id, t] of Object.entries(TRAITS)) {
+    const who = `trait ${id}`;
+    v.check(!!t.name && !!t.text, `${who}: name and line`);
+    v.check(!!t.live !== !!t.pendingSystem, `${who}: live effects or pendingSystem (one of them)`);
+    if (t.pendingSystem) v.check(/^M\d+$/.test(t.pendingSystem) && Number(t.pendingSystem.slice(1)) > 12, `${who}: pendingSystem "${t.pendingSystem}"`);
+    if (t.signature) v.check(!!t.pendingSystem && !!t.signature.hook, `${who}: a signature is stored and pending`);
+    for (const fx of t.live ?? []) {
+      v.check(TRAIT_KINDS.includes(fx.kind), `${who}: effect kind "${fx.kind}"`);
+      if (fx.types && taskTypes) for (const ty of fx.types) v.check(taskTypes.includes(ty), `${who}: task type "${ty}"`);
+      if (fx.kind === 'task') v.check(fx.pct > 0 && fx.pct <= 15, `${who}: a small task bonus`);
+      if (fx.shift) v.check(['morning', 'afternoon', 'night'].includes(fx.shift), `${who}: shift "${fx.shift}"`);
+    }
+  }
+  // every trait is someone's (§12 names them all), and every §12 trait column is one of them
+  const used = new Set(list.flatMap((s) => s.traits));
+  for (const id of Object.keys(TRAITS)) v.check(used.has(id), `trait ${id}: nobody has it`);
   return v;
+}
+
+// Art mapping (Milestone 12): every staff id → its portrait file, every role → its badge file, and no two staff share
+// a portrait. The M7 agency workers reuse the Start candidates' portraits (staff_rn02 / staff_cw02) on purpose and are
+// tagged AGENCY, so they are left out of the "no two share" check. exists(relPath) → boolean (a file check in Node, an
+// AssetManager lookup in the browser). Returns { problems: [text], checked: { portraits, badges, agency } }.
+export function checkStaffArt(exists, { list = STAFF, agency = {} } = {}) {
+  const problems = [];
+  const path = (key) => `assets/images/staff/${key}.png`;
+  const seen = new Map();
+  for (const s of list) {
+    if (s.art !== `staff_${s.id.toLowerCase()}`) problems.push(`${s.id}: art key ${s.art}`);
+    if (!exists(path(s.art))) problems.push(`${s.id}: missing ${path(s.art)}`);
+    if (seen.has(s.art)) problems.push(`${s.id} shares ${s.art} with ${seen.get(s.art)}`);
+    seen.set(s.art, s.id);
+  }
+  for (const [id, r] of Object.entries(ROLES)) if (!exists(`assets/images/badges/${r.badge}.png`)) problems.push(`role ${id}: missing badge ${r.badge}`);
+  // agency workers: their art must exist and they must be tagged AGENCY (the shared portrait is allowed)
+  for (const [role, a] of Object.entries(agency)) {
+    if (!exists(path(a.art))) problems.push(`agency ${role}: missing ${path(a.art)}`);
+    if (a.tag !== 'AGENCY') problems.push(`agency ${role}: not tagged AGENCY`);
+  }
+  return { problems, checked: { portraits: list.length, badges: Object.keys(ROLES).length, agency: Object.keys(agency).length } };
 }

@@ -4,8 +4,9 @@
 // CHANNELS: where candidates come from. unlock = when the channel opens (Rank is Milestone 26, so the ranked ones show
 // locked with the reason — ?debug=1 opens them); cost = Credits for a paid refresh of the board from it;
 // weights = how likely each tier is on a card (the §13 pools: Local = Standard only; Agency = Standard + Rare;
-// Specialist / National = Rare + Elite). Elite rows arrive in Milestone 12: until then an Elite pick falls back to a
-// Rare person. Legendary / Secret staff never come through a channel (bible §12: condition-driven arrivals).
+// Specialist / National = Rare + Elite). Milestone 12: a card only goes to someone whose §12 eligibility rule passes
+// (data/staff.js RULES); an Elite pick with no eligible Elite falls back to a Rare person (TIER_FALLBACK). Legendary /
+// Secret staff never come through a channel (bible §12: condition-driven arrivals).
 export const CHANNELS = [
   { id: 'local', name: 'Local Applicants', text: 'People from the area: Standard staff', unlock: { type: 'start', text: 'Open from the start' }, cost: 150, weights: { standard: 1 } },
   { id: 'agency', name: 'Care Agency', text: 'An agency with more experienced carers: Standard and Rare', unlock: { type: 'rank', value: 'D', text: 'Locked — needs Rank D' }, cost: 400, weights: { standard: 3, rare: 1 } },
@@ -29,3 +30,6 @@ export const RECRUIT = {
 // The employee cap by Rank (bible §13). Rank is Milestone 26: every home is Rank E until then.
 export const EMPLOYEE_CAP = { E: 12, D: 18, C: 26, B: 36, A: 46, S: 56 };
 export const RANK_NOW = 'E';
+// Ranks from lowest to highest (Milestone 12: the eligibility rules compare them; the home's Rank is Milestone 26's).
+export const RANKS = ['E', 'D', 'C', 'B', 'A', 'S'];
+export const rankAtLeast = (have, need) => RANKS.indexOf(have) >= RANKS.indexOf(need);

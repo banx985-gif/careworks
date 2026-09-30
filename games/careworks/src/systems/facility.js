@@ -31,7 +31,7 @@ import { newStaffState } from './staffTeam.js';
 import { ensureRosterState } from './roster.js';
 import { ensureCoverageState } from './coverage.js';
 import { markReviewed } from './carePlanRules.js';
-import { newCareState } from './careTasks.js';
+import { newCareState, upgradeFamiliarity } from './careTasks.js';
 import { ensurePlan } from '../../data/carePlans.js';
 
 const freshResidents = () => [newResidentState(residentById(RESIDENT.id), { room: RESIDENT.room })];
@@ -208,6 +208,12 @@ export function upgradeV7(data) {
   });
   return { ...data, residents };
 }
+// Version 11 → 12 (Milestone 12): the Familiar Care pair counters become records (familiarity and tasks together =
+// the old count; first met / last together unknown). Staff and staffing need nothing: new fields default.
+export function upgradeV11(data) {
+  if (!data.care) return data;
+  return { ...data, care: upgradeFamiliarity({ ...data.care, relations: { ...(data.care.relations ?? {}) } }) };
+}
 export const SAVE_MIGRATIONS = {
   1: (record) => ({ ...record, data: upgradeV1(record.data) }),
   2: (record) => ({ ...record, data: upgradeV2(record.data) }),
@@ -219,6 +225,7 @@ export const SAVE_MIGRATIONS = {
   8: (record) => record, // (Milestone 9: nothing to move; new data only reaches new admissions)
   9: (record) => record, // (Milestone 10: no layout saved = the default layout, Stage 1 — exactly what it had)
   10: (record) => record, // (Milestone 11: no staffing saved = a fresh board; the bigger floor needs nothing)
+  11: (record) => ({ ...record, data: upgradeV11(record.data) }),
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

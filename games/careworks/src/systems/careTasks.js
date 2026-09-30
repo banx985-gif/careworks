@@ -3,8 +3,13 @@
 //
 // The run's care state (in the run save):
 //   { tasks: [task], nextId, gen: { 'day:band': true }, bells: { residentId: { log, count, totalMin, cooldownUntil } },
-//     familiarity: { 'RES01|CW01': n }, keyWorkers: { residentId: staffId }, counts: { done, missed, essentialMissed,
+//     relations: { 'RES01|CW01': record }, keyWorkers: { residentId: staffId }, counts: { done, missed, essentialMissed,
 //     refused, self, unstaffed } }
+// Familiar Care (Milestone 4 → Milestone 12): one record per resident–staff pair —
+//   { familiarity 0–100, tasks (done together), firstDay, lastDay (game days; null in a record upgraded from an M4–M11
+//     counter), history: [{ day, who: 'resident' | 'staff', event: 'left' | 'back' }] }
+//   A record is never removed: when either of them leaves, a 'left' entry is added, and a returning resident or a
+//   re-hired staff member resumes it ('back'). No Mood or continuity effects yet (Milestone 13).
 // A task:
 //   { id, type, name, resident, source: 'routine' | 'plan' | 'need' | 'bell', stepId?, optionId?, domain?, place:
 //     'step' | 'resident' | 'room', at (the hour it is for: his step's time, or the plan's), roles, minutes, urgency, essential, drops, outcomes, pref?, day, band, opens, due
@@ -21,7 +26,9 @@
 //   choosePairs(tasks, people, score) → [{ task, person }]   the best pair first, each person and task once
 //   changePlan(care, st, domain, optionId, ctx) → { from, to }   · closeDue(care, now) → closed tasks
 //   maybeRing(care, st, now) → bell task | null · recordResponse(care, residentId, rec) · bellSummary(care, residentId)
-//   addFamiliarity(care, residentId, staffId) · familiarityOf · mostFamiliar(care, residentId, staffIds)
+//   addFamiliarity(care, residentId, staffId, n?, day?) · familiarityOf · relationOf · mostFamiliar(care, residentId, staffIds)
+//   topFamiliar(care, { residentId | staffId }, among, n) → [record] · noteLeft / noteBack(care, { residentId | staffId }, day)
+//   upgradeFamiliarity(care)   an M4–M11 counter map (care.familiarity) → records
 // Milestone 8: a plan option the resident refuses (st.optionPrefs) still makes its tasks, but each is refused the
 // moment it comes up (status 'refused', optionRefused: true — the home world logs it) and its routine-step changes
 // don't apply; no score, pin or shortage can take a refused task. A disliked option's tasks are said no to at the
@@ -40,21 +47,21 @@ export const isOpen = (t) => OPEN.includes(t.status);
 export const absHour = (day, hour) => day * 24 + hour;
 
 export function newCareState() {
-  return { tasks: [], nextId: 1, gen: {}, bells: {}, familiarity: {}, keyWorkers: {}, counts: { done: 0, missed: 0, essentialMissed: 0, refused: 0, self: 0, unstaffed: 0 } };
+  return { tasks: [], nextId: 1, gen: {}, bells: {}, relations: {}, keyWorkers: {}, counts: { done: 0, missed: 0, essentialMissed: 0, refused: 0, self: 0, unstaffed: 0 } };
 }
 export function ensureCareState(saved) {
   const fresh = newCareState();
   if (!saved || typeof saved !== 'object') return fresh;
-  return {
+  return upgradeFamiliarity({
     ...fresh,
     ...saved,
     tasks: Array.isArray(saved.tasks) ? saved.tasks : [],
     gen: { ...(saved.gen ?? {}) },
     bells: { ...(saved.bells ?? {}) },
-    familiarity: { ...(saved.familiarity ?? {}) },
+    relations: Object.fromEntries(Object.entries(saved.relations ?? {}).map(([k, r]) => [k, { ...r, history: [...(r.history ?? [])] }])),
     keyWorkers: { ...(saved.keyWorkers ?? {}) },
     counts: { ...fresh.counts, ...(saved.counts ?? {}) },
-  };
+  });
 }
 export { ensurePlan };
 
@@ -315,11 +322,52 @@ export function bellSummary(care, residentId) {
 
 // --- Familiar Care ----------------------------------------------------------------------------------------------------
 const famKey = (residentId, staffId) => `${residentId}|${staffId}`;
-export const familiarityOf = (care, residentId, staffId) => care.familiarity[famKey(residentId, staffId)] ?? 0;
-export function addFamiliarity(care, residentId, staffId, n = FAMILIARITY.perTask) {
+const HISTORY_KEEP = 12; // history entries kept per record
+const newRelation = (residentId, staffId, day = null) => ({ resident: residentId, staff: staffId, familiarity: 0, tasks: 0, firstDay: day, lastDay: day, history: [] });
+export const relationOf = (care, residentId, staffId) => care.relations[famKey(residentId, staffId)] ?? null;
+export const familiarityOf = (care, residentId, staffId) => relationOf(care, residentId, staffId)?.familiarity ?? 0;
+// A task done together: familiarity +n (capped), one more task, the day they last worked together (and first met).
+export function addFamiliarity(care, residentId, staffId, n = FAMILIARITY.perTask, day = null) {
   const k = famKey(residentId, staffId);
-  care.familiarity[k] = Math.min(FAMILIARITY.cap, (care.familiarity[k] ?? 0) + n);
-  return care.familiarity[k];
+  const r = (care.relations[k] ??= newRelation(residentId, staffId, day));
+  r.familiarity = Math.min(FAMILIARITY.cap, Math.round((r.familiarity + n) * 100) / 100);
+  r.tasks++;
+  if (day != null) {
+    r.firstDay ??= day;
+    r.lastDay = day;
+  }
+  return r.familiarity;
+}
+// The records of one resident (or one staff member), best first, among these ids of the other side (none: all).
+export function topFamiliar(care, { residentId = null, staffId = null }, among = null, n = 3) {
+  const keep = among && new Set(among);
+  return Object.values(care.relations)
+    .filter((r) => (residentId ? r.resident === residentId : r.staff === staffId) && r.familiarity > 0)
+    .filter((r) => !keep || keep.has(residentId ? r.staff : r.resident))
+    .sort((a, b) => b.familiarity - a.familiarity || b.tasks - a.tasks)
+    .slice(0, n);
+}
+// Someone left (a resident went home, a staff member was let go) or came back: a history entry on each of their records.
+function note(care, { residentId = null, staffId = null }, day, event) {
+  const who = residentId ? 'resident' : 'staff';
+  for (const r of Object.values(care.relations)) {
+    if (residentId ? r.resident !== residentId : r.staff !== staffId) continue;
+    r.history.push({ day, who, event });
+    if (r.history.length > HISTORY_KEEP) r.history.shift();
+  }
+}
+export const noteLeft = (care, who, day) => note(care, who, day, 'left');
+export const noteBack = (care, who, day) => note(care, who, day, 'back');
+// An M4–M11 save's counters ({ 'RES01|CW01': n }) become records: familiarity and tasks n, days unknown (null).
+export function upgradeFamiliarity(care) {
+  care.relations ??= {};
+  for (const [k, n] of Object.entries(care.familiarity ?? {})) {
+    if (care.relations[k] || !(n > 0)) continue;
+    const [residentId, staffId] = k.split('|');
+    care.relations[k] = { ...newRelation(residentId, staffId), familiarity: Math.min(FAMILIARITY.cap, n), tasks: n };
+  }
+  delete care.familiarity;
+  return care;
 }
 // The single most familiar of these staff (ties go to the first in team order); null while nobody has any.
 export function mostFamiliar(care, residentId, staffIds) {

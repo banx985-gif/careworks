@@ -21,6 +21,7 @@ import { staffById } from '../../data/staff.js';
 import { ROLES } from '../../data/roles.js';
 import { STAFF_BALANCE as B } from '../../data/balance.js';
 import { FOUNDER_FLAG } from '../../data/setup.js';
+import { energyPct, moralePerHour, shiftPct } from './traitEffects.js';
 
 const clamp = (x) => Math.max(0, Math.min(100, x));
 const PLACE_WORDS = { 'F01.staff': 'at the Nurse Station', 'F05.staff': 'in the Activity Lounge', 'hall.cwPost': 'in the corridor', 'hall.ahPost': 'in the corridor' };
@@ -104,7 +105,9 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
 
   function tickNumbers(p, hours) {
     const m = p.model;
-    if (onShift(p)) m.energy = clamp(m.energy + B.energy.workPerHour * hours);
+    const working = roster.workingShift(p.id);
+    // Milestone 12: traits change the Energy they use on shift ('energy', e.g. Morning Person on Morning)
+    if (onShift(p)) m.energy = clamp(m.energy + B.energy.workPerHour * (1 + energyPct(m.traits, working) / 100) * hours);
     else m.energy = clamp(m.energy + B.energy.restPerHour * hours * (p.mode === 'resting' ? B.energy.restSpotBonus : 1));
     if (m.energy < B.morale.lowEnergyBelow) m.morale = clamp(m.morale + B.morale.lowEnergyPerHour * hours);
     else {
@@ -113,10 +116,11 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       m.morale = clamp(m.morale + Math.sign(gap) * step);
     }
     // Milestone 7: Night costs Morale unless it is their preference; their preferred shift lifts it a little.
-    const working = roster.workingShift(p.id);
+    // Milestone 12: a 'shift' trait makes that lift bigger; a 'morale' trait lifts Morale while they work.
     const pref = staffById(p.id)?.shiftPref ?? null;
     if (working === 'night' && pref !== 'night') m.morale = clamp(m.morale + SHIFT_MORALE.nightPerHour * hours);
-    else if (working && working === pref) m.morale = clamp(m.morale + SHIFT_MORALE.preferredPerHour * hours);
+    else if (working && working === pref) m.morale = clamp(m.morale + SHIFT_MORALE.preferredPerHour * (1 + shiftPct(m.traits) / 100) * hours);
+    if (working) m.morale = clamp(m.morale + moralePerHour(m.traits) * hours);
     m.activity = working ? 'working' : 'resting';
     sys.refreshStatus(m);
   }

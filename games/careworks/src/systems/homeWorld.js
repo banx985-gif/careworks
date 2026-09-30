@@ -66,11 +66,11 @@ import { facilityById } from '../../data/facilities.js';
 import { residentById, NEEDS, supportLevel, RESIDENTS, STAY_LEAVE_HOUR } from '../../data/residents.js';
 import { Rng } from '../../../../core/Rng.js';
 import { DAY, ROUTINE } from '../../data/routine.js';
-import { BELL } from '../../data/tasks.js';
+import { BELL, FAMILIARITY } from '../../data/tasks.js';
 import { ECONOMY_START, STAFF_BALANCE, ON_CALL } from '../../data/balance.js';
 import { AGENCY } from '../../data/shifts.js';
 import { ensureResidentState, newResidentState, newStay, stayDaysLeft, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog } from './residentNeeds.js';
-import { ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar } from './careTasks.js';
+import { ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar, topFamiliar, noteLeft, noteBack } from './careTasks.js';
 import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkPct } from './staffTeam.js';
 import { createRoster } from './roster.js';
 import { createCoverage } from './coverage.js';
@@ -83,6 +83,8 @@ import { createLedger } from './ledger.js';
 import { createStaffing } from './staffing.js';
 import { SPECIALTIES, TRAINING } from '../../data/training.js';
 import { staffById } from '../../data/staff.js';
+import { RANK_NOW } from '../../data/recruitment.js';
+import { taskPct, matchesTask, familiarPct } from './traitEffects.js';
 import { FOUNDER_FLAG } from '../../data/setup.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
@@ -316,7 +318,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       keyWorker: assigned ? q.id : care.keyWorkers[t.resident] ?? null,
       mostFamiliar: mostFamiliar(care, t.resident, crew.people.map((x) => x.id)),
       doneThisBand: q.bandDone ?? 0,
-      specialty: (staffing?.specialtiesOf(q.id) ?? []).some((sp) => SPECIALTIES[sp]?.tasks.includes(t.type)), // (Milestone 11)
+      // Milestone 11: a specialty fits the task; Milestone 12: or a trait that seeks this kind of task ('match')
+      specialty: (staffing?.specialtiesOf(q.id) ?? []).some((sp) => SPECIALTIES[sp]?.tasks.includes(t.type)) || matchesTask(q.model.traits, t.type),
     });
   }
   function claim(t, q) {
@@ -345,16 +348,20 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     bus?.emit('care:task', { id: t.id, type: t.type, status, resident: t.resident });
   }
   const helperName = (id) => first(crew.byId(id)?.name ?? id);
+  // How much of a need their help eases: the Founder's "+6% contribution" (Milestone 3) × their traits' bonus on this
+  // task type (Milestone 12, src/systems/traitEffects.js).
+  const traitsOf = (id) => crew.byId(id)?.model.traits ?? [];
+  const helpMult = (helper, need, type) => contribMult(perks, helper, need) * (1 + taskPct(traitsOf(helper), type) / 100);
   function applyEffects(p, t, helper) {
     const st = p.state;
-    for (const [need, v] of Object.entries(t.drops ?? {})) st.needs[need] = clamp(st.needs[need] - v * contribMult(perks, helper, need));
+    for (const [need, v] of Object.entries(t.drops ?? {})) st.needs[need] = clamp(st.needs[need] - v * helpMult(helper, need, t.type));
     for (const [o, v] of Object.entries(t.outcomes ?? {})) st.outcomes[o] = clamp(st.outcomes[o] + v);
   }
   function completeTask(t, q) {
     const helper = q.id;
     const p = byResident(t.resident);
     if (p) {
-      if (t.source === 'routine') completeRoutine(p, { ...routineStep(t.stepId), drops: t.drops }, t.day, helper);
+      if (t.source === 'routine') completeRoutine(p, { ...routineStep(t.stepId), drops: t.drops, taskType: t.type }, t.day, helper);
       else {
         applyEffects(p, t, helper);
         if (t.type === 'bell') bellState(care, t.resident).cooldownUntil = absNow() + BELL.cooldownHours;
@@ -364,7 +371,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     assignSys.unassign(t, helper);
     closeTask(care, t, 'done');
     t.slots = [helper];
-    if (!q.agency) addFamiliarity(care, t.resident, helper); // agency workers build no Familiar Care (bible §14)
+    // agency workers build no Familiar Care (bible §14); Milestone 12: a 'familiar' trait builds it faster
+    if (!q.agency) addFamiliarity(care, t.resident, helper, FAMILIARITY.perTask * (1 + familiarPct(q.model.traits) / 100), clock.totalDays);
     crew.finishTask(helper);
     bus?.emit('care:task', { id: t.id, type: t.type, status: 'done', staff: helper, resident: t.resident });
   }
@@ -376,7 +384,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function completeRoutine(p, step, day, helper, note = null) {
     const st = p.state;
     const dropped = completeStep(st, step, day, now(), {
-      needMult: helper ? (need) => contribMult(perks, helper, need) : null,
+      needMult: helper ? (need) => helpMult(helper, need, step.taskType) : null,
       activityMult: 1 + perkPct(perks, helper, 'activityWellbeingPct') / 100,
       mealMult: 1 + perkPct(perks, helper, 'mealSatisfactionPct') / 100,
       note: helper ? `with ${helperName(helper)}` : note,
@@ -586,6 +594,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (room?.residentId === p.id) room.residentId = null;
     st.leftDay = clock.totalDays;
     admissions.wentHome({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: st.admittedDay ?? 0, leftDay: clock.totalDays, stay: st.stay?.type ?? p.def.stay });
+    noteLeft(care, { residentId: p.id }, clock.totalDays); // (Milestone 12: their Familiar Care records stay, marked)
     addLog(st, logDay(), now(), 'Heading home: the stay is over');
     bus?.emit('care:leaving', { resident: p.id, name: p.name, stay: st.stay?.type ?? p.def.stay });
     walkOut(p);
@@ -612,7 +621,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const admissions = createAdmissions({ saved: admissionsSaved, seed });
   const ledger = createLedger({ saved: ledgerSaved, bus, now: () => clock.totalDays, startCredits });
   // --- recruitment and training (Milestone 11) -------------------------------------------------------------------------
-  staffing = createStaffing({ state: staffState, sys, ledger, seed, bus, today: () => clock.totalDays, year: () => clock.year, teamSize: () => crew.people.filter((q) => !q.agency && !q.leftTeam).length, trainingPlaces: () => layout.ofDef('F11').length * TRAINING.placesPerRoom });
+  // The home's Rank for the eligibility rules (Milestone 12). Rank is Milestone 26's: always E until then; the Node
+  // tests set it with world.setRankForTests.
+  let rankNow = RANK_NOW;
+  staffing = createStaffing({ state: staffState, sys, ledger, seed, bus, today: () => clock.totalDays, year: () => clock.year, teamSize: () => crew.people.filter((q) => !q.agency && !q.leftTeam).length, trainingPlaces: () => layout.ofDef('F11').length * TRAINING.placesPerRoom, rank: () => rankNow, hasFacility: (defId) => layout.ofDef(defId).length > 0 });
   staffing.onTrained((s, c, gains, specialty) => {
     roster.setTraining(s.id, false);
     bus?.emit('staff:trained', { id: s.id, name: s.name, course: c.name, gains, specialty });
@@ -738,6 +750,19 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     bus,
   });
 
+  // A hire joins Off shift and walks in from the front entrance (Milestone 11).
+  function joinTeam(def) {
+    const model = StaffModel.fromDefinition({ ...def, startLevel: def.level }, { startEnergy: STAFF_BALANCE.startEnergy, startMorale: STAFF_BALANCE.startMorale });
+    model.counters = { tasks: 0 };
+    sys.add(model);
+    roster.join(model.id);
+    if (staffing.state.departed.some((d) => d.id === model.id)) noteBack(care, { staffId: model.id }, clock.totalDays); // (re-hired: Milestone 12)
+    const q = crew.addPerson(model);
+    world.people.push(q);
+    bus?.emit('staff:hired', { id: model.id, name: model.name, role: model.role });
+    return q;
+  }
+
   let lastDay = clock.totalDays;
   const world = {
     grid,
@@ -755,15 +780,34 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     hire(cardId) {
       const r = staffing.take(cardId);
       if (!r.ok) return r;
-      const def = r.def;
-      const model = StaffModel.fromDefinition({ ...def, startLevel: def.level }, { startEnergy: STAFF_BALANCE.startEnergy, startMorale: STAFF_BALANCE.startMorale });
-      model.counters = { tasks: 0 };
-      sys.add(model);
-      roster.join(model.id);
-      const q = crew.addPerson(model);
-      world.people.push(q);
-      bus?.emit('staff:hired', { id: model.id, name: model.name, role: model.role });
-      return { ok: true, reason: null, person: q };
+      return { ok: true, reason: null, person: joinTeam(r.def) };
+    },
+    // ?debug=1 "Fill roster" (Milestone 12): hire eligible staff from the open channels up to the cap (best tier first,
+    // spread over the roles: Care Workers count double, since wake-ups, meals and personal care are mostly theirs), so a
+    // full roster can be tried at once. Each goes where their role is thinnest: Night if they prefer it and nobody works
+    // Night yet, else whichever of Morning / Afternoon has fewer of their role (Morning, the busiest, on a tie).
+    // → [hired ids]
+    fillRoster() {
+      const hired = [];
+      for (let guard = 0; guard < 60 && team().length < staffing.cap; guard++) {
+        const pool = staffing.eligibleNow();
+        if (!pool.length) break;
+        const count = (role) => team().filter((q) => q.role === role).length / (role === 'CW' ? 2 : 1);
+        const def = [...pool].sort((a, b) => count(a.role) - count(b.role))[0];
+        const r = staffing.takeDirect(def.id);
+        if (!r.ok) break;
+        const q = joinTeam(r.def);
+        const on = (sid) => team().filter((x) => x !== q && x.role === q.role && roster.shiftOf(x.id)?.id === sid).length;
+        const nightEmpty = !team().some((x) => x !== q && roster.shiftOf(x.id)?.id === 'night');
+        const day = on('afternoon') < on('morning') ? 'afternoon' : 'morning';
+        roster.move(q.id, r.def.shiftPref === 'night' && nightEmpty ? 'night' : day);
+        hired.push(q.id);
+      }
+      if (hired.length) bus?.emit('staff:filled', { ids: hired });
+      return hired;
+    },
+    setRankForTests(r) {
+      rankNow = r;
     },
     // Let someone go (the page asks first; the Founder twice). Their Familiar Care stays on record in the care state.
     letGo(staffId) {
@@ -775,6 +819,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       for (const [k, v] of Object.entries(care.keyWorkers)) if (v === staffId) delete care.keyWorkers[k];
       for (const [k, v] of Object.entries(staffState.assignments)) if (v === staffId) delete staffState.assignments[k];
       staffing.departed(q.model, clock.totalDays, founder);
+      noteLeft(care, { staffId }, clock.totalDays); // (Milestone 12: their Familiar Care records stay, marked)
       roster.forget(staffId);
       q.leftTeam = true;
       crew.leave(q);
@@ -984,6 +1029,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     bellSummary: (residentId = ARTHUR) => bellSummary(care, residentId),
     mostFamiliar: (residentId = ARTHUR) => mostFamiliar(care, residentId, crew.people.map((q) => q.id)),
+    // Milestone 12: the resident card's three most familiar staff on the team, the staff card's three residents here
+    topStaffFor: (residentId, n = 3) => topFamiliar(care, { residentId }, team().map((q) => q.id), n),
+    topResidentsFor: (staffId, n = 3) => topFamiliar(care, { staffId }, residents.filter((p) => !p.state.guest).map((p) => p.id), n),
     setKeyWorker(staffId, residentId = ARTHUR) {
       if (staffId == null) delete care.keyWorkers[residentId];
       else care.keyWorkers[residentId] = staffId;
@@ -1100,7 +1148,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       // Milestone 9: the stay's length from their application, their tags; a returning resident is marked
       st.stay = newStay(def, app.stayDays ?? stayLengthFor(def, seed, app.rolls?.[0] ?? 0), clock.totalDays);
       st.tags = [...(def.tags ?? [])];
-      if (app.returning) st.returning = true;
+      if (app.returning) {
+        st.returning = true;
+        noteBack(care, { residentId: app.id }, clock.totalDays); // (Milestone 12: they pick up their Familiar Care)
+      }
       // Milestone 8: a first plan from their primary support, and a first review due (the plan starts stale)
       st.plan = admissionPlan(def, st, planCtx({ name: def.name, def, state: st }));
       st.review = { day: null, needs: null, reasons: [] };

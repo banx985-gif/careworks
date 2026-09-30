@@ -61,9 +61,9 @@ import { NEEDS, OUTCOMES, RESIDENTS, validateResidents, supportLevel, ROOM_TEMPL
 import { DataValidator } from '../../../core/DataValidator.js';
 import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
 import { ROLES, STATS, TIERS } from '../data/roles.js';
-import { TRAITS, STAFF, validateStaff } from '../data/staff.js';
+import { TRAITS, STAFF, validateStaff, checkStaffArt } from '../data/staff.js';
 import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL } from '../data/balance.js';
-import { SHIFT_IDS, OFF, WINGS } from '../data/shifts.js';
+import { SHIFT_IDS, OFF, WINGS, AGENCY } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
 import { STAGES } from '../data/home.js';
 import { CHANNELS, RANK_NOW } from '../data/recruitment.js';
@@ -73,7 +73,6 @@ import { BUILDABLE_FACILITIES } from '../data/facilities.js';
 import { FOUNDERS } from '../data/setup.js';
 import { DOMAINS, CARE_OPTIONS, optionById, optionsFor, validateCarePlans, OPTION_PREF_MOOD } from '../data/carePlans.js';
 import { TASK_TYPES, BELL } from '../data/tasks.js';
-import { familiarityOf } from './systems/careTasks.js';
 import { clockText } from './systems/residentNeeds.js';
 import { yearsEmployed } from './systems/staffTeam.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
@@ -279,7 +278,7 @@ async function prepareSaves() {
     const r = validateResidents(new DataValidator(), RESIDENTS, ROUTINE.map((x) => x.id)).report();
     debug.log(r.ok ? `residents: ${RESIDENTS.length} checked` : `resident data: ${r.errors.join('; ')}`);
     if (!r.ok) console.error('[CAREWORKS] resident data', r.errors);
-    const s = validateStaff(new DataValidator(), STAFF).report();
+    const s = validateStaff(new DataValidator(), STAFF, { taskTypes: Object.keys(TASK_TYPES) }).report();
     debug.log(s.ok ? `staff: ${STAFF.length} checked` : `staff data: ${s.errors.join('; ')}`);
     if (!s.ok) console.error('[CAREWORKS] staff data', s.errors);
     const known = { taskTypes: Object.keys(TASK_TYPES), steps: ROUTINE.map((x) => x.id), bands: BANDS.map((b) => b.id), needs: NEEDS.map((n) => n.id), outcomes: OUTCOMES.map((o) => o.id), roles: Object.keys(ROLES) };
@@ -505,6 +504,11 @@ bus.on('staff:hired', ({ name }) => {
   if (open && router.currentName === 'home') dayBeat.showText(`Welcome to the team, ${first(name)}`, true);
   debug.log(`hired: ${name}`);
 });
+// Milestone 12: ?debug=1 Fill roster (one beat for all of them)
+bus.on('staff:filled', ({ ids }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`Roster filled: ${ids.length} hired (debug)`, true);
+  debug.log(`fill roster: ${ids.join(', ')}`);
+});
 bus.on('staff:trained', ({ name, course, specialty }) => {
   if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} finished ${course}${specialty ? ` · ${SPECIALTIES[specialty].name}` : ''}`, true);
   debug.log(`trained: ${name} · ${course}`);
@@ -682,6 +686,11 @@ function openRoster() {
           ],
         },
         { title: 'Coverage log', lines: log.length ? [...hist, ...log] : [{ text: 'Nothing yet: every shift so far started safe.', color: COL.textMuted }] },
+        ...(debug.enabled ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'roster:fill', label: `Fill roster (debug): hire up to ${w.staffing.cap}`, sub: 'Hires eligible staff from the open channels, each on their preferred shift (open every channel under Recruit for Rare)', accent: COL.progress, disabled: w.team.length >= w.staffing.cap, onTap: () => {
+          const ids = w.fillRoster();
+          message = ids.length ? null : 'Nobody eligible to hire (or the team is full).';
+          if (ids.length) autosave.request('roster');
+        } }] }] : []),
       ],
     };
   });
@@ -1089,7 +1098,7 @@ function openRecruit() {
     const sf = w.staffing;
     const daysToFree = Math.max(0, sf.nextFreeDay - w.clock.totalDays);
     const full = w.team.length >= sf.cap;
-    const cards = sf.board.map((c) => ({ id: `cand:${c.id}`, label: `${c.name} · ${TIERS[c.tier].name}`, sub: `${ROLES[c.role].name} · Lv ${c.level} · ${c.salary} a month · ${TRAITS[c.trait]?.name ?? ''}`, icon: c.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[c.role].badge, accent: c.tier === 'rare' ? COL.gold : COL.progress, onTap: () => openCandidate(c.id) }));
+    const cards = sf.board.map((c) => ({ id: `cand:${c.id}`, label: `${c.name} · ${TIERS[c.tier].name}`, sub: `${ROLES[c.role].name} · Lv ${c.level} · ${c.salary} a month · ${TRAITS[c.trait]?.name ?? ''}`, icon: c.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[c.role].badge, tag: TIER_TAG[c.tier] ?? null, accent: TIER_ACCENT[c.tier] ?? COL.progress, onTap: () => openCandidate(c.id) }));
     const chans = sf.channels().map(({ channel: c, ok, reason }) => ({ id: `chan:${c.id}`, label: c.id === 'special' ? c.name : `${c.name} · ${credits(c.cost)}`, sub: ok ? c.text : `${reason} · ${c.text}`, disabled: !ok || c.id === 'special', accent: COL.progress, onTap: () => {
       const r = sf.refresh(c.id);
       message = r.ok ? { text: `A new board from ${c.name}`, good: true } : { text: r.reason, good: false };
@@ -1107,11 +1116,26 @@ function openRecruit() {
         { lines },
         cards.length ? { title: 'Candidates', columns: 1, buttons: cards } : { title: 'Candidates', lines: [{ text: 'Nobody on the board: try a new board.', color: COL.textMuted }] },
         { title: 'A new board now', columns: 1, buttons: chans },
-        ...(debug.enabled ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'chan:debug', label: `Open every channel and training without a room (debug): ${sf.debug ? 'On' : 'Off'}`, accent: sf.debug ? COL.good : COL.progress, onTap: () => sf.setDebug(!sf.debug) }] }] : []),
+        ...(debug.enabled ? [{ title: 'Debug', columns: 1, buttons: [
+          { id: 'chan:debug', label: `Open every channel and training without a room (debug): ${sf.debug ? 'On' : 'Off'}`, sub: 'Also counts as the Rank the Rare and Elite rules ask for', accent: sf.debug ? COL.good : COL.progress, onTap: () => sf.setDebug(!sf.debug) },
+          { id: 'chan:elite', label: `Unlock Elite staff (debug): ${sf.eliteUnlock ? 'On' : 'Off'}`, sub: 'Counts every Elite condition as met. Legendary and Secret staff never appear on a board.', accent: sf.eliteUnlock ? COL.good : COL.progress, onTap: () => {
+            sf.setEliteUnlock(!sf.eliteUnlock);
+            autosave.request('debug');
+          } },
+        ] }] : []),
         { columns: 1, buttons: [{ id: 'recruit:back', label: '‹ Back to the roster', accent: COL.progress, onTap: () => openRoster() }] },
       ],
     };
   });
+}
+// Milestone 12: the tier's tag and accent on a candidate, and every trait as lines (a pending one says it comes later;
+// a signature is marked).
+const TIER_TAG = { rare: 'RARE', elite: 'ELITE', legendary: 'LEGENDARY', secret: 'PRESTIGE' };
+const TIER_ACCENT = { rare: COL.gold, elite: COL.action, legendary: COL.gold, secret: COL.gold };
+function traitLines(ids) {
+  return ids.map((id) => TRAITS[id]).filter(Boolean).map((t) => (t.pendingSystem
+    ? { text: `${t.signature ? 'Signature · ' : ''}${t.name}: ${t.text} (comes into play in a later update)`, color: COL.textMuted }
+    : `${t.name}: ${t.text}`));
 }
 // One candidate: who they are, their stats against their tier cap, pay, trait, shift preference — and Hire.
 function openCandidate(cardId) {
@@ -1122,16 +1146,16 @@ function openCandidate(cardId) {
     if (!c) return { title: 'No longer on the board', subtitle: 'They took another job.', accent: COL.progress, sections: [{ columns: 1, buttons: [{ id: 'cand:back', label: '‹ Back to Recruit', accent: COL.progress, onTap: () => openRecruit() }] }] };
     const can = w.staffing.canHire(cardId);
     const cap = TIERS[c.tier].statCap;
-    const trait = TRAITS[c.trait];
+    const def = STAFF.find((d) => d.id === c.personId);
     return {
       title: c.name,
       subtitle: `${ROLES[c.role].name} · ${TIERS[c.tier].name} · Lv ${c.level}`,
       art: c.art,
       badge: ROLES[c.role].badge,
-      tag: c.tier === 'rare' ? { text: 'RARE' } : null,
+      tag: TIER_TAG[c.tier] ? { text: TIER_TAG[c.tier] } : null,
       accent: accentNow(),
       sections: [
-        { lines: [...(message ? [{ text: message, color: COL.bad }] : []), `Salary ${c.salary} Credits a month · prefers ${PREF_WORD[c.shiftPref] ?? '—'} shifts`, trait ? `${trait.name}: ${trait.text}` : '', { text: `From ${CHANNELS.find((x) => x.id === c.channel)?.name ?? 'the board'}`, color: COL.textMuted }] },
+        { lines: [...(message ? [{ text: message, color: COL.bad }] : []), `Salary ${c.salary} Credits a month · prefers ${PREF_WORD[c.shiftPref] ?? '—'} shifts`, ...traitLines(c.traits ?? [c.trait]), { text: `From ${CHANNELS.find((x) => x.id === c.channel)?.name ?? 'the board'}${def?.rule && c.tier !== 'standard' ? ` · eligible: ${def.rule.text}` : ''}`, color: COL.textMuted }] },
         { title: `Stats (tier cap ${cap})`, bars: STATS.map((x) => ({ label: x.name, value: c.stats[x.id], max: cap, color: x.id === ROLES[c.role].primaryStat ? COL.action : COL.progress })) },
         {
           columns: 1,
@@ -1228,7 +1252,7 @@ function residentSections(w, it) {
     planSection(w, it),
     { title: 'Tasks today', lines: taskLines(w, it) },
     { title: 'Call bells', lines: bellLines(w, it, they) },
-    { title: 'Familiar Care', lines: familiarLines(w, it) },
+    familiarSection(w, it),
     { title: 'Needs', lines: [{ text: `How much support ${they} needs right now`, color: COL.textMuted }], bars: NEEDS.map((n) => ({ label: n.name, value: st.needs[n.id], color: COL.progress })) },
     { title: 'Outcomes', bars: OUTCOMES.map((o) => ({ label: o.name, value: st.outcomes[o.id], color: COL.good })) },
     { title: 'Today', lines: log.length ? log : ['Nothing yet today'] },
@@ -1285,10 +1309,16 @@ function bellLines(w, it, they) {
   lines.push({ text: `${cap} rings when a need reaches ${BELL.line}; the time counts until someone is at ${theirOf(it.id)} side.`, color: COL.textMuted });
   return lines;
 }
-function familiarLines(w, it) {
-  const top = w.mostFamiliar(it.id);
-  const counts = w.team.map((p) => `${first(p.name)} ${familiarityOf(w.care, it.id, p.id)}`).join(' · ');
-  return [{ text: top ? `Most familiar: ${w.byId(top).name}` : 'Most familiar: nobody yet', color: COL.actionDark }, { text: `Care together: ${counts}`, color: COL.textMuted }];
+// Milestone 12: the three staff on the team who know them best (a Familiar Care record each: familiarity 0–100, tasks
+// together, when they first met), with a small bar each.
+function familiarSection(w, it) {
+  const top = w.topStaffFor(it.id, 3);
+  const lines = top.length ? [] : [{ text: 'Nobody knows them well yet: familiarity builds with every task done together.', color: COL.textMuted }];
+  if (top.length) {
+    lines.push({ text: `Most familiar: ${w.byId(top[0].staff)?.name ?? top[0].staff}`, color: COL.actionDark });
+    lines.push({ text: `Tasks together: ${top.map((r) => `${first(w.byId(r.staff)?.name ?? r.staff)} ${r.tasks}${r.firstDay != null ? ` (since day ${r.firstDay + 1})` : ''}`).join(' · ')}`, color: COL.textMuted });
+  }
+  return { title: 'Familiar Care', lines, bars: top.map((r) => ({ label: w.byId(r.staff)?.name ?? r.staff, value: Math.round(r.familiarity), max: 100, color: COL.good })) };
 }
 // "Mobility for Betty" (Milestone 8: all eight options): each row says whether it can be chosen (greyed with the
 // reason when not), the current one and their like / dislike / refusal. Tap a row to see it; Choose to take it.
@@ -1422,7 +1452,6 @@ function openPicker(stepId, residentId) {
 function staffMenu(w, p, accent) {
   const m = p.model;
   const cap = TIERS[m.tier]?.statCap ?? 220;
-  const trait = TRAITS[m.traits[0]];
   const isFounder = w.staffState.founder.id === p.id && !w.staffState.founder.ended;
   const h = w.staffState.founder.history;
   const agency = w.roster.isAgency(p.id);
@@ -1432,13 +1461,19 @@ function staffMenu(w, p, accent) {
     ? [w.roster.label(p.id), 'Agency worker: booked for this shift only; builds no Familiar Care and is never on records.']
     : [w.roster.label(p.id), `Prefers ${PREF_WORD[pref] ?? '—'} shifts${pref !== 'night' ? ' · Night shifts cost a little Morale' : ''} · ${wing ? `${WINGS.find((x) => x.id === wing)?.name} wing` : w.roster.isFloat(p.id) ? 'float: tied to no wing' : 'no wing'}`];
   const status = [m.status.tired && 'Tired', m.status.stressed && 'Stressed'].filter(Boolean);
-  const fam = w.residents.map((r) => `${first(r.name)} ${familiarityOf(w.care, r.id, p.id)}${w.mostFamiliar(r.id) === p.id ? ' (most familiar)' : ''}`).join(' · ');
+  const fam = w.topResidentsFor(p.id, 3); // (Milestone 12: the three residents here who know them best)
   const sections = [
-    { lines: [{ text: w.stateOf(p), color: COL.actionDark }, ...shiftLines, agency ? `Tasks helped with: ${m.counters.tasks ?? 0} · Fee ${SHORT_STAFFING.agencyFeePerShift} Credits a shift` : `Tasks helped with: ${m.counters.tasks ?? 0} · Salary ${m.salary} Credits a month`, ...(agency ? [] : [`Familiar with: ${fam}`])] },
+    { lines: [{ text: w.stateOf(p), color: COL.actionDark }, ...shiftLines, agency ? `Tasks helped with: ${m.counters.tasks ?? 0} · Fee ${SHORT_STAFFING.agencyFeePerShift} Credits a shift` : `Tasks helped with: ${m.counters.tasks ?? 0} · Salary ${m.salary} Credits a month`] },
     { title: 'Stats', bars: STATS.map((s) => ({ label: s.name, value: m.stats[s.id], max: cap, color: s.id === ROLES[m.role].primaryStat ? COL.action : COL.progress })) },
     { title: status.length ? `Energy and Morale · ${status.join(', ')}` : 'Energy and Morale', bars: [{ label: 'Energy', value: m.energy, color: m.energy < 25 ? COL.bad : COL.good }, { label: 'Morale', value: m.morale, color: m.morale < 25 ? COL.bad : COL.gold }] },
-    { title: 'Trait', lines: [trait ? `${trait.name}: ${trait.text}` : 'None'] },
+    { title: m.traits.length > 1 ? 'Traits' : 'Trait', lines: m.traits.length ? traitLines(m.traits) : ['None'] },
   ];
+  if (!agency) {
+    const famLines = fam.length
+      ? [...fam.filter((r) => w.mostFamiliar(r.resident) === p.id).map((r) => ({ text: `${first(w.residentById(r.resident)?.name ?? r.resident)}'s most familiar staff member`, color: COL.actionDark })), { text: `Tasks together: ${fam.map((r) => `${first(w.residentById(r.resident)?.name ?? r.resident)} ${r.tasks}`).join(' · ')}`, color: COL.textMuted }]
+      : [{ text: 'Not familiar with anyone yet: it builds with every task done together.', color: COL.textMuted }];
+    sections.push({ title: 'Familiar Care', lines: famLines, bars: fam.map((r) => ({ label: w.residentById(r.resident)?.name ?? r.resident, value: Math.round(r.familiarity), max: 100, color: COL.good })) });
+  }
   // Milestone 11: specialties, training, let go
   if (!agency) {
     const sp = w.specialtiesOf(p.id);
@@ -1517,12 +1552,20 @@ async function leaveHome() {
 
 // ---------------------------------------------------------------------------
 // Boot screen: shows while the images and the saves load, then the Main Menu (or the test screen).
+let staffArtReport = null;
 const bootScreen = {
   progress: 0,
   enter() {
     this.progress = 0;
     Promise.all([
-      assets.loadImages(ASSETS, (done, total) => (this.progress = done / total)).then((r) => debug.log(`assets: ${r.loaded} loaded, ${r.missing.length} missing`)),
+      assets.loadImages(ASSETS, (done, total) => (this.progress = done / total)).then((r) => {
+        debug.log(`assets: ${r.loaded} loaded, ${r.missing.length} missing`);
+        // Milestone 12: every staff member's portrait and every role badge loaded, no two staff sharing art (agency aside)
+        if (debug.enabled) {
+          staffArtReport = checkStaffArt((p) => assets.has(p.split('/').pop().replace('.png', '')), { agency: AGENCY });
+          debug.log(staffArtReport.problems.length ? `staff art: ${staffArtReport.problems.join('; ')}` : `staff art: ${staffArtReport.checked.portraits} portraits, ${staffArtReport.checked.badges} badges mapped`);
+        }
+      }),
       prepareSaves().catch((err) => console.error('[CAREWORKS] saves unavailable', err)),
     ]).then(() => {
       const n = START_SCREEN === 'menu' ? homeToResume() : null;
@@ -1570,7 +1613,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');
