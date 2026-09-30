@@ -65,12 +65,14 @@ import { roomById } from '../../data/rooms.js';
 import { facilityById } from '../../data/facilities.js';
 import { residentById, NEEDS, supportLevel, RESIDENTS, STAY_LEAVE_HOUR } from '../../data/residents.js';
 import { Rng } from '../../../../core/Rng.js';
-import { DAY, ROUTINE, WAKE } from '../../data/routine.js';
+import { DAY, ROUTINE, WAKE, ALL_STEPS } from '../../data/routine.js';
+import { createActivities, feelingOf, outcomeMult, birthdayOf } from './activities.js';
+import { activityById, TIMETABLE, OUTCOME, BIRTHDAY, SCHEDULABLE } from '../../data/activities.js';
 import { BELL, FAMILIARITY, BACKUP_HELP } from '../../data/tasks.js';
-import { ECONOMY_START, STAFF_BALANCE, ON_CALL } from '../../data/balance.js';
+import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK } from '../../data/balance.js';
 import { AGENCY } from '../../data/shifts.js';
 import { ensureResidentState, newResidentState, newStay, stayDaysLeft, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog, routineFor } from './residentNeeds.js';
-import { ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar, topFamiliar, noteLeft, noteBack, familiarityOf, fadeFamiliarity } from './careTasks.js';
+import { ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, addTask, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar, topFamiliar, noteLeft, noteBack, familiarityOf, fadeFamiliarity } from './careTasks.js';
 import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkPct } from './staffTeam.js';
 import { createRoster } from './roster.js';
 import { createCoverage } from './coverage.js';
@@ -109,7 +111,7 @@ export function makeClock(bus = null) {
   return clock;
 }
 
-const routineStep = (id) => ROUTINE.find((s) => s.id === id) ?? null;
+const routineStep = (id) => ALL_STEPS.find((s) => s.id === id) ?? null; // (Milestone 14: with the Morning activity slot)
 const first = (name) => name.split(' ')[0];
 const clamp = (x) => Math.max(0, Math.min(100, x));
 const stepWord = (step) => (step.activity ? step.name : step.name.toLowerCase());
@@ -232,7 +234,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function addResident(st, { atEntrance = false } = {}) {
     const def = residentById(st.id);
     const p = { kind: 'resident', id: def.id, name: def.name, art: def.art, line: `${def.support} · age ${def.age}`, def, state: st };
-    p.agent = new Agent({ id: def.id, name: def.name, speed: RESIDENT.speed, noPathTeleportSec: 3 });
+    // (Milestone 14: everyone walks WALK.speedMultiplier faster; a walking frame or wheelchair a little slower than others)
+    p.agent = new Agent({ id: def.id, name: def.name, speed: RESIDENT.speed * WALK.speedMultiplier * (WALK.aids[WALK.aidBySupport[def.support]] ?? 1), noPathTeleportSec: 3 });
     const room = roomList().find((r) => r.id === st.room);
     if (room && !st.leaving && !st.guest) room.residentId = def.id; // the room knows its resident (not one going home)
     if (st.pos) {
@@ -282,10 +285,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const absNow = () => absHour(clock.totalDays, hourNow());
   const now = () => clockText(hourNow());
   // (Milestone 13: each resident's routine day starts at their own wake-up)
-  const logDay = (st = null) => routineAt(hourNow(), clock.totalDays, routineFor(st)).day;
+  const logDay = (st = null) => routineAt(hourNow(), clock.totalDays, st ? stepsForState(st, clock.totalDays) : routineFor(st)).day;
   const log = (p, text) => addLog(p.state, logDay(p.state), now(), text);
   const rolesOnShift = (bandId) => new Set(crew.people.filter((q) => roster.coversBand(q.id, bandId)).map((q) => q.role));
-  const stepIndex = (id) => ROUTINE.findIndex((s) => s.id === id);
+  const stepIndex = (id) => ALL_STEPS.findIndex((s) => s.id === id);
   const joined = (p) => p.state.joinAt == null || absNow() >= p.state.joinAt;
   // Milestone 9: living the routine and planned for — not someone heading home, not a spawn-check guest.
   const inCare = (p) => joined(p) && !p.state.leaving && !p.state.guest;
@@ -298,16 +301,63 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const idx = stepIndex(stepId);
     return cur > idx || (cur === idx && (st.step.status === 'doing' || st.step.status === 'refused' || st.step.status === 'missed'));
   };
+  // --- activities (Milestone 14) ----------------------------------------------------------------------------------
+  // The day's activity sessions (the timetable, a booked community event or a birthday) shape each resident's steps:
+  // the Afternoon slot is the M2 'cards' step (its name, place, leaders and drops from the day's activity; no activity =
+  // free time: no step), the Morning slot adds the morningActivity step between breakfast and the rest.
+  const acts = createActivities({ care, seed, bus, today: () => clock.totalDays, hostFor: (roles) => crew.people.find((q) => !q.agency && !q.leftTeam && roles.includes(q.role) && roster.shiftOf(q.id)?.id === 'afternoon')?.id ?? null });
+  const dayOfYear = (day) => (((day % BIRTHDAY.daysPerYear) + BIRTHDAY.daysPerYear) % BIRTHDAY.daysPerYear) + 1;
+  const birthdaysOn = (day) => residents.filter((p) => !p.state.leaving && !p.state.guest && birthdayOf(p.id) === dayOfYear(day)).map((p) => p.id);
+  acts.setBirthdayCheck((day) => birthdaysOn(day).length > 0);
+  const SLOT_OF = { cards: 'afternoon', morningActivity: 'morning' };
+  const sessionInfo = (day, slot) => acts.activityOn(day, slot, slot === 'afternoon' ? birthdaysOn(day) : []);
+  const stepsCache = new Map();
+  const clearSteps = () => stepsCache.clear();
+  function stepsForState(st, day) {
+    const key = `${st.wakeAt}:${day}`;
+    if (stepsCache.has(key)) return stepsCache.get(key);
+    const base = routineFor(st);
+    const out = [];
+    for (const def of ALL_STEPS) {
+      const slot = SLOT_OF[def.id];
+      if (!slot) {
+        out.push(base.find((x) => x.id === def.id));
+        continue;
+      }
+      const info = sessionInfo(day, slot);
+      if (!info) continue; // free time
+      const a = info.activity;
+      const who = info.birthday ? first(byResident(info.birthday)?.name ?? '') : null;
+      out.push({ ...def, name: who ? `${who}'s birthday tea` : info.event ? a.name : a.name, log: a.log, place: a.where.place, roles: [...a.leaders], drops: { ...a.drops }, minutes: a.minutes, activityId: a.id, slot, doing: `At ${a.name.toLowerCase()}`, going: `Walking to ${a.name.toLowerCase()}` });
+    }
+    stepsCache.set(key, out);
+    return out;
+  }
+  const stepsFor = (p, day) => stepsForState(p.state, day);
+  // A step as it runs that day (an activity step carries its activity).
+  const dayStep = (p, id, day) => (p ? stepsFor(p, day).find((x) => x.id === id) : null) ?? routineStep(id);
+  // Everyone's choice for the day's sessions (made at the start of the day, or when the timetable changes).
+  const inSession = () => residents.filter((p) => !p.state.leaving && !p.state.guest);
+  const friendIds = (id) => topFriends(care, id, inSession().map((q) => q.id), 20).filter((r) => r.friendship >= FRIENDSHIP.friendAt).map((r) => r.other);
+  function planSessions(day, force = false) {
+    clearSteps();
+    for (const slot of Object.keys(TIMETABLE.slots)) {
+      const cur = acts.session(day, slot);
+      const started = cur && (cur.joined.length || cur.declined.length || (day === clock.totalDays && hourNow() >= TIMETABLE.slots[slot].at - 0.5));
+      if (cur && (!force || started)) continue;
+      acts.planSession(day, slot, sessionInfo(day, slot), inSession(), friendIds);
+    }
+  }
   const routineTask = (p, stepId, day) => care.tasks.find((t) => t.source === 'routine' && t.stepId === stepId && t.day === day && t.resident === p.id) ?? null;
   // Where a resident is (or is going): their current step's place, or their room.
   const residentPlace = (p) => {
     const st = p.state;
-    const step = st.step && routineStep(st.step.id);
+    const step = st.step && dayStep(p, st.step.id, st.step.day);
     return !step || !joined(p) || st.step.status === 'refused' || st.step.status === 'missed' ? 'room' : step.place;
   };
   const taskPlace = (t) => {
     const p = byResident(t.resident);
-    return t.place === 'room' ? 'room' : t.place === 'step' ? routineStep(t.stepId).place : p ? residentPlace(p) : 'room';
+    return t.place === 'room' ? 'room' : t.place === 'step' ? dayStep(p, t.stepId, t.day).place : p ? residentPlace(p) : 'room';
   };
   // The spots a helper may use beside this resident at a place: in their room its two; at a shared place the pool,
   // nearest their seat first.
@@ -328,7 +378,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const pool = helpPool(p, taskPlace(t));
     return pool.find((ref) => !crew.people.some((q) => q.id !== staffId && q.task && q.task.spot === ref)) ?? pool[0];
   }
-  const label = (t) => (t.source === 'routine' ? stepWord(routineStep(t.stepId)) : t.name.charAt(0).toLowerCase() + t.name.slice(1));
+  const label = (t) => (t.source === 'routine' ? stepWord(dayStep(byResident(t.resident), t.stepId, t.day)) : t.name.charAt(0).toLowerCase() + t.name.slice(1));
   const taskInfo = (t) => ({ id: t.id, type: t.type, label: label(t), room: t.place === 'room', resident: t.resident, who: first(byResident(t.resident)?.name ?? 'Arthur') });
   // The "who helps" picker's pins: Arthur's keep their Milestone 3 keys (the step id), others are 'RESnn:step'.
   const pinKey = (residentId, stepId) => (residentId === ARTHUR ? stepId : `${residentId}:${stepId}`);
@@ -420,7 +470,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const fx = familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, helper));
     if (p && fx.mood) p.state.outcomes.mood = clamp(p.state.outcomes.mood + fx.mood);
     if (p) {
-      if (t.source === 'routine') completeRoutine(p, { ...routineStep(t.stepId), drops: t.drops, taskType: t.type }, t.day, helper);
+      if (t.source === 'routine') completeRoutine(p, { ...dayStep(p, t.stepId, t.day), drops: t.drops, taskType: t.type }, t.day, helper);
       else {
         applyEffects(p, t, helper);
         if (t.type === 'bell') bellState(care, t.resident).cooldownUntil = absNow() + BELL.cooldownHours;
@@ -453,8 +503,33 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       st.step.dropped = dropped;
       st.step.helper = helper;
       together(p, step, day);
+      if (step.activity && step.slot) activityOutcome(p, step, day);
     }
     bus?.emit('care:step', { resident: st.id, step: step.id, status: 'done', helper });
+  }
+  // Milestone 14: joining lifts Mood / Social Connection / Independence by how much they like it (less when crowded; more
+  // at a community event or a birthday); a liked one resets their "nothing they like for a while" clock.
+  function activityOutcome(p, step, day) {
+    const s = acts.session(day, step.slot);
+    const act = activityById(step.activityId);
+    if (!s || !act) return;
+    const feeling = feelingOf(p.def, p.state, act);
+    const crowded = (s.going?.length ?? 0) > act.group.max;
+    const m = outcomeMult(feeling, crowded, s.liftMult ?? 1);
+    for (const [o, v] of Object.entries(act.lifts)) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v * m);
+    if (!s.joined.includes(p.id)) s.joined.push(p.id);
+    if (feeling === 'love' || feeling === 'like' || s.birthday) p.state.lastLikedDay = day;
+    delete p.state.wouldEnjoy;
+  }
+  // Milestone 14: on a birthday the resident's most familiar staff on shift drop by (a short visit each, pinned to them).
+  function birthdayVisits(p, day) {
+    const on = crew.people.filter((q) => !q.agency && !q.leftTeam && roster.onShift(q.id));
+    const top = topFamiliar(care, { residentId: p.id }, on.map((q) => q.id), BIRTHDAY.familiarVisits);
+    const inst = bandInstance(hourNow(), clock.totalDays);
+    for (const r of top) {
+      const q = crew.byId(r.staff);
+      addTask(care, { resident: p.id, day, band: inst.band.id, type: 'visit', name: 'Birthday visit', source: 'birthday', place: 'resident', roles: [q.role], pinned: q.id, minutes: 15, drops: { social: 10 }, outcomes: { mood: 2 }, opens: absNow(), due: bandEnd(inst.band, inst.day) });
+    }
   }
   // Milestone 13 (bible §20): residents at the same meal (the same Dining Room) or the same activity grow their
   // friendship — more when they share tags / get on, sit side by side, or are both regulars of the activity's group.
@@ -463,6 +538,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (step.place !== 'dining' && step.place !== 'lounge') return;
     const st = p.state;
     const kind = step.activity ? 'activity' : 'meal';
+    // (Milestone 14: activity groups count the Afternoon session under its M13 id, 'cards', whatever runs in it)
     if (step.activity) st.activityCounts = { ...(st.activityCounts ?? {}), [step.id]: (st.activityCounts?.[step.id] ?? 0) + 1 };
     const group = ACTIVITY_GROUPS.find((g) => g.stepId === step.id);
     const regulars = group ? new Set(groupMembers(group, seated())) : null;
@@ -520,7 +596,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return;
     }
     if (t && isOpen(t)) finish(t, 'self');
-    if (s.arthurThere && step) completeRoutine(p, step, s.day, null, p.id === ARTHUR ? 'on his own' : 'on their own');
+    if (s.arthurThere && step) completeRoutine(p, dayStep(p, s.id, s.day), s.day, null, p.id === ARTHUR ? 'on his own' : 'on their own');
   }
   // Milestone 13 (fix first): someone waiting to be got up stays in bed until a helper comes — while anyone on shift
   // could help — and the next step (breakfast) waits for them, until WAKE.waitForHelpUntil.
@@ -556,7 +632,34 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const eligible = crew.people.filter((q) => canHelp(q) && roster.onShift(q.id)).map((q) => q.id);
     const offeredBy = t?.slots[0] ?? staffState.assignments[pinKey(p.id, step.id)] ?? mostFamiliar(care, p.id, usual) ?? mostFamiliar(care, p.id, eligible);
     const offerer = offeredBy && crew.byId(offeredBy);
-    const answer = decide(st, step, day, seed, offerer && !offerer.agency ? familiarEffects(familiarityOf(care, p.id, offeredBy)).dislikeMult : 1);
+    const mult = offerer && !offerer.agency ? familiarEffects(familiarityOf(care, p.id, offeredBy)).dislikeMult : 1;
+    // Milestone 14: an activity session — they join or decline by their own choice (made at the start of the day; a
+    // maybe is settled now). Declining is a normal choice: logged, never a failure, never overridden, no penalty.
+    if (step.activity && step.slot) {
+      const act = activityById(step.activityId);
+      const feeling = feelingOf(p.def, st, act);
+      if (!acts.session(day, step.slot)) acts.planSession(day, step.slot, sessionInfo(day, step.slot), inSession(), friendIds);
+      const s = acts.addChoice(day, step.slot, p, friendIds); // (someone admitted today chooses now)
+      const go = acts.decide(day, step.slot, p.id, feeling === 'dislike' ? mult : 1) === 'go';
+      if (feeling === 'dislike') countDislike(st, !go);
+      if (!go) {
+        st.step = { id: step.id, day, status: 'refused', declined: true, helper: null };
+        if (t && isOpen(t)) finish(t, 'refused');
+        if (!s.declined.includes(p.id)) s.declined.push(p.id);
+        addLog(st, day, now(), `Chose not to join ${step.name}: free time in ${theirOf(p.id)} room`);
+        const r = placeTile(p, 'room');
+        p.agent.walkTo(grid, r.col, r.row);
+        bus?.emit('care:step', { resident: st.id, step: step.id, status: 'declined', activity: act.id });
+        return;
+      }
+      s.going = [...new Set([...(s.going ?? []), p.id])];
+      if (s.birthday === p.id) birthdayVisits(p, day);
+      st.step = { id: step.id, day, status: 'walking', helper: t?.slots[0] ?? null, arthurThere: false };
+      bus?.emit('care:step', { resident: st.id, step: step.id, status: 'started', activity: act.id });
+      walkResident(p, step, day);
+      return;
+    }
+    const answer = decide(st, step, day, seed, mult);
     if (st.prefs?.[step.id] === 'dislike') countDislike(st, answer === 'refuse');
     if (answer === 'refuse') {
       st.step = { id: step.id, day, status: 'refused', helper: null };
@@ -579,7 +682,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const r = placeTile(p, 'room');
       p.agent.walkTo(grid, r.col, r.row);
     } else if (st.step && (st.step.status === 'walking' || st.step.status === 'waiting')) {
-      const step = routineStep(st.step.id);
+      const step = dayStep(p, st.step.id, st.step.day);
       if (step && !st.step.arthurThere) walkResident(p, step, st.step.day);
     }
   }
@@ -604,6 +707,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5) agent.path = path.map((pt) => ({ x: pt.x, y: pt.y }));
   };
   for (const p of residents) resumePath(p.agent, p.state.pos);
+  planSessions(clock.totalDays); // (Milestone 14: today's sessions and everyone's choice, if not made yet)
   for (const q of crew.people) resumePath(q.agent, staffState.pos?.[q.id]);
 
   // Milestone 8: a task from an option they refuse is refused the moment it comes up — logged on their card.
@@ -622,7 +726,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (!care.gen[inst.key]) {
       care.gen[inst.key] = true;
       pruneTasks(care, clock.totalDays);
-      for (const p of residents) if (inCare(p)) logRefused(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p) }));
+      for (const p of residents) if (inCare(p)) logRefused(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p), steps: stepsFor(p, inst.day) }));
     }
     for (const p of residents) {
       if (!inCare(p)) continue;
@@ -814,6 +918,44 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   };
   tickAdmissions(clock.totalDays); // a new home (or an older save) gets its first board
   // A new day: the day's beat, the Founder's days, the board; a new month: the ledger's close for the month just ended.
+  // Milestone 14: what the day's sessions put in the room — the activity's prop while its session runs (half an hour
+  // either side), the Birthday Table all day — on free floor beside the Activity Lounge (or the Dining Room).
+  let decorCache = { key: null, list: [] };
+  function decorNow() {
+    const day = clock.totalDays;
+    const h = hourNow();
+    const want = [];
+    const bday = birthdaysOn(day).length > 0;
+    if (bday) want.push({ art: activityById('birthday').prop, place: 'lounge' });
+    for (const [slot, def] of Object.entries(TIMETABLE.slots)) {
+      const info = sessionInfo(day, slot);
+      if (!info || info.birthday || !info.activity.prop) continue;
+      if (h >= def.at - 0.5 && h <= def.at + info.activity.minutes / 60 + 1) want.push({ art: info.activity.prop, place: info.activity.where.place });
+    }
+    const key = `${day}:${want.map((w) => w.art).join()}:${layout.version}`;
+    if (decorCache.key === key) return decorCache.list;
+    const used = new Set();
+    const list = [];
+    for (const w of want) {
+      const pc = layout.ofDef(PLACE_DEF[w.place])[0];
+      if (!pc) continue;
+      const box = pc.box;
+      // in front of the room, past its seats and helper spots, so its art never hides it
+      const spots = new Set(Object.values(facilityById(pc.defId)?.spots ?? {}).map((t) => `${box.col + t.col},${box.row + t.row}`));
+      const offs = [[box.w + 1, box.h], [box.w + 1, box.h + 1], [-1, box.h], [-1, box.h + 1], [box.w + 1, box.h - 1], [-1, 1]].filter(([dc, dr]) => !spots.has(`${box.col + dc},${box.row + dr}`));
+      for (const [dc, dr] of offs) {
+        const col = box.col + dc;
+        const row = box.row + dr;
+        const k = `${col},${row}`;
+        if (used.has(k) || !grid.isWalkable?.(col, row)) continue;
+        used.add(k);
+        list.push({ kind: 'prop', id: `decor:${w.art}`, def: { art: w.art }, fp: { col, row, w: 1, h: 1 }, decor: true });
+        break;
+      }
+    }
+    decorCache = { key, list };
+    return list;
+  }
   // Milestone 13: each resident's favourite staff member (store only: later secrets and family events read it).
   function updateFavourites(day) {
     const ids = team().map((q) => q.id);
@@ -833,6 +975,27 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     fadeFamiliarity(care, day - 1, seated().map((p) => p.id), team().map((q) => q.id)); // Milestone 13: regular contact matters
     reseatFriends(); // Milestone 13: friends sit together when seats allow
     updateFavourites(day);
+    // Milestone 14: today's sessions (everyone's choice), a community notice perhaps, birthdays, and a resident with
+    // nothing they like for a while
+    const fired = acts.dailyTick(day);
+    for (const inst of fired) bus?.emit('care:notice', { uid: inst.uid, id: inst.id, day: inst.params.day });
+    planSessions(day);
+    const bdays = birthdaysOn(day);
+    if (bdays.length) {
+      const b = acts.state.birthdays;
+      const first = b.first == null;
+      if (first) b.first = day;
+      for (const id of bdays) b.held[id] = clock.dateOf(day).year;
+      bus?.emit('care:birthday', { residents: bdays, names: bdays.map((id) => byResident(id)?.name), first, art: first ? BIRTHDAY.firstArt : null });
+    }
+    for (const p of inSession()) {
+      const st = p.state;
+      st.lastLikedDay ??= day;
+      if (day - st.lastLikedDay >= OUTCOME.noLikedDays) {
+        st.outcomes.mood = clamp(st.outcomes.mood + OUTCOME.noLikedMoodPerDay);
+        st.wouldEnjoy = SCHEDULABLE.map((a) => ({ a, f: feelingOf(p.def, st, a) })).sort((x, y) => (y.f === 'love') - (x.f === 'love') || (y.f === 'like') - (x.f === 'like'))[0]?.a.id ?? null;
+      }
+    }
     bus?.emit('care:dayEnd', world.daySummary(day - 1));
     if (shortStaffing) coverage.dayEnd(day - 1); // care recovery for yesterday's missed essential tasks (Milestone 7)
     noteMissed(day - 1); // Milestone 8: the missed-essential streak (plan review)
@@ -1058,7 +1221,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           delete p.state.joinAt; // settled in: from this band they live the routine
           bus?.emit('care:joined', { resident: p.id });
         }
-        const r = routineAt(hourNow(), clock.totalDays, routineFor(p.state));
+        const r = routineAt(hourNow(), clock.totalDays, stepsFor(p, clock.totalDays));
         if (!p.state.step || p.state.step.id !== r.step.id || p.state.step.day !== r.day) {
           if (waitsInBed(p)) continue; // (Milestone 13: help is on the way — they stay in bed for it)
           startStep(p, r.step, r.day);
@@ -1086,7 +1249,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const step = routineStep(stepId);
       const p = byResident(residentId);
       if (!step || !p) return null;
-      const day = routineAt(hourNow(), clock.totalDays, routineFor(p.state)).day;
+      const day = routineAt(hourNow(), clock.totalDays, stepsFor(p, clock.totalDays)).day;
       const t = routineTask(p, stepId, day);
       if (t && (t.status === 'claimed' || t.status === 'working' || t.status === 'done')) return t.slots[0];
       const probe = t ?? { id: 'probe', source: 'routine', stepId, type: 'meal', urgency: 3, roles: step.roles, place: 'step', opens: 0, resident: p.id };
@@ -1168,6 +1331,30 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     bellSummary: (residentId = ARTHUR) => bellSummary(care, residentId),
     mostFamiliar: (residentId = ARTHUR) => mostFamiliar(care, residentId, crew.people.map((q) => q.id)),
+    // --- Milestone 14 ------------------------------------------------------------------------------------------
+    activities: acts,
+    stepsFor: (residentId, day = clock.totalDays) => (byResident(residentId) ? stepsFor(byResident(residentId), day) : []),
+    // The timetable: set a slot (Mon–Sun, 'morning' | 'afternoon', an activity id or null for free time). Today's
+    // sessions that haven't started are planned again.
+    setSlot(dow, slot, activityId) {
+      const r = acts.setSlot(dow, slot, activityId);
+      if (r.ok) planSessions(clock.totalDays, true);
+      return r;
+    },
+    sessionToday: (slot, day = clock.totalDays) => acts.session(day, slot),
+    sessionInfo,
+    birthdayOf,
+    birthdaysOn,
+    answerNotice(uid, accept) {
+      const r = acts.answer(uid, accept);
+      if (r.ok) planSessions(clock.totalDays, true);
+      return r;
+    },
+    feelingOf: (residentId, activityId) => (byResident(residentId) ? feelingOf(byResident(residentId).def, byResident(residentId).state, activityById(activityId)) : null),
+    // Things drawn in the home that are not pieces: the running session's activity prop, a Birthday Table all day.
+    get decor() {
+      return decorNow();
+    },
     // --- Milestone 13 ------------------------------------------------------------------------------------------
     // Continuity groups (bible §14): pin a team member to up to CONTINUITY.maxResidents residents.
     continuityOf: (staffId) => groupOf(staffId).filter((id) => byResident(id)),
@@ -1214,8 +1401,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (st.guest) return 'Visiting for the spawn check';
       if (st.leaving) return `Going home today: walking out to the front door`;
       if (!joined(p)) return p.agent.state === 'walking' ? `Arriving: walking to ${who} room` : `Settling in to ${who} room`;
-      const step = st.step && routineStep(st.step.id);
+      const step = st.step && dayStep(p, st.step.id, st.step.day);
       if (!step) return `In ${who} room`;
+      if (st.step.declined) return `Free time in ${who} room (chose not to join ${step.name.toLowerCase()})`;
       if (st.step.scaled) return `In ${who} room: activities scaled back today (short-staffed)`;
       if (st.step.status === 'refused') return `Chose to stay in ${who} room (said no to ${step.activity ? step.name : step.name.toLowerCase()})`;
       if (st.step.status === 'missed') return `No help came for ${stepWord(step)}`;
@@ -1332,6 +1520,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const t = placeTile(p, 'room');
       p.agent.walkTo(grid, t.col, t.row);
       addLog(st, logDay(st), now(), `Moved in to room ${layout.roomNumber(room.id)}`);
+      for (const slot of Object.keys(TIMETABLE.slots)) acts.addChoice(clock.totalDays, slot, p, friendIds); // (Milestone 14: today's sessions)
       bus?.emit('care:admit', { resident: p.id, name: p.name, room: room.id });
       return { ok: true, reason: null, resident: p };
     },
@@ -1345,6 +1534,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const gone = new Set(crew.people.filter((q) => q.leftTeam).map((q) => q.id)); // (Milestone 11: let go, on their way out)
       staffState.staff = sys.serialize().filter((m) => !agencyIds.has(m.id) && !gone.has(m.id));
       staffing.serialize();
+      acts.serialize(); // (Milestone 14: the timetable, sessions, bookings, community notices, birthdays)
       staffState.pos = crew.positions();
       staffState.modes = crew.modes();
       staffState.bandDone = Object.fromEntries(crew.people.map((q) => [q.id, q.bandDone ?? 0]));
@@ -1394,7 +1584,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     for (const p of residents) {
       const st = p.state;
       if (st.leaving || st.guest || !st.step || !(st.step.status === 'walking' || st.step.status === 'waiting')) continue;
-      const step = routineStep(st.step.id);
+      const step = dayStep(p, st.step.id, st.step.day);
       if (step) walkResident(p, step, st.step.day);
     }
     bus?.emit('home:layout', { version: layout.version });

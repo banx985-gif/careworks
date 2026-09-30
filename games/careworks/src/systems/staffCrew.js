@@ -19,7 +19,7 @@ import { POSTS, HELP_SPOTS, PERSON, ENTRANCE } from '../../data/home.js';
 import { SHIFT_MORALE } from '../../data/shifts.js';
 import { staffById } from '../../data/staff.js';
 import { ROLES } from '../../data/roles.js';
-import { STAFF_BALANCE as B } from '../../data/balance.js';
+import { STAFF_BALANCE as B, WALK } from '../../data/balance.js';
 import { FOUNDER_FLAG } from '../../data/setup.js';
 import { energyPct, moralePerHour, shiftPct } from './traitEffects.js';
 
@@ -50,7 +50,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       task: null, // Milestone 4: { id (care task id), type, label, room, spot, arrived }
       bandDone: state.bandDone?.[model.id] ?? 0, // tasks finished this band (the AI's workload)
     };
-    p.agent = new Agent({ id: model.id, name: model.name, speed: PERSON.speed, noPathTeleportSec: 3 });
+    p.agent = new Agent({ id: model.id, name: model.name, speed: PERSON.speed * WALK.speedMultiplier, noPathTeleportSec: 3 }); // (Milestone 14: 5× faster)
     const at = state.pos?.[model.id];
     if (at) {
       p.agent.x = at.x;

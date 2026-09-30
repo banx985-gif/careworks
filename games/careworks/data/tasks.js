@@ -28,6 +28,7 @@ export const ROUTINE_TASKS = {
   rest: { type: 'observation', band: 'afternoon', minutes: 20, lead: 0.5 },
   cards: { type: 'activity', band: 'afternoon', minutes: 20, lead: 0.5 },
   dinner: { type: 'meal', band: 'evening', minutes: 20, lead: 0.5 },
+  morningActivity: { type: 'activity', band: 'morning', minutes: 45, lead: 0.5 }, // (Milestone 14: the Morning activity slot)
   settle: { type: 'settle', band: 'evening', minutes: 20, lead: 0.5 },
 };
 

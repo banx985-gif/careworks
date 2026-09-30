@@ -9,6 +9,7 @@ import { RESIDENTS } from './residents.js';
 import { FOUNDERS } from './setup.js';
 import { STAFF } from './staff.js';
 import { ROLES } from './roles.js';
+import { ACTIVITIES, BIRTHDAY } from './activities.js';
 
 const art = (folder, key) => [key, `assets/images/${folder}/${key}.png`];
 
@@ -32,6 +33,9 @@ export const ASSETS = {
   ...Object.fromEntries(BOTTOM_SLOTS.map((s) => art('ui', s.icon))),
   ...Object.fromEntries(Object.values(TOP_ICONS).map((k) => art('rewards', k))),
   ...Object.fromEntries(Object.values(CARE_ICONS).map((k) => art('ui', k))),
+  // Milestone 14: the activity props (drawn in the room while a session runs) and the First Birthday picture
+  ...Object.fromEntries(ACTIVITIES.filter((a) => a.prop).map((a) => art('props', a.prop))),
+  ...Object.fromEntries([art('events', BIRTHDAY.firstArt)]),
   // Milestone 0 loader test (?screen=test): the placeholder PWA icon as a real image, and one deliberately missing file.
   m0Real: 'assets/branding/pwa/icon-192.png',
   m0Missing: 'assets/m0-missing-test.png',

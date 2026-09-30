@@ -32,6 +32,7 @@ import { characterPose, drawCharacter } from '../../../../core/CharacterMotion.j
 import { drawButton, hitRect } from '../../../../core/ui/Button.js';
 import { text } from '../../../../core/ui/Kit.js';
 import { HOME, FLOORS, ART_DRAW, PERSON, MOTION, WINDOWS, ENTRANCE, HOME_LOOK as L } from '../../data/home.js';
+import { WALK } from '../../data/balance.js';
 import { paletteById } from '../../data/setup.js';
 import { ROOM_SHAPE, roomById } from '../../data/rooms.js';
 import { facilityById } from '../../data/facilities.js';
@@ -481,7 +482,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       if (buildMode) drawPicked(ctx);
       drawPersonShadows(ctx);
       drawSelectionMark(ctx);
-      const items = [...world.placed.filter((p) => p.kind !== 'room'), ...world.props, ...walls, ...world.people].sort((a, b) => depthOf(a) - depthOf(b));
+      const items = [...world.placed.filter((p) => p.kind !== 'room'), ...world.props, ...(world.decor ?? []), ...walls, ...world.people].sort((a, b) => depthOf(a) - depthOf(b));
       for (const it of items) {
         if (it.kind === 'wall') drawWall(ctx, it);
         else if (it.kind === 'station') assets.draw(ctx, it.def.art, ...rectArgs(artRect(it)));
@@ -654,7 +655,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     const m = motionOf(p);
     poseAgent.state = stateOf(p);
     poseAgent.facing = m.flip;
-    const t = poseAgent.state === 'walking' ? m.stride / MOTION.stride : animT;
+    const t = poseAgent.state === 'walking' ? m.stride / (MOTION.stride * WALK.speedMultiplier) : animT; // (Milestone 14: longer hops at 5× speed)
     characterPose(poseAgent, t, m.seed, pose, p.kind === 'resident' ? MOTION.resident : MOTION.staff);
     const f = feetOf(p);
     const r = personRect(p);

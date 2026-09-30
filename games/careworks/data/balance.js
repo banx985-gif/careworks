@@ -74,3 +74,16 @@ export const SHORT_STAFFING = {
   agencyFeePerShift: 120, // Credits, each agency worker, each shift
   careRecoveryPerMissed: 35, // Credits per missed essential task
 };
+
+// Milestone 14 (fix first, Aaron's call 30 Sept): everyone walks 5× faster. The 90-second day stays. In a full Stage-1
+// home the far rooms were a 2–3 game-hour walk from the Dining Room (M13: ~63 essential morning tasks missed a day);
+// at 5× that is under half an hour. speedMultiplier multiplies data/home.js PERSON.speed (staff) and RESIDENT.speed
+// (residents); the hop length (MOTION.stride) is multiplied too, so people take the same number of hops a second on
+// screen as before — a longer, brisker hop, never frantic legs or a slide.
+// aids: a resident with a mobility aid walks at this share of everyone else's speed (still 5× faster than before);
+// aidBySupport: which aid by their primary support (bible §7), until Milestone 16 gives each resident their own.
+export const WALK = {
+  speedMultiplier: 5,
+  aids: { frame: 0.8, wheelchair: 0.85 },
+  aidBySupport: { 'Mobility Support': 'frame', Rehabilitation: 'frame', 'High Care': 'wheelchair' },
+};

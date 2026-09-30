@@ -91,3 +91,10 @@ export const WAKE = {
   lateBreakfastUntil: 9.5,
   waitForHelpUntil: 10.5, // someone not yet got up waits in bed for a helper (breakfast waits) until then
 };
+
+// Milestone 14: the Morning activity slot — a step between breakfast and the morning rest, only on days the timetable
+// (data/activities.js) has a Morning activity (its name, place, leaders and drops then come from the activity, as the
+// Afternoon slot's do: that one is the M2 'cards' step). ALL_STEPS is every step in day order (the routine's order
+// checks use it).
+export const MORNING_ACTIVITY_STEP = { id: 'morningActivity', name: 'Morning activity', at: 10, place: 'lounge', optional: true, activity: true, roles: ['LC'], task: 'run the morning activity', log: 'Morning activity', doing: 'At the morning activity', going: 'Walking to the morning activity', drops: { social: 15 } };
+export const ALL_STEPS = [ROUTINE[0], ROUTINE[1], MORNING_ACTIVITY_STEP, ...ROUTINE.slice(2)];

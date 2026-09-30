@@ -112,7 +112,7 @@ function makeTask(care, fields) {
 const refuses = (optionPrefs, id) => optionPrefs?.[id] === 'refuse';
 export function routineTemplate(step, plan, optionPrefs = null) {
   const base = ROUTINE_TASKS[step.id];
-  const out = { type: base.type, band: base.band, minutes: base.minutes, roles: [...step.roles], drops: { ...step.drops }, changedBy: [] };
+  const out = { type: base.type, band: base.band, minutes: step.minutes ?? base.minutes, roles: [...step.roles], drops: { ...step.drops }, changedBy: [] };
   for (const d of DOMAINS) {
     const o = optionById(plan[d.id]);
     if (refuses(optionPrefs, o?.id)) continue; // (Milestone 8) they refuse it: the step stays as it was
@@ -131,7 +131,9 @@ export function routineTemplate(step, plan, optionPrefs = null) {
 // a task for any need at or over the line. Nothing is planned for a band with no one on shift (he manages on his own,
 // as in Milestone 3). rolesOnShift(bandId) → Set of the roles rostered in that band; stepOver(stepId, day) → true when
 // that step has already run today; only = { domain } (a care-plan change: that domain's tasks only).
-export function generateBand({ care, st, band, day, now = -Infinity, rolesOnShift, stepOver = () => false, only = null }) {
+// steps (Milestone 14): the resident's steps for that day (their wake-up, and the day's activity sessions); none: their
+// routine without sessions' changes.
+export function generateBand({ care, st, band, day, now = -Infinity, rolesOnShift, stepOver = () => false, only = null, steps = null }) {
   const roles = rolesOnShift(band.id);
   if (!roles || roles.size === 0) return [];
   const plan = ensurePlan(st.plan);
@@ -161,7 +163,7 @@ export function generateBand({ care, st, band, day, now = -Infinity, rolesOnShif
     return o && !refuses(st.optionPrefs, o.id) ? o.removes ?? [] : [];
   }));
   if (!only) {
-    for (const step of routineFor(st)) { // (Milestone 13: their own wake-up and breakfast times)
+    for (const step of steps ?? routineFor(st)) { // (Milestone 13: their own wake-up and breakfast times; Milestone 14: the day's sessions)
       if (!ROUTINE_TASKS[step.id] || bandOfHour(step.at) !== band || stepOver(step.id, day) || removed.has(step.id)) continue;
       const tpl = routineTemplate(step, plan, st.optionPrefs);
       const opens = Math.max(absHour(day, step.at) - (ROUTINE_TASKS[step.id].lead ?? 0), bandStart(band, day));
@@ -189,6 +191,12 @@ export function generateBand({ care, st, band, day, now = -Infinity, rolesOnShif
   return out;
 }
 
+// Milestone 14: one more task from outside the band plan (a birthday visit).
+export function addTask(care, fields) {
+  const t = makeTask(care, fields);
+  care.tasks.push(t);
+  return t;
+}
 // Keep today's and yesterday's tasks (and anything still open).
 export function pruneTasks(care, today) {
   care.tasks = care.tasks.filter((t) => isOpen(t) || t.day > today - KEEP_DAYS);
@@ -296,7 +304,9 @@ export function changePlan(care, st, domain, optionId, ctx) {
   for (const t of care.tasks) {
     // a step no one has started helping with yet (open, or someone on the way) takes the new option's changes
     if (t.resident !== st.id || t.source !== 'routine' || !(t.status === 'open' || t.status === 'claimed') || t.day !== ctx.day) continue;
-    const tpl = routineTemplate(ROUTINE.find((x) => x.id === t.stepId), plan, st.optionPrefs);
+    const base = ROUTINE.find((x) => x.id === t.stepId);
+    if (!base || base.activity) continue; // (Milestone 14: an activity session's task follows its activity, not the plan)
+    const tpl = routineTemplate(base, plan, st.optionPrefs);
     Object.assign(t, { roles: tpl.roles, minutes: tpl.minutes, drops: tpl.drops, workLeft: tpl.minutes / 60, changedBy: tpl.changedBy });
     if (t.status === 'claimed' && !ctx.roleOf?.(t.slots[0])?.split(',').some((r) => t.roles.includes(r))) {
       t.status = 'open'; // the person on the way no longer fits: back on the board (the home world lets them go)

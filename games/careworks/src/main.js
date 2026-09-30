@@ -76,6 +76,8 @@ import { TASK_TYPES, BELL } from '../data/tasks.js';
 import { clockText, wakeWindowOf } from './systems/residentNeeds.js';
 import { WAKE } from '../data/routine.js';
 import { CONTINUITY, FRIENDSHIP, ACTIVITY_GROUPS } from '../data/relationships.js';
+import { ACTIVITIES, SCHEDULABLE, activityById, TIMETABLE, COMMUNITY_EVENTS } from '../data/activities.js';
+import { facilityById } from '../data/facilities.js';
 import { yearsEmployed } from './systems/staffTeam.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
@@ -261,7 +263,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left', 'care:birthday'],
   save: () => saveRun(),
   stamp: () => (open && !spawn ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && !spawn && router.currentName === 'home' && !open.world.clock.paused,
@@ -455,7 +457,8 @@ const topBar = createTopBar({
     ];
   },
   onStats: () => openLedger(),
-  onInbox: () => openTopSheet('inbox'),
+  onInbox: () => openInbox(),
+  inboxCount: () => open?.world?.activities?.notices().length ?? 0, // (Milestone 14: community notices waiting)
   onHelp: () => openTopSheet('help'),
   onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_LOCKED, accent: COL.progress, sections: [] })),
 });
@@ -505,6 +508,17 @@ bus.on('care:leaving', ({ name }) => {
 bus.on('staff:hired', ({ name }) => {
   if (open && router.currentName === 'home') dayBeat.showText(`Welcome to the team, ${first(name)}`, true);
   debug.log(`hired: ${name}`);
+});
+// Milestone 14: a birthday (medium beat; the first in a run also shows the First Birthday picture); a notice arriving
+// (a quiet line, only if nothing else is showing — never a stack of pop-ups)
+bus.on('care:birthday', ({ names, first: isFirst, art }) => {
+  if (!open || router.currentName !== 'home') return;
+  const who = names.map((n) => first(n)).join(' and ');
+  dayBeat.showText(`Happy birthday, ${who}!`, true);
+  if (isFirst && art) bigBeat = { title: 'A first birthday', text: `${who}'s birthday tea in the lounge`, art, age: 0 };
+});
+bus.on('care:notice', () => {
+  if (open && router.currentName === 'home' && !dayBeat.current && !bigBeat) dayBeat.showText('A notice in the Inbox', false);
 });
 // Milestone 12: ?debug=1 Fill roster (one beat for all of them)
 bus.on('staff:filled', ({ ids }) => {
@@ -564,6 +578,7 @@ function openResidents() {
             }) }]
             : [];
         })(),
+        { title: 'Activities', columns: 1, buttons: [{ id: 'care:activities', label: 'Activities', sub: activitiesSub(w), icon: 'care_ui_01', accent: COL.action, onTap: () => openActivities() }] },
         { title: 'Admissions', columns: 1, buttons: [{ id: 'admissions', label: 'Admissions', sub: `${adm.board.length} applying · ${adm.waiting.length} on the waiting list`, icon: CARE_ICONS.admissions, badge: adm.board.length || null, accent: COL.action, onTap: () => openAdmissions() }] },
         ...(debug.enabled && !spawn ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'debug:spawn60', label: 'Spawn all 60', sub: 'A test home (never saved): everyone comes in, walks to a spot, has their card opened once, then it clears', accent: COL.progress, onTap: () => startSpawnCheck() }] }] : []),
       ],
@@ -705,6 +720,137 @@ function openRoster() {
       ],
     };
   });
+}
+// --- Activities (Milestone 14, bible §20) -----------------------------------------------------------------------------
+const SLOT_WORD = { morning: 'Morning', afternoon: 'Afternoon' };
+const dayName = (w, day) => TIMETABLE.days[((day % 7) + 7) % 7];
+function activitiesSub(w) {
+  const s = w.sessionToday('afternoon');
+  const a = s && activityById(s.activity);
+  return a ? `Today: ${a.name} this afternoon · ${Object.values(s.choices).filter((c) => c !== 'decline').length} signed up` : 'Nothing on this afternoon: free time';
+}
+// Who's signed up for a session: joins, maybes, and who chose free time.
+function signupLines(w, s) {
+  if (!s) return [{ text: 'Free time: nothing on the timetable', color: COL.textMuted }];
+  const a = activityById(s.activity);
+  const by = (c) => Object.entries(s.choices).filter(([, v]) => v === c).map(([id]) => first(w.residentById(id)?.name ?? id));
+  const where = a.where.facility !== 'F05' && !w.layout.ofDef(a.where.facility).length ? ` (in the ${a.where.place === 'dining' ? 'Dining Room' : 'lounge'} until a ${facilityById(a.where.facility)?.name} is built)` : '';
+  const title = s.birthday ? `${first(w.residentById(s.birthday)?.name ?? '')}'s birthday tea` : s.event ? `${COMMUNITY_EVENTS.find((e) => e.id === s.event)?.name}` : a.name;
+  return [
+    { text: `${SLOT_WORD[s.slot]} ${clockText(TIMETABLE.slots[s.slot].at)}: ${title} · led by ${a.leaders.map((r) => ROLES[r].short).join(' / ')}${where}`, color: COL.actionDark },
+    `Joining: ${by('join').join(', ') || 'nobody yet'}${by('maybe').length ? ` · maybe: ${by('maybe').join(', ')}` : ''}`,
+    ...(by('decline').length ? [{ text: `Free time instead: ${by('decline').join(', ')} (their choice)`, color: COL.textMuted }] : []),
+  ];
+}
+function openActivities() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const day = w.clock.totalDays;
+    const tt = w.activities.timetable();
+    const today = ((day % 7) + 7) % 7;
+    const rows = [];
+    for (let i = 0; i < 7; i++) {
+      const dow = (today + i) % 7;
+      for (const slot of Object.keys(TIMETABLE.slots)) {
+        const a = tt[dow][slot] ? activityById(tt[dow][slot]) : null;
+        rows.push({ id: `slot:${dow}:${slot}`, label: `${TIMETABLE.days[dow]}${i === 0 ? ' (today)' : ''} · ${SLOT_WORD[slot]}`, sub: a ? `${a.name} · ${a.leaders.map((r) => ROLES[r].short).join(' / ')}` : 'Free time', icon: a?.prop ?? null, accent: a ? COL.good : COL.progress, onTap: () => openSlotPicker(dow, slot) });
+      }
+    }
+    const notices = w.activities.notices();
+    return {
+      title: 'Activities',
+      subtitle: 'A weekly timetable: a Morning and an Afternoon slot each day · residents choose whether to join',
+      art: 'care_ui_01',
+      accent: accentNow(),
+      sections: [
+        { title: 'Today', lines: [...signupLines(w, w.sessionToday('morning')).filter(() => !!w.sessionToday('morning')), ...signupLines(w, w.sessionToday('afternoon'))] },
+        { title: 'This week', lines: [{ text: 'Tap a slot to choose an activity (or free time). Declining is always fine: nobody is made to join.', color: COL.textMuted }], columns: 2, buttons: rows },
+        { title: 'Outings and visitors', lines: notices.length ? notices.map((n) => ({ text: `Notice: ${n.def.name} (${dayName(w, n.day)}): answer it in the Inbox`, color: COL.actionDark })) : [{ text: 'Visitor offers arrive in the Inbox a few days ahead.', color: COL.textMuted }], columns: 1, buttons: [
+          { id: 'act:outing', label: 'Plan an outing', sub: activityById('outing').needs.text, disabled: true, accent: COL.progress },
+          { id: 'act:inbox', label: 'Inbox', sub: notices.length ? `${notices.length} waiting` : 'Nothing waiting', accent: COL.progress, onTap: () => openInbox() },
+        ] },
+      ],
+    };
+  });
+}
+function openSlotPicker(dow, slot) {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const cur = w.activities.timetable()[dow][slot];
+    const here = w.residents.filter((r) => !r.state.leaving && !r.state.guest);
+    const rows = SCHEDULABLE.map((a) => {
+      const keen = here.filter((r) => ['love', 'like'].includes(w.feelingOf(r.id, a.id))).length;
+      return { id: `pick:${a.id}`, label: `${cur === a.id ? '✓ ' : ''}${a.name}`, sub: `${a.text} · ${keen} here would enjoy it · ${a.minutes} min · led by ${a.leaders.map((r) => ROLES[r].short).join(' / ')}`, icon: a.prop ?? null, selected: cur === a.id, accent: cur === a.id ? COL.good : COL.progress, onTap: () => {
+        const r = w.setSlot(dow, slot, a.id);
+        message = r.ok ? null : r.reason;
+        if (r.ok) {
+          autosave.request('activities');
+          openActivities();
+        }
+      } };
+    });
+    rows.push({ id: 'pick:free', label: `${cur == null ? '✓ ' : ''}Free time`, sub: 'Nothing planned: residents rest or do their own thing', accent: COL.progress, onTap: () => {
+      w.setSlot(dow, slot, null);
+      autosave.request('activities');
+      openActivities();
+    } });
+    return {
+      title: `${TIMETABLE.days[dow]} · ${SLOT_WORD[slot]}`,
+      subtitle: `Choose the ${SLOT_WORD[slot].toLowerCase()} activity (${clockText(TIMETABLE.slots[slot].at)})`,
+      accent: accentNow(),
+      sections: [
+        ...(message ? [{ lines: [{ text: message, color: COL.bad }] }] : []),
+        { columns: 1, buttons: rows },
+        { columns: 1, buttons: [{ id: 'pick:back', label: '‹ Back to Activities', accent: COL.progress, onTap: () => openActivities() }] },
+      ],
+    };
+  });
+}
+// The Inbox (Milestone 14): community / visitor notices — Accept books that afternoon (it needs a host on shift), Decline
+// lets it go. One notice at a time: they never stack.
+function openInbox() {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: 'Inbox', subtitle: TOP_SHEETS.inbox.text, accent: COL.progress, sections: [] };
+    const notices = w.activities.notices();
+    const sections = [];
+    if (message) sections.push({ lines: [{ text: message, color: COL.bad }] });
+    for (const n of notices) {
+      const can = w.activities.canAccept(n.uid);
+      sections.push({ title: n.def.name, lines: [n.def.text, { text: `${dayName(w, n.day)} afternoon (in ${n.day - w.clock.totalDays} day${n.day - w.clock.totalDays === 1 ? '' : 's'}) · runs as ${activityById(n.def.activity).name.toLowerCase()} with a bigger lift`, color: COL.actionDark }], columns: 2, buttons: [
+        { id: `notice:accept:${n.uid}`, label: 'Accept', sub: can.ok ? `Host: ${first(w.byId(can.host)?.name ?? '')}` : can.reason, disabled: !can.ok, accent: COL.good, onTap: () => {
+          const r = w.answerNotice(n.uid, true);
+          message = r.ok ? null : r.reason;
+          if (r.ok) autosave.request('inbox');
+        } },
+        { id: `notice:decline:${n.uid}`, label: 'Decline', sub: 'Politely, with thanks', accent: COL.progress, onTap: () => {
+          w.answerNotice(n.uid, false);
+          autosave.request('inbox');
+        } },
+      ] });
+    }
+    const past = w.activities.history().slice(-4).reverse();
+    sections.push({ title: 'Earlier', lines: past.length ? past.map((h) => ({ text: `${h.def.name}: ${h.accepted ? 'accepted' : h.auto ? 'no answer (let go)' : 'declined'}`, color: COL.textMuted })) : [{ text: notices.length ? '' : 'Nothing yet. Letters from families, partners and inspectors will arrive here too.', color: COL.textMuted }] });
+    return { title: 'Inbox', subtitle: notices.length ? `${notices.length} notice waiting` : 'Nothing waiting', art: 'care_ui_01', accent: accentNow(), sections };
+  });
+}
+// The resident card's Activities section: what they enjoy, a hint when nothing they like has been on for a while, their
+// birthday.
+function activitySection(w, it) {
+  const like = SCHEDULABLE.filter((a) => ['love', 'like'].includes(w.feelingOf(it.id, a.id))).map((a) => a.name);
+  const dislike = SCHEDULABLE.filter((a) => ['dislike', 'refuse'].includes(w.feelingOf(it.id, a.id))).map((a) => a.name);
+  const bd = w.birthdayOf(it.id);
+  const lines = [
+    { text: like.length ? `Enjoys: ${like.join(', ')}` : 'No favourites yet', color: COL.actionDark },
+    ...(dislike.length ? [{ text: `Would rather not: ${dislike.join(', ')}`, color: COL.textMuted }] : []),
+    ...(it.state.wouldEnjoy ? [{ text: `Would enjoy: ${activityById(it.state.wouldEnjoy)?.name} (nothing they like for a while)`, color: COL.warn }] : []),
+    { text: `Birthday: Month ${Math.floor((bd - 1) / 28) + 1}, day ${((bd - 1) % 28) + 1}`, color: COL.textMuted },
+  ];
+  return { title: 'Activities', lines };
 }
 // Milestone 13: pin a team member to a small group of residents (tap to add / remove; up to CONTINUITY.maxResidents).
 function openContinuity(staffId) {
@@ -1296,6 +1442,7 @@ function residentSections(w, it) {
     { title: 'Call bells', lines: bellLines(w, it, they) },
     familiarSection(w, it),
     friendsSection(w, it),
+    activitySection(w, it),
     { title: 'Needs', lines: [{ text: `How much support ${they} needs right now`, color: COL.textMuted }], bars: NEEDS.map((n) => ({ label: n.name, value: st.needs[n.id], color: COL.progress })) },
     { title: 'Outcomes', bars: OUTCOMES.map((o) => ({ label: o.name, value: st.outcomes[o.id], color: COL.good })) },
     { title: 'Today', lines: log.length ? log : ['Nothing yet today'] },
@@ -1593,6 +1740,7 @@ function openHomeSheet(id, from = null) {
       lines.unshift(who ? `Resident: ${who.name} (${who.def.support})` : 'Empty: ready for a new resident. Admit one from Care → Admissions.');
       if (!who) sections.push({ columns: 1, buttons: [{ id: 'room:admissions', label: 'Admissions', sub: `${w.admissions.board.length} applying`, icon: CARE_ICONS.admissions, accent: COL.action, onTap: () => openAdmissions() }] });
     }
+    if (it.defId === 'F05') sections.push({ columns: 1, buttons: [{ id: 'place:activities', label: 'Activities', sub: activitiesSub(w), accent: COL.action, onTap: () => openActivities() }] });
     if (it.defId === 'F05') {
       // Milestone 13: the activity groups (regulars: they prefer it, or have joined it often)
       for (const g of ACTIVITY_GROUPS) {
@@ -1692,7 +1840,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');
