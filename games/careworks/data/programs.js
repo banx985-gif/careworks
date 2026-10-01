@@ -13,7 +13,7 @@
 //     { type: 'facility', facility }   that facility is placed (data/facilities.js)
 //     { type: 'role', role }           someone with that role is on the team
 //     { type: 'night' }                someone is rostered on the Night shift (the Night template)
-//     { type: 'research', node }       a research node — Milestone 21: locked, ?debug=1 allows it
+//     { type: 'research', node }       a research node is done (data/research.js, Milestone 21); ?debug=1 allows it too
 //     { type: 'partner', text }        a community partner — Milestone 23: locked, ?debug=1 allows it
 //     { type: 'wing', wing }           a specialist wing — Milestone 24 / 27: locked, ?debug=1 allows it
 //     { type: 'secret', secret }       never: PRG11 / PRG12 are hidden (Milestone 31)
@@ -36,6 +36,8 @@
 //     usual at-the-door refusal rules apply)
 //   effects: the numbers it adds, on outcomes earlier milestones built (each program's own keys; see EFFECT_TEXT)
 //   secret: true — never listed, never startable
+import { nodeLabel } from './research.js';
+
 const p = (id, name, focus, fields) => ({ id, name, focus, icon: `program_${id.toLowerCase()}`, scope: 'facility', veto: { options: [], group: false }, choice: null, secret: false, ...fields });
 const DAY_NAMES = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -53,7 +55,7 @@ export const PROGRAMS = [
   p('PRG02', 'Music & Memory', 'Memory/Social', {
     scope: 'wing',
     text: 'Personalised music sessions for residents with memory support',
-    unlock: [{ type: 'role', role: 'LC' }, { type: 'research', node: 'Memory research' }],
+    unlock: [{ type: 'role', role: 'LC' }, { type: 'research', node: 'MEM2' }],
     resources: { staff: { roles: ['LC'], shift: 'afternoon', hours: 3 }, facility: null, shownAt: ['F20', 'F05'], weeklyCost: 40, prop: null },
     // (SO04's music-and-memory session: it counts as a personalised session — Milestone 17)
     adds: { kind: 'task', name: 'Music & Memory session', type: 'activity', at: 15, band: 'afternoon', days: [0, 2, 4], roles: ['LC'], minutes: 30, drops: { memory: 10, social: 10 }, outcomes: { comfort: 3, mood: 2 }, who: 'memory', optionId: 'SO04' },
@@ -73,7 +75,7 @@ export const PROGRAMS = [
   }),
   p('PRG04', 'Falls Prevention Program', 'Safety/Mobility', {
     text: 'Balance classes, and a lower falls risk for everyone',
-    unlock: [{ type: 'role', role: 'AH' }, { type: 'research', node: 'Mobility research' }],
+    unlock: [{ type: 'role', role: 'AH' }, { type: 'research', node: 'MOB2' }],
     resources: { staff: { roles: ['AH'], shift: 'morning', hours: 3 }, facility: null, shownAt: ['F07', 'F19', 'F05'], weeklyCost: 50, prop: null },
     adds: { kind: 'session', activity: 'exercise', slot: 'morning', days: [0, 3], name: 'Balance class', liftMult: 1 },
     suits: { text: 'Everyone (the falls risk drops for all); the class suits anyone keen to stay steady on their feet', tags: [] },
@@ -84,7 +86,7 @@ export const PROGRAMS = [
   p('PRG05', 'Reablement Pathway', 'Independence', {
     scope: 'wing',
     text: 'Faster rehab progress and more successful discharges',
-    unlock: [{ type: 'facility', facility: 'F18' }, { type: 'research', node: 'Mobility 4' }],
+    unlock: [{ type: 'facility', facility: 'F18' }, { type: 'research', node: 'MOB4' }],
     resources: { staff: { roles: ['AH'], shift: 'morning', hours: 3 }, facility: 'F18', shownAt: ['F18'], weeklyCost: 90, prop: null },
     adds: { kind: 'task', name: 'Reablement practice', type: 'mobility', at: 11.5, band: 'morning', days: [1, 3, 5], roles: ['AH', 'CW'], minutes: 20, drops: { mobility: 6 }, outcomes: { independence: 1 }, who: 'rehab', goalKind: 'therapy' },
     suits: { text: 'Residents working on rehab goals (Milestone 16)', supports: ['Rehabilitation', 'Mobility Support'] },
@@ -155,7 +157,7 @@ export const visibleProgram = (id) => VISIBLE_PROGRAMS.find((x) => x.id === id) 
 
 // What each lock says while it is locked (plain words), and the milestone that opens it.
 export const LOCKS = {
-  research: { milestone: 'M21', text: (r) => `Needs ${r.node} (research arrives in a later update)` },
+  research: { milestone: 'M21', text: (r) => `Needs research: ${nodeLabel(r.node)}` },
   partner: { milestone: 'M23', text: (r) => `Needs ${r.text} (community partners arrive in a later update)` },
   wing: { milestone: 'M24', text: (r) => `Needs a ${r.wing} (specialist wings arrive in a later update)` },
   night: { text: () => 'Needs staff rostered on the Night shift' },

@@ -136,13 +136,15 @@ export const rehabRise = (rehab) => (rehab?.active ? ((rehab.goals.transfer - re
 // --- falls risk ------------------------------------------------------------------------------------------------------------
 // level, aid · plan (their care plan: MO05, EN05) · fallsStaff (a Falls specialist on shift) · lab (F19 placed)
 // (Milestone 20: program — a running Falls Prevention Program's modifier { value, text }, or null)
-export function fallsRisk({ level, aid = 'none', plan = {}, fallsStaff = false, lab = false, program = null }) {
+// (Milestone 21: research — the home's research modifier { value, text }, or null)
+export function fallsRisk({ level, aid = 'none', plan = {}, fallsStaff = false, lab = false, program = null, research = null }) {
   const parts = [{ key: 'level', text: 'Mobility', value: r1((100 - level) * FALLS.perLevel) }];
   if (FALLS.aid[aid]) parts.push({ key: 'aid', text: AIDS[aid].name, value: FALLS.aid[aid] });
   if (plan.EN === 'EN05') parts.push({ key: 'EN05', text: FALLS.modifiers.EN05.text, value: FALLS.modifiers.EN05.value });
   if (plan.MO === 'MO05') parts.push({ key: 'MO05', text: FALLS.modifiers.MO05.text, value: FALLS.modifiers.MO05.value });
   if (fallsStaff) parts.push({ key: 'fallsStaff', text: FALLS.modifiers.fallsStaff.text, value: FALLS.modifiers.fallsStaff.value });
   if (program) parts.push({ key: 'program', text: program.text, value: program.value });
+  if (research) parts.push({ key: 'research', text: research.text, value: research.value });
   let risk = clamp(parts.reduce((a, p) => a + p.value, 0));
   if (lab) {
     const after = risk * FALLS.lab.mult;

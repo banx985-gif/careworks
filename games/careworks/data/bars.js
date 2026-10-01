@@ -9,7 +9,7 @@ export const BOTTOM_SLOTS = [
   { id: 'staff', label: 'Staff', icon: 'care_ui_02', opens: 'roster' },
   {
     id: 'develop', label: 'Develop', icon: 'care_ui_03', opens: 'placeholder',
-    title: 'Develop', text: 'Build Mode, the home’s stage and the specialist programs (Milestone 20); research will live here too.',
+    title: 'Develop', text: 'Build Mode, the home’s stage, research (Milestone 21) and the specialist programs; more will live here as the home grows.',
   },
   {
     id: 'quality', label: 'Quality', icon: 'care_ui_04', opens: 'placeholder',

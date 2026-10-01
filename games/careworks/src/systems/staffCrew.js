@@ -33,7 +33,8 @@ const stepWord = (step) => (step.activity ? step.name : step.name.toLowerCase())
 
 // Milestone 11: trainingSpot(p) → the spot ref a trainee sits at (the Training Room, or their rest spot without one);
 // trainingLabel(id) → the course they are on.
-export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow, bandNow, bus = null, trainingSpot = (p) => p.restSpot, trainingLabel = () => 'a course' }) {
+// (Milestone 21: energyMult() — × on the Energy used on shift, e.g. the home's Shift Planning research; 1 by default)
+export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow, bandNow, bus = null, trainingSpot = (p) => p.restSpot, trainingLabel = () => 'a course', energyMult = () => 1 }) {
   const makePerson = (model, i) => {
     const p = {
       kind: 'staff',
@@ -107,7 +108,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
     const m = p.model;
     const working = roster.workingShift(p.id);
     // Milestone 12: traits change the Energy they use on shift ('energy', e.g. Morning Person on Morning)
-    if (onShift(p)) m.energy = clamp(m.energy + B.energy.workPerHour * (1 + energyPct(m.traits, working) / 100) * hours);
+    if (onShift(p)) m.energy = clamp(m.energy + B.energy.workPerHour * (1 + energyPct(m.traits, working) / 100) * energyMult() * hours);
     else m.energy = clamp(m.energy + B.energy.restPerHour * hours * (p.mode === 'resting' ? B.energy.restSpotBonus : 1));
     if (m.energy < B.morale.lowEnergyBelow) m.morale = clamp(m.morale + B.morale.lowEnergyPerHour * hours);
     else {

@@ -10,7 +10,7 @@
 //   layout.pieces · layout.byId(id) · layout.byUid(uid) · layout.rooms · layout.roomNumber(id) · layout.ofDef(defId)
 //   layout.stage · layout.stageDef · layout.floor { cols, rows } · layout.capacity · layout.cap
 //   layout.spotTile(ref) · layout.buildGrid(grid) · layout.wallTiles() · layout.doorways() · layout.props()
-//   layout.unlock(defId) → { ok, reason } · layout.check(defId, col, row, uid?) → { ok, code, reason }
+//   layout.unlock(defId) → { ok, reason } (Milestone 21: a research unlock passes once its node is done — setResearchCheck(fn)) · layout.check(defId, col, row, uid?) → { ok, code, reason }
 //   layout.place(defId, col, row) · layout.move(uid, col, row) · layout.sell(uid) → { ok, reason, piece, refund }
 //   layout.canSell(uid, { occupied }) → { ok, reason } · layout.findSpot(defId, near, uid?)
 //   layout.upgrade() → { ok, reason } · layout.problems() → [{ piece, text }] · layout.fixUp() → [moved pieces]
@@ -166,10 +166,12 @@ export function createLayout({ saved = null, bus = null } = {}) {
   }
 
   // --- unlocks, capacity ---------------------------------------------------------------------------------------------
+  let researched = () => false; // (Milestone 21: the home world says which research nodes are done)
   function unlock(defId) {
     const d = defOf(defId);
     if (!d || d.secret) return { ok: false, reason: 'Unknown' };
     if (d.unlock.type === 'start' || s.debugUnlock) return { ok: true, reason: null };
+    if (d.unlock.type === 'research' && d.unlock.node && researched(d.unlock.node)) return { ok: true, reason: null };
     return { ok: false, reason: `Locked: ${d.unlock.text}` };
   }
   const cap = () => stageDef().capacity;
@@ -354,6 +356,9 @@ export function createLayout({ saved = null, bus = null } = {}) {
       s.debugUnlock = !!on;
     },
     unlock,
+    setResearchCheck(fn) {
+      researched = fn ?? (() => false);
+    },
     check,
     place,
     move,

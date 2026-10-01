@@ -33,6 +33,9 @@
 // against the roster, the weekly cost); a program's sheet says what it adds, who it suits and its effect, with Start /
 // Stop. Running programs show on the facility they use, in the Ledger (a cost line) and on the roster (the hours they
 // take); a resident's card shows their part in each. ?debug=1 unlocks the research / partner / wing ones.
+// Milestone 21: Develop → Research — the queue at the top (progress, days left), the chosen node's card (cost, what it
+// needs, what it opens or improves, Start), and six columns of node cards (one per branch: done glows green, locked
+// says why when tapped). Research Points are on the Ledger (what earned them this month). ?debug=1 adds RP.
 // Add ?debug=1 for the FPS/state overlay, ?screen=test for the scaling / tap / asset-loader test screen.
 import { THEME, font } from '../../../core/Theme.js';
 import { EventBus } from '../../../core/EventBus.js';
@@ -90,6 +93,7 @@ import { TRUST, MEETING, MEETING_ASK, COMPLAINT, COMPLAINTS, FIXES, REQUESTS, RE
 import { yearsEmployed } from './systems/staffTeam.js';
 import { VISIBLE_PROGRAMS, validatePrograms, dayList, LEDGER_CATEGORY } from '../data/programs.js';
 import { unlockWords } from './systems/programs.js';
+import { RESEARCH, BRANCHES, researchById, nodeLabel, validateResearch, QUEUES } from '../data/research.js';
 import { FACILITIES } from '../data/facilities.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
@@ -304,6 +308,9 @@ async function prepareSaves() {
     const pv = validatePrograms(new DataValidator(), { facilities: FACILITIES.map((f) => f.id), activities: ACTIVITIES.map((a) => a.id), options: CARE_OPTIONS.map((o) => o.id) }).report();
     debug.log(pv.ok ? `programs: ${VISIBLE_PROGRAMS.length} visible checked` : `program data: ${pv.errors.join('; ')}`);
     if (!pv.ok) console.error('[CAREWORKS] program data', pv.errors);
+    const rv = validateResearch(new DataValidator(), { facilities: FACILITIES.map((f) => f.id), programs: VISIBLE_PROGRAMS.map((p) => p.id) }).report();
+    debug.log(rv.ok ? `research: ${RESEARCH.length} nodes checked, no loops` : `research data: ${rv.errors.join('; ')}`);
+    if (!rv.ok) console.error('[CAREWORKS] research data', rv.errors);
   }
 }
 const cards = () => campaigns?.cards ?? [];
@@ -1445,6 +1452,10 @@ function openDevelop() {
       homeScreen.setBuildMode(true);
     } }];
     if (next) stageRows.push({ id: 'dev:stage', label: `Stage ${next.n}: ${next.name}`, sub: `Locked — needs Rank ${next.unlock.value} · room for ${next.capacity} residents and more floor`, disabled: true, accent: COL.progress });
+    // Milestone 21: research
+    const rq = w.research.queues().filter((q) => q.open);
+    const busy = rq.filter((q) => q.nodeId);
+    stageRows.push({ id: 'dev:research', label: 'Research', sub: `${w.research.rp.toLocaleString('en-GB')} RP · ${w.research.doneIds().length} of ${RESEARCH.length} done · ${busy.length ? `researching ${busy.map((q) => researchById(q.nodeId).name).join(', ')}` : 'the slot is free'}`, icon: 'care_ui_03', accent: COL.action, onTap: () => openResearch() });
     // Milestone 20: the specialist programs
     const nRun = w.programs.running().length;
     const nReady = w.programs.list().filter((x) => x.can.ok).length;
@@ -1469,6 +1480,127 @@ function openDevelop() {
       ],
     };
   });
+}
+// --- Research (Milestone 21, bible §26) ----------------------------------------------------------------------------------
+const branchOf = (id) => BRANCHES.find((b) => b.id === id);
+// What a node opens or improves, in plain words.
+function nodeDoes(x) {
+  const out = x.unlocks.map((u) => (u.type === 'program' ? `Opens the program: ${VISIBLE_PROGRAMS.find((p) => p.id === u.id)?.name ?? u.id}` : `Opens in Build Mode: ${facilityById(u.id)?.name ?? u.id} (${u.id})`));
+  out.push(...x.effects.map((e) => e.text));
+  if (x.later) out.push('Comes into play later (its part of the home arrives in a later update)');
+  return out;
+}
+// The picture on a node's card: what it opens (a program icon, a facility), else the Develop icon.
+function nodeIcon(x) {
+  const u = x.unlocks[0];
+  if (u?.type === 'program') return VISIBLE_PROGRAMS.find((p) => p.id === u.id)?.icon ?? 'care_ui_03';
+  if (u?.type === 'facility') return facilityById(u.id)?.art ?? 'care_ui_03';
+  return 'care_ui_03';
+}
+const STATE_WORD = { done: 'Done', active: 'Researching', available: 'Available', locked: 'Locked' };
+let researchPick = null;
+function openResearch(pick = null) {
+  researchPick = pick ?? researchPick;
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const R = w.research;
+    // the queue
+    const qLines = [];
+    const qBars = [];
+    for (const q of R.queues()) {
+      if (!q.open) {
+        qLines.push({ text: `${QUEUES[q.i].name}: locked — ${q.text ?? 'opens later'}`, color: COL.textMuted });
+        continue;
+      }
+      if (!q.nodeId) {
+        qLines.push({ text: `${QUEUES[q.i].name}: free — choose a node below`, color: COL.actionDark });
+        continue;
+      }
+      const x = researchById(q.nodeId);
+      qBars.push({ label: `${x.name} (${x.id})`, value: q.fraction * 100, color: COL.progress, text: `${q.daysLeft} day${q.daysLeft === 1 ? '' : 's'}` });
+    }
+    // the chosen node
+    const x = researchPick && researchById(researchPick);
+    const pickSec = [];
+    if (x) {
+      const st = R.status(x.id);
+      const why = R.why(x.id);
+      const can = R.canStart(x.id);
+      const lines = [
+        ...(message ? [{ text: message, color: COL.bad }] : []),
+        { text: x.text, color: COL.actionDark },
+        `Cost: ${x.cost.toLocaleString('en-GB')} RP, paid when it starts · then ${x.days} days`,
+        { text: x.requires.length ? `Needs first: ${x.requires.map((r) => `${nodeLabel(r)}${R.has(r) ? ' ✓' : ''}`).join(', ')}` : 'Needs first: nothing', color: x.requires.every((r) => R.has(r)) ? COL.good : COL.textMuted },
+        { text: `State: ${STATE_WORD[st]}${st === 'active' ? ` (${Math.round(R.fraction(x.id) * 100)}%)` : ''}${why && st !== 'active' ? ` — ${why}` : ''}`, color: st === 'done' ? COL.good : st === 'locked' ? COL.bad : COL.actionDark },
+        ...nodeDoes(x).map((t) => ({ text: t, color: COL.good })),
+      ];
+      const btn = st === 'done' || st === 'active'
+        ? []
+        : [{ id: 'res:start', label: `Start ${x.name}`, sub: can.ok ? `Pay ${x.cost.toLocaleString('en-GB')} RP now · done in ${x.days} days` : can.reason, disabled: !can.ok, accent: COL.good, onTap: () => {
+          const r = R.start(x.id);
+          message = r.ok ? null : r.reason;
+          if (r.ok) autosave.request('research');
+        } }];
+      pickSec.push({ title: `${x.name} (${x.id})`, lines, columns: 1, buttons: btn });
+    } else pickSec.push({ lines: [{ text: 'Tap a node to see what it needs and what it does.', color: COL.textMuted }] });
+    // six columns: one per branch
+    const lanes = BRANCHES.map((b) => {
+      const nodes = RESEARCH.filter((y) => y.branch === b.id);
+      return {
+        id: `res:lane:${b.id}`,
+        title: b.id,
+        sub: `${nodes.filter((y) => R.has(y.id)).length} / 6`,
+        accent: COL.progress,
+        items: nodes.map((y) => {
+          const st = R.status(y.id);
+          return {
+            id: `res:${y.id}`,
+            label: y.id,
+            sub: st === 'done' ? 'Done' : st === 'active' ? `${Math.round(R.fraction(y.id) * 100)}%` : `${y.cost} RP`,
+            icon: nodeIcon(y),
+            tag: st === 'done' ? '✓' : st === 'active' ? 'NOW' : null,
+            accent: st === 'done' ? COL.good : st === 'active' ? COL.gold : st === 'available' ? COL.action : COL.progress,
+            selected: researchPick === y.id && st !== 'done', // (a done node stays green)
+            onTap: () => {
+              researchPick = y.id;
+              message = null;
+            },
+          };
+        }),
+      };
+    });
+    const dbg = debug.enabled ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'res:debugRp', label: 'Add 1,000 RP (debug)', sub: 'For testing: a ledger line like any other', accent: COL.progress, onTap: () => R.addRp(1000, 'Debug', 'debug') }] }] : [];
+    return {
+      title: 'Research',
+      subtitle: `${R.rp.toLocaleString('en-GB')} Research Points · ${R.doneIds().length} of ${RESEARCH.length} done`,
+      art: 'care_ui_03',
+      accent: accentNow(),
+      sections: [
+        { title: 'Researching', lines: qLines, bars: qBars },
+        ...pickSec,
+        { title: 'Branches', lines: [{ text: BRANCHES.map((b) => `${b.id} ${b.name}`).join(' · '), color: COL.textMuted }], lanes },
+        { lines: [{ text: 'Research Points come from good care: successful discharges, compliments, a good month, running programs and the learning rooms.', color: COL.textMuted }] },
+        ...dbg,
+        { columns: 1, buttons: [{ id: 'res:back', label: '‹ Back to Develop', accent: COL.progress, onTap: () => openDevelop() }] },
+      ],
+    };
+  });
+}
+// The Ledger: Research Points (a run currency) — this month's ins and outs.
+function researchLedger(w, range) {
+  const lines = w.ledger.economy.ledger.filter((l) => l.currency === 'rp' && l.day >= range.fromDay);
+  const inn = lines.filter((l) => l.amount > 0).reduce((a, l) => a + l.amount, 0);
+  const out = lines.filter((l) => l.amount < 0).reduce((a, l) => a + l.amount, 0);
+  return {
+    title: 'Research Points',
+    lines: [
+      { text: `Balance: ${w.research.rp.toLocaleString('en-GB')} RP`, color: COL.actionDark },
+      ...lines.slice(-5).reverse().map((l) => ({ text: `${l.amount < 0 ? '−' : '+'}${Math.abs(l.amount)} RP  ${l.reason}`, color: l.amount < 0 ? COL.bad : COL.good })),
+      { text: `This month: earned ${inn} · spent ${-out}`, color: COL.textMuted },
+    ],
+  };
 }
 // --- Specialist programs (Milestone 20, bible §23) ----------------------------------------------------------------------
 const SLOT_TIME = { morning: 'mornings', afternoon: 'afternoons' };
@@ -1757,6 +1889,7 @@ function openLedger() {
       ] },
       clinicalLedger(w, range),
       programLedger(w, range), // (Milestone 20)
+      researchLedger(w, range), // (Milestone 21)
       last ? { title: `Last close: ${last.month}`, lines: ledgerLines(last.lines) } : { title: 'Last close', lines: [{ text: 'No month has closed yet.', color: COL.textMuted }] },
       { columns: 1, buttons: [{ id: 'ledger:back', label: '‹ Back to Business', accent: COL.progress, onTap: () => openBusiness() }] },
     ];
@@ -2560,7 +2693,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openQuality, openBusiness, openMenu, openDishPicker, confirmLetGo, openDevelop, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openQuality, openBusiness, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

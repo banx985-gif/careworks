@@ -41,7 +41,7 @@ export function monthLinesFor({ fromDay, toDay, residents, staff, len = toDay - 
 export function createLedger({ saved = null, bus = null, now = () => 0, startCredits = 0 } = {}) {
   const eco = new EconomySystem({
     bus,
-    currencies: { credits: { name: 'Credits' } },
+    currencies: { credits: { name: 'Credits' }, rp: { name: 'Research Points' } }, // (Milestone 21: RP, a run currency — an older save has 0)
     debt: { warnBelow: 0, limit: -Infinity, monthlyInterestPct: 0, closureMonths: Infinity }, // no debt system yet
     now,
     maxLines: LEDGER.maxLines,

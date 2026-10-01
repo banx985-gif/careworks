@@ -69,13 +69,15 @@ export const dietWords = (diet) => DIETS[diet]?.menu ?? DIETS.standard.menu;
 // kitchen: 'F16' | 'F04' | null · prep: 'onTime' | 'late' | 'none' · cook: { nut, traits } | null (who prepped it) ·
 // hospitalityOn: a Hospitality worker is on shift (else care staff serve).
 // (Milestone 20: program — Nutrition Plus's quality points when it runs, 0 otherwise)
-export function mealQuality({ kitchen = null, prep = 'none', cook = null, hospitalityOn = true, program = 0 }) {
+// (Milestone 21: research — the home's research quality points, 0 otherwise)
+export function mealQuality({ kitchen = null, prep = 'none', cook = null, hospitalityOn = true, program = 0, research = 0 }) {
   const parts = { base: QUALITY.base };
   parts.kitchen = kitchen ? KITCHENS[kitchen].quality : QUALITY.noKitchen;
   parts.prep = kitchen ? QUALITY.prep[prep] ?? 0 : 0;
   parts.cook = cook ? Math.min(QUALITY.nutMax, Math.max(0, (cook.nut - QUALITY.nutFrom) / QUALITY.nutPer)) + taskPct(cook.traits, 'meal') : 0;
   parts.serve = hospitalityOn ? 0 : QUALITY.careStaffServe;
   if (program) parts.program = program;
+  if (research) parts.research = research;
   const quality = clamp(Object.values(parts).reduce((a, v) => a + v, 0));
   return { quality: Math.round(quality * 10) / 10, parts };
 }

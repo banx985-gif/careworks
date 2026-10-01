@@ -17,7 +17,8 @@
 const f = (id, name, role, unlock, cost, effect, extra = {}) => ({ id, name, role, unlock, cost, effect, w: 3, h: 3, art: `facility_${id.toLowerCase()}`, secret: unlock.type === 'secret', ...extra });
 const start = { type: 'start', text: 'Available from the start' };
 const rank = (r) => ({ type: 'rank', value: r, text: `Needs Rank ${r}` });
-const research = (branch, level) => ({ type: 'research', value: `${branch} ${level}`, text: `Needs ${branch} research level ${level}` });
+// (Milestone 21: node — the research node that opens it, data/research.js)
+const research = (branch, level, node, name) => ({ type: 'research', value: `${branch} ${level}`, node, text: `Needs research: ${name} (${node})` });
 const fx = (key, value, text, wired = false) => ({ key, value, text, wired });
 
 export const FACILITIES = [
@@ -60,11 +61,11 @@ export const FACILITIES = [
   f('F14', 'Courtyard Garden', 'Lifestyle', rank('D'), 2200, fx('outdoorMood', 8, 'Outdoor mood +8'), { text: 'Fresh air, flowers and a bench in the sun' }),
   f('F15', 'Family Room', 'Front desk', rank('C'), 1700, fx('familyTrustMeetingPct', 8, 'Family Trust meeting bonus +8%', true), { text: 'A private room for family visits' }),
   f('F16', 'Commercial Kitchen', 'Maker', rank('C'), 5200, fx('mealProductionPct', 15, 'Meal production +15%; diet plans', true), { text: 'A bigger kitchen for a bigger home' }),
-  f('F17', 'Nutrition Office', 'Specialist', research('Nutrition', 3), 4600, fx('nutritionOutcomes', 10, 'Nutrition outcomes +10', true), { text: 'Plans special diets and monitors meals' }),
+  f('F17', 'Nutrition Office', 'Specialist', research('Nutrition', 3, 'NUT3', 'Texture Modification'), 4600, fx('nutritionOutcomes', 10, 'Nutrition outcomes +10', true), { text: 'Plans special diets and monitors meals' }),
   f('F18', 'Rehabilitation Gym', 'Specialist', rank('C'), 5800, fx('rehabMobilityPct', 15, 'Rehab / mobility +15%', true), { text: 'Equipment for getting back on your feet' }),
-  f('F19', 'Falls Prevention Lab', 'Specialist', research('Mobility', 4), 5200, fx('fallsRiskReductionPct', 12, 'Falls risk reduction +12%', true), { text: 'Balance checks and safer walking' }),
-  f('F20', 'Memory Activity Room', 'Lifestyle', research('Memory', 3), 5000, fx('memoryActivitiesPct', 15, 'Memory-care activities +15%', true), { text: 'Familiar things and gentle activities' }),
-  f('F21', 'Sensory Room', 'Lifestyle', research('Memory', 4), 5400, fx('lowStimulationComfort', 12, 'Low-stimulation comfort +12', true), { text: 'Soft light and calm sounds' }),
+  f('F19', 'Falls Prevention Lab', 'Specialist', research('Mobility', 4, 'MOB4', 'Reablement'), 5200, fx('fallsRiskReductionPct', 12, 'Falls risk reduction +12%', true), { text: 'Balance checks and safer walking' }),
+  f('F20', 'Memory Activity Room', 'Lifestyle', research('Memory', 3, 'MEM3', 'Meaningful Activity'), 5000, fx('memoryActivitiesPct', 15, 'Memory-care activities +15%', true), { text: 'Familiar things and gentle activities' }),
+  f('F21', 'Sensory Room', 'Lifestyle', research('Memory', 4, 'MEM4', 'Low-Stimulation Design'), 5400, fx('lowStimulationComfort', 12, 'Low-stimulation comfort +12', true), { text: 'Soft light and calm sounds' }),
   f('F22', 'Memory Garden', 'Lifestyle', { type: 'wing', value: 'memory', text: 'Needs the Memory Wing' }, 6200, fx('secureOutdoorMemory', 15, 'Secure outdoor memory support +15', true), { text: 'A safe garden to wander' }),
   f('F23', 'Clinical Treatment Room', 'Specialist', rank('B'), 6000, fx('complexClinicalPct', 12, 'Complex clinical tasks +12%', true), { text: 'Care that would otherwise need a hospital trip' }),
   f('F24', 'Palliative Family Lounge', 'Front desk', { type: 'program', value: 'Palliative 3', text: 'Needs the Palliative program at level 3' }, 5600, fx('endOfLifeFamilySupport', 15, 'End-of-life family support +15'), { text: 'Somewhere quiet for families to stay close' }),
@@ -76,7 +77,7 @@ export const FACILITIES = [
   f('F30', 'High-Care Nursing Wing Hub', 'Maker', rank('A'), 9000, fx('highCareWing', 1, 'Unlocks the High-Care wing'), { text: 'The heart of a high-care wing' }),
   f('F31', 'Rehabilitation Wing Hub', 'Maker', rank('A'), 8800, fx('rehabWing', 1, 'Unlocks Rehab wing expansion'), { text: 'The heart of a rehabilitation wing' }),
   f('F32', 'Palliative Care Wing Hub', 'Maker', rank('A'), 9000, fx('palliativeWing', 1, 'Unlocks the Palliative wing'), { text: 'The heart of a palliative wing' }),
-  f('F33', 'Emergency Preparedness Hub', 'Thinker', { type: 'score', value: 'Safety 5', text: 'Needs a Safety score of 5' }, 7600, fx('emergencySeverityPct', -15, 'Emergency severity −15%'), { text: 'Plans and kit for when things go wrong' }),
+  f('F33', 'Emergency Preparedness Hub', 'Thinker', research('Safety', 5, 'OPS4', 'Emergency Readiness'), 7600, fx('emergencySeverityPct', -15, 'Emergency severity −15%'), { text: 'Plans and kit for when things go wrong' }),
   f('F34', 'Centenarian Garden', 'Secret', { type: 'secret', value: 'SEC-FAC-01', text: 'Secret' }, 12000, fx('prestigeWellbeingPct', 20, 'Prestige wellbeing program +20%'), { text: 'A secret' }),
   f('F35', 'Legacy House', 'Secret', { type: 'secret', value: 'SEC-FAC-02', text: 'Secret' }, 15000, fx('prestigeStoryHub', 1, 'Prestige story / familiar-care hub'), { text: 'A secret' }),
 ];

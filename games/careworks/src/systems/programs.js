@@ -7,7 +7,7 @@
 //   a run: { id, wing, since (day started), paidTo (paid up to this day), paid (Credits so far), sessions (held),
 //            offered, joined, declined, residents: { residentId: { joined, declined } } }
 //
-//   unlockOf(def, ctx) → { ok, reason, lock }   ctx = { facilities: Set, roles: Set, night: bool, debug: bool }
+//   unlockOf(def, ctx) → { ok, reason, lock }   ctx = { facilities: Set, roles: Set, night: bool, debug: bool, researched(nodeId) }
 //   shiftHours(shiftId) · rosteredHours(people, roles, shift) · committedHours(state, roles, shift, exceptId)
 //   hoursFor(def, ctx) → { need, rostered, committed, free, ok, text }
 //   vetoOf(def, st) → a plain reason (they refuse an option it is part of, or group activities), or null
@@ -50,7 +50,8 @@ export function unlockOf(def, ctx) {
     if (r.type === 'facility') ok = !!ctx.facilities?.has(r.facility);
     else if (r.type === 'role') ok = !!ctx.roles?.has(r.role);
     else if (r.type === 'night') ok = !!ctx.night;
-    else if (r.type === 'research' || r.type === 'partner' || r.type === 'wing') ok = !!ctx.debug; // (Milestones 21 / 23 / 24: ?debug=1 only)
+    else if (r.type === 'research') ok = !!ctx.researched?.(r.node) || !!ctx.debug; // (Milestone 21: the node is done)
+    else if (r.type === 'partner' || r.type === 'wing') ok = !!ctx.debug; // (Milestones 23 / 24: ?debug=1 only)
     else ok = false;
     if (!ok) return { ok: false, reason: ruleText(r), lock: r.type };
   }
