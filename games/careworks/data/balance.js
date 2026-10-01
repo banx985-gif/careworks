@@ -1,3 +1,4 @@
+import { ROOM_FEES, FUNDING } from './economy.js';
 // Staff numbers (Milestone 3). Placeholders, logged in docs/DECISIONS.md — tune here.
 //   Energy and Morale are 0–100. Hours are game hours (a game hour is 3.75 real seconds at 1×).
 import { SHIFT_TEMPLATES } from './shifts.js';
@@ -32,12 +33,14 @@ export const ECONOMY_START = { credits: 100000, careTokens: 0 };
 // At each month's close every resident pays the accommodation fee and brings Care Support Funding by their Support
 // Level (1–5, data/residents.js), both for the days they lived here that month; every team member's salary (data/staff.js)
 // goes out in full. The balance may go below zero: no debt system yet, just a red number.
+// Milestone 22: the real numbers live in data/economy.js (fees by room, funding by level from the care it needs); FEES
+// keeps the Milestone 6 names for the code and tests that read them: a Standard Room's fee and the funding table.
 export const FEES = {
-  accommodationPerMonth: 900, // Credits a resident a month
-  careSupportFundingByLevel: { 1: 150, 2: 300, 3: 450, 4: 600, 5: 750 }, // Credits a month by Support Level
+  accommodationPerMonth: ROOM_FEES.RM01,
+  careSupportFundingByLevel: FUNDING,
 };
 export const LEDGER = {
-  categories: { opening: 'Opening balance', fees: 'Accommodation fees', funding: 'Care Support Funding', wages: 'Wages', agency: 'Agency cover', careRecovery: 'Care recovery', build: 'Building', sell: 'Sold (50% back)', food: 'Food', rehabFunding: 'Rehab funding', programs: 'Specialist programs', research: 'Research' }, // (Milestone 21: Research Points in and out, currency 'rp') // (Milestone 20: each running program's weekly cost — data/programs.js) // (Milestone 16: rehab funding — data/mobility.js REHAB_FUNDING) // (Milestone 15: food, per meal served — data/dining.js FOOD_COST)
+  categories: { opening: 'Opening balance', fees: 'Accommodation fees', funding: 'Care Support Funding', wages: 'Wages', agency: 'Agency cover', careRecovery: 'Care recovery', build: 'Building', sell: 'Sold (50% back)', food: 'Food', rehabFunding: 'Rehab funding', programs: 'Specialist programs', research: 'Research', respiteFunding: 'Respite funding', programFunding: 'Program funding', supplies: 'Supplies', equipment: 'Equipment upkeep', upkeep: 'Rooms and facilities upkeep', utilities: 'Utilities and maintenance', training: 'Training', recruit: 'Recruitment', clinical: 'Clinician and hospital', loan: 'Emergency Credit', loanRepay: 'Emergency Credit repayment', investor: 'Rescue Investor', investorShare: 'Rescue Investor share', tokens: 'Care Tokens' }, // (Milestone 22) // (Milestone 21: Research Points in and out, currency 'rp') // (Milestone 20: each running program's weekly cost — data/programs.js) // (Milestone 16: rehab funding — data/mobility.js REHAB_FUNDING) // (Milestone 15: food, per meal served — data/dining.js FOOD_COST)
   maxLines: 400, // older lines fold into one (core/EconomySystem)
 };
 
@@ -72,7 +75,7 @@ export const ON_CALL = {
 
 export const SHORT_STAFFING = {
   agencyFeePerShift: 120, // Credits, each agency worker, each shift
-  careRecoveryPerMissed: 35, // Credits per missed essential task
+  careRecoveryPerMissed: 25, // Credits per missed essential task (Milestone 22: 35 → 25, tuned with the real economy)
 };
 
 // Milestone 14 (fix first, Aaron's call 30 Sept): everyone walks 5× faster. The 90-second day stays. In a full Stage-1

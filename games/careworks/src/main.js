@@ -36,6 +36,10 @@
 // Milestone 21: Develop → Research — the queue at the top (progress, days left), the chosen node's card (cost, what it
 // needs, what it opens or improves, Start), and six columns of node cards (one per branch: done glows green, locked
 // says why when tapped). Research Points are on the Ledger (what earned them this month). ?debug=1 adds RP.
+// Milestone 22: the economy. Business → Ledger: this month / last month for every income and cost line (with icons), a
+// small 6-month balance line, Emergency Credit / Rescue Investor status. Offers arrive in the Inbox (Accept / Not now).
+// Care Tokens on the top bar (shown only). Resident and applicant cards show the Support Level (from needs), its
+// funding and its required care cost.
 // Add ?debug=1 for the FPS/state overlay, ?screen=test for the scaling / tap / asset-loader test screen.
 import { THEME, font } from '../../../core/Theme.js';
 import { EventBus } from '../../../core/EventBus.js';
@@ -91,6 +95,8 @@ import { WALKING } from '../data/memory.js';
 import { ACTIONS, ACTION_IDS, CLINICIAN, HOSPITAL } from '../data/clinical.js';
 import { TRUST, MEETING, MEETING_ASK, COMPLAINT, COMPLAINTS, FIXES, REQUESTS, REQUEST, FAMILY_ICONS } from '../data/family.js';
 import { yearsEmployed } from './systems/staffTeam.js';
+import { LEDGER_ROWS, CLOSE_CATS, DEBT, ROOM_FEES } from '../data/economy.js';
+import { levelOfNeeds, requiredCost, fundingOf } from './systems/economy.js';
 import { VISIBLE_PROGRAMS, validatePrograms, dayList, LEDGER_CATEGORY } from '../data/programs.js';
 import { unlockWords } from './systems/programs.js';
 import { RESEARCH, BRANCHES, researchById, nodeLabel, validateResearch, QUEUES } from '../data/research.js';
@@ -474,13 +480,13 @@ const topBar = createTopBar({
     const b = balanceNow();
     return [
       { icon: TOP_ICONS.credits, text: credits(b), color: b < 0 ? COL.bad : COL.text, gap: 18 },
-      { icon: TOP_ICONS.careTokens, text: String(e.careTokens ?? 0), gap: 18 },
+      { icon: TOP_ICONS.careTokens, text: String(open?.world?.economy?.tokens ?? e.careTokens ?? 0), gap: 18 }, // (Milestone 22: Care Tokens, shown only)
       { text: `Rank ${RANK_NONE}` },
     ];
   },
   onStats: () => openLedger(),
   onInbox: () => openInbox(),
-  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting(), // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home; Milestone 18: alerts waiting for a choice; Milestone 19: family asks, requests, new complaints)
+  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting() + (open?.world?.economy?.offers().length ?? 0), // (Milestone 22: debt offers) // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home; Milestone 18: alerts waiting for a choice; Milestone 19: family asks, requests, new complaints)
   onHelp: () => openTopSheet('help'),
   onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_LOCKED, accent: COL.progress, sections: [] })),
 });
@@ -897,6 +903,8 @@ function openInbox() {
     const notices = w.activities.notices();
     const sections = [];
     if (message) sections.push({ lines: [{ text: message, color: COL.bad }] });
+    // Milestone 22: Emergency Credit / a Rescue Investor
+    for (const o of w.economy.offers()) sections.push(offerSection(w, o, (m) => (message = m)));
     // Milestone 18: alerts — the six high-level choices
     for (const a of w.clinical.alerts()) sections.push(alertSection(w, a, 'inbox'));
     // Milestone 16: residents ready to go home — send them home now, or it happens on its own
@@ -918,7 +926,7 @@ function openInbox() {
     }
     const past = w.activities.history().slice(-4).reverse();
     sections.push({ title: 'Earlier', lines: past.length ? past.map((h) => ({ text: `${h.def.name}: ${h.accepted ? 'accepted' : h.auto ? 'no answer (let go)' : 'declined'}`, color: COL.textMuted })) : [{ text: notices.length ? '' : 'Nothing yet. Letters from families, partners and inspectors will arrive here too.', color: COL.textMuted }] });
-    const waiting = notices.length + alertsWaiting() + familyWaiting();
+    const waiting = notices.length + alertsWaiting() + familyWaiting() + w.economy.offers().length;
     return { title: 'Inbox', subtitle: waiting ? `${waiting} waiting` : 'Nothing waiting', art: 'care_ui_01', accent: accentNow(), sections };
   });
 }
@@ -1840,9 +1848,9 @@ function openBusiness() {
         { lines: [{ text: t == null ? 'Family Trust: no families yet' : `Family Trust: ${Math.round(t)} / 100 (every family's average)`, color: trustColour(t) }], bars: t == null ? [] : [{ label: 'Family Trust', value: t, color: trustColour(t), text: `${Math.round(t)}` }], columns: 1, buttons: [{ id: 'business:family', label: 'Compliments & complaints', sub: open?.world ? `${open.world.family.open().length} open · ${open.world.family.compliments().length} compliments` : '', icon: FAMILY_ICONS.trust, accent: COL.action, onTap: () => openQuality() }] },
         {
           columns: 1,
-          lines: ['Your home saves itself as you play.'],
+          lines: [...(open?.world ? open.world.economy.warnings().map((t) => ({ text: t, color: COL.bad })) : []), 'Your home saves itself as you play.'], // (Milestone 22: debt)
           buttons: [
-            { id: 'ledger', label: 'Ledger', sub: `Balance ${credits(b)} Credits · fees, funding and wages each month`, accent: COL.action, onTap: () => openLedger() },
+            { id: 'ledger', label: 'Ledger', sub: `Balance ${credits(b)} Credits · this month and last, line by line`, icon: 'care_ui_05', accent: COL.action, onTap: () => openLedger() },
             { id: 'mainMenu', label: 'Save and Main Menu', accent: COL.progress, onTap: () => leaveHome() },
           ],
         },
@@ -1850,13 +1858,80 @@ function openBusiness() {
     };
   });
 }
-// The Ledger (Milestone 6): the balance, this month so far (what the close will bring) and the last month's close.
-function ledgerLines(lines) {
-  const out = lines.map((l) => ({ text: `${l.amount < 0 ? '−' : '+'}${credits(Math.abs(l.amount))}  ${l.reason}`, color: l.amount < 0 ? COL.bad : COL.good }));
-  const inc = lines.filter((l) => l.amount > 0).reduce((t, l) => t + l.amount, 0);
-  const cost = lines.filter((l) => l.amount < 0).reduce((t, l) => t + l.amount, 0);
-  out.push({ text: `Income ${credits(inc)} · Costs ${credits(-cost)} · Net ${inc + cost < 0 ? '−' : '+'}${credits(Math.abs(inc + cost))}`, color: COL.actionDark });
-  return out;
+// Milestone 22: the Ledger — this month (so far, with the close's lines as they stand) and last month for every income and
+// cost line, a small 6-month balance line, the loan / investor status.
+function ledgerMonth(w) {
+  const range = w.monthRange();
+  const sum = {};
+  for (const l of w.ledger.economy.ledger) if (l.currency === 'credits' && l.day >= range.fromDay && !['opening', 't', 'test', 'debug'].includes(l.category) && !(l.day === range.fromDay && CLOSE_CATS.includes(l.category))) sum[l.category] = (sum[l.category] ?? 0) + l.amount;
+  for (const l of w.ledger.forecast({ ...range, day: w.clock.totalDays, residents: w.payers(), staff: w.payroll(), home: w.homeCosts() })) sum[l.category] = (sum[l.category] ?? 0) + l.amount;
+  return sum;
+}
+const signedCredits = (v) => `${v < 0 ? '−' : v > 0 ? '+' : ''}${credits(Math.abs(v))}`;
+// A small line of the month-end balances (code-drawn), for a sheet line's glyph.
+function balanceGlyph(points) {
+  return (ctx, x, y, size) => {
+    const w = 520;
+    const h = size * 1.1;
+    ctx.strokeStyle = COL.track;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(x, y, w, h);
+    if (points.length < 2) return;
+    const lo = Math.min(...points, 0);
+    const hi = Math.max(...points, 0);
+    const span = Math.max(1, hi - lo);
+    const py = (v) => y + h - 4 - ((v - lo) / span) * (h - 8);
+    if (lo < 0 && hi > 0) {
+      ctx.strokeStyle = COL.bad;
+      ctx.beginPath();
+      ctx.moveTo(x, py(0));
+      ctx.lineTo(x + w, py(0));
+      ctx.stroke();
+    }
+    ctx.strokeStyle = COL.good;
+    ctx.lineWidth = 5;
+    ctx.beginPath();
+    points.forEach((v, k) => {
+      const px = x + 8 + (k / (points.length - 1)) * (w - 16);
+      if (k) ctx.lineTo(px, py(v));
+      else ctx.moveTo(px, py(v));
+    });
+    ctx.stroke();
+    ctx.fillStyle = COL.good;
+    points.forEach((v, k) => {
+      ctx.beginPath();
+      ctx.arc(x + 8 + (k / (points.length - 1)) * (w - 16), py(v), 7, 0, Math.PI * 2);
+      ctx.fill();
+    });
+  };
+}
+function offerSection(w, o, say) {
+  const D = DEBT;
+  if (o.kind === 'loan') {
+    const owed = Math.round(D.loan.amount * (1 + D.loan.interestPct / 100));
+    return { title: 'Emergency Credit', lines: [{ text: `The home is in deep debt (${credits(w.ledger.balance)} Credits). A loan of ${credits(D.loan.amount)} now, repaid as ${D.loan.months} monthly payments of ${credits(Math.ceil(owed / D.loan.months))} (${D.loan.interestPct}% on top).`, color: COL.actionDark }, { text: 'Nobody is let go and nothing changes for the residents either way.', color: COL.textMuted }], columns: 2, buttons: [
+      { id: 'offer:loan:yes', label: 'Take the loan', sub: `+${credits(D.loan.amount)} now`, accent: COL.good, onTap: () => {
+        const r = w.economy.accept('loan');
+        say(r.ok ? null : r.reason);
+        if (r.ok) autosave.request('economy');
+      } },
+      { id: 'offer:loan:no', label: 'Not now', sub: `It may be offered again in ${D.reofferDays} days`, accent: COL.progress, onTap: () => {
+        w.economy.decline('loan');
+        autosave.request('economy');
+      } },
+    ] };
+  }
+  return { title: 'A Rescue Investor', lines: [{ text: `The balance has kept sinking. An investor will clear the debt (to ${credits(D.investor.buffer)} Credits, and any Emergency Credit still owed) for ${D.investor.sharePct}% of each month's profit for ${D.investor.months} months.`, color: COL.actionDark }, { text: 'The home and everyone in it carry on as they are.', color: COL.textMuted }], columns: 2, buttons: [
+    { id: 'offer:investor:yes', label: 'Accept the investor', sub: `Debt cleared · ${D.investor.sharePct}% of profit`, accent: COL.good, onTap: () => {
+      const r = w.economy.accept('investor');
+      say(r.ok ? null : r.reason);
+      if (r.ok) autosave.request('economy');
+    } },
+    { id: 'offer:investor:no', label: 'Not now', sub: 'Asked again if it keeps sinking', accent: COL.progress, onTap: () => {
+      w.economy.decline('investor');
+      autosave.request('economy');
+    } },
+  ] };
 }
 function openLedger() {
   sheet.open(() => {
@@ -1864,33 +1939,39 @@ function openLedger() {
     if (!w) return { title: '', sections: [] };
     const b = w.ledger.balance;
     const c = w.clock;
-    const range = w.monthRange();
-    const soFar = w.ledger.forecast({ ...range, day: c.totalDays, residents: w.payers(), staff: w.payroll() });
-    const last = w.ledger.lastClose;
-    // Milestone 7: agency fees and care recovery post as they happen; the unsafe-shift counter
-    const live = w.ledger.economy.ledger.filter((l) => l.day >= range.fromDay && (l.category === 'agency' || l.category === 'careRecovery'));
-    const sum = (cat) => live.filter((l) => l.category === cat).reduce((t, l) => t + l.amount, 0);
-    const nAgency = live.filter((l) => l.category === 'agency').length;
-    const unsafe = w.staffState.coverage.unsafe;
-    const shortLines = [
-      { text: `Agency cover: ${nAgency} shift${nAgency === 1 ? '' : 's'} · ${nAgency ? '−' : ''}${credits(-sum('agency'))} (${SHORT_STAFFING.agencyFeePerShift} a shift)`, color: nAgency ? COL.bad : COL.textMuted },
-      { text: `Care recovery for missed essential tasks: ${sum('careRecovery') ? '−' : ''}${credits(-sum('careRecovery'))} (${SHORT_STAFFING.careRecoveryPerMissed} each)`, color: sum('careRecovery') ? COL.bad : COL.textMuted },
-      { text: `Unsafe shifts so far: ${unsafe} (run under minimum with no agency cover)`, color: unsafe ? COL.bad : COL.textMuted },
-    ];
+    const now = ledgerMonth(w);
+    const last = w.economy.history(1)[0]?.byCat ?? {};
+    const row = (r) => {
+      const t = now[r.cat] ?? 0;
+      const l = last[r.cat] ?? 0;
+      const later = /later/.test(r.name);
+      if (!t && !l && !later && !['fees', 'funding', 'wages', 'food', 'supplies', 'equipment', 'upkeep', 'utilities'].includes(r.cat)) return null;
+      return { id: `ledger:${r.cat}`, label: r.name, sub: later ? 'Comes in a later update' : `This month ${signedCredits(t)} · last month ${signedCredits(l)}`, icon: r.icon, accent: later ? COL.progress : r.kind === 'income' ? COL.good : COL.action, disabled: later };
+    };
+    const inc = LEDGER_ROWS.filter((r) => r.kind === 'income').map(row).filter(Boolean);
+    const cost = LEDGER_ROWS.filter((r) => r.kind === 'cost').map(row).filter(Boolean);
+    const tot = (kind) => LEDGER_ROWS.filter((r) => r.kind === kind).reduce((t, r) => t + (now[r.cat] ?? 0), 0);
+    const totLast = (kind) => LEDGER_ROWS.filter((r) => r.kind === kind).reduce((t, r) => t + (last[r.cat] ?? 0), 0);
+    const hist = w.economy.history(6);
+    const d = w.economy.state.debt;
+    const debtLines = [];
+    for (const t of w.economy.warnings()) debtLines.push({ text: t, color: COL.bad });
+    if (d.loan) debtLines.push({ text: `Emergency Credit: ${credits(d.loan.owed)} still owed · ${d.loan.left} monthly payments of ${credits(d.loan.payment)} left`, color: COL.actionDark });
+    if (d.investor) debtLines.push({ text: `Rescue Investor: ${d.investor.sharePct}% of each month's profit for ${d.investor.left} more month${d.investor.left === 1 ? '' : 's'}`, color: COL.actionDark });
+    if (d.offer) debtLines.push({ text: `An offer is waiting in the Inbox: ${d.offer.kind === 'loan' ? 'Emergency Credit' : 'a Rescue Investor'}`, color: COL.warn });
+    if (!debtLines.length) debtLines.push({ text: `No loans. Emergency Credit is offered if the balance falls below ${credits(DEBT.floor)}.`, color: COL.textMuted });
     const sections = [
-      { lines: [{ text: `Balance: ${credits(b)} Credits`, color: b < 0 ? COL.bad : COL.actionDark }, ...(b < 0 ? [{ text: 'Below zero. There is no debt system yet: the home carries on.', color: COL.bad }] : [])] },
-      { title: `This month so far (Month ${c.month}, Year ${c.year})`, lines: [{ text: 'Paid at the month\'s close: fees and funding for each resident\'s days here, wages in full.', color: COL.textMuted }, ...ledgerLines(soFar)] },
-      { title: 'Short staffing this month (paid as it happens)', lines: shortLines },
-      // Milestone 16: the care-outcome counters (Reputation and Research Points are spent in later updates)
-      { title: 'Care outcomes', lines: [
-        { text: `Successful discharges: ${w.rewards.positiveOutcomes}${w.rewards.discharges.length ? ` (last: ${first(w.rewards.discharges.at(-1).name)})` : ''}`, color: COL.actionDark },
-        `Reputation: ${w.rewards.reputation} · Research Points: ${w.rewards.research}`,
-        { text: `Rehab funding: ${REHAB_FUNDING.perMonth} Credits a month for each resident working on their goals (paid at the close)`, color: COL.textMuted },
-      ] },
-      clinicalLedger(w, range),
-      programLedger(w, range), // (Milestone 20)
-      researchLedger(w, range), // (Milestone 21)
-      last ? { title: `Last close: ${last.month}`, lines: ledgerLines(last.lines) } : { title: 'Last close', lines: [{ text: 'No month has closed yet.', color: COL.textMuted }] },
+      { lines: [{ text: `Balance: ${credits(b)} Credits`, color: b < 0 ? COL.bad : COL.actionDark }, { text: `This month so far: income ${credits(tot('income'))} · costs ${credits(-tot('cost'))} · net ${signedCredits(tot('income') + tot('cost'))}`, color: COL.actionDark }, { text: `Last month: income ${credits(totLast('income'))} · costs ${credits(-totLast('cost'))} · net ${signedCredits(totLast('income') + totLast('cost'))}`, color: COL.textMuted }] },
+      { title: 'The last 6 months', lines: hist.length ? [{ text: ' ', glyph: balanceGlyph(hist.map((h) => h.balance)) }, { text: `Month-end balances; nets: ${hist.map((h) => signedCredits(h.net)).join(' · ')}`, color: COL.actionDark }] : [{ text: 'No month has closed yet.', color: COL.textMuted }] },
+      { title: `Income (Month ${c.month} so far · last month)`, columns: 1, buttons: inc },
+      { title: 'Costs', columns: 1, buttons: cost },
+      { title: 'Loans and investors', lines: debtLines },
+      // (Milestone 7: shifts run unsafe; Milestone 16: the care-outcome counters)
+      { title: 'Care outcomes', lines: [{ text: `Successful discharges: ${w.rewards.positiveOutcomes}${w.rewards.discharges.length ? ` (last: ${first(w.rewards.discharges.at(-1).name)})` : ''}`, color: COL.actionDark }, `Reputation: ${w.rewards.reputation}`, { text: `Unsafe shifts so far: ${w.staffState.coverage.unsafe} (run under minimum with no agency cover)`, color: w.staffState.coverage.unsafe ? COL.bad : COL.textMuted }] },
+      { title: 'Other currencies', lines: [`Research Points: ${w.research.rp.toLocaleString('en-GB')} (Develop → Research)`, `Care Tokens: ${w.economy.tokens} (earned for firsts and good months; nothing to spend them on yet)`, `Prestige Tokens: ${w.economy.prestige} (account; New Game+ brings them later)`] },
+      programLedger(w, w.monthRange()),
+      researchLedger(w, w.monthRange()),
+      clinicalLedger(w, w.monthRange()),
       { columns: 1, buttons: [{ id: 'ledger:back', label: '‹ Back to Business', accent: COL.progress, onTap: () => openBusiness() }] },
     ];
     return { title: 'Ledger', subtitle: `Credits · Month ${c.month}, Year ${c.year}`, art: 'care_ui_05', accent: accentNow(), sections };
@@ -1949,7 +2030,7 @@ function openApplicant(id) {
     const ctx = admitCtxNow();
     const p = adm.prereq(app, ctx);
     const can = adm.canAdmit(app, ctx);
-    const level = supportLevel(def);
+    const level = levelOfNeeds(app.needs ?? def.needs); // (Milestone 22: from their assessed needs)
     const days = adm.daysLeft(app, ctx.day);
     const wait = app.status === 'wait';
     const nextRoom = w.roomsFor(id)[0];
@@ -1969,7 +2050,7 @@ function openApplicant(id) {
     if (app.returning) lines.push({ text: `Returning: ${first(def.name)} stayed here before and went home. Familiar Care is kept.`, color: COL.good });
     lines.push({ text: `Stay: ${stayWords(def, app.stayDays, true)}`, color: COL.actionDark });
     lines.push(`Wants: ${ROOM_TEMPLATES[def.room].name} · Urgency: ${def.urgency}`);
-    lines.push(`Support Level ${level} · Care Support Funding ${credits(FEES.careSupportFundingByLevel[level])} a month · fee ${credits(FEES.accommodationPerMonth)} a month`);
+    lines.push(`Support Level ${level} (from their needs) · Care Support Funding ${credits(fundingOf(level, (app.needs ?? def.needs).clinical > ON_CALL.clinicalNeedAbove))} a month · required care about ${credits(requiredCost(level).total)} · fee from ${credits(ROOM_FEES[nextRoom?.defId] ?? ROOM_FEES.default)} a month`);
     lines.push(`Visitors: ${def.visitors} · ${def.personality} · enjoys ${def.interest}`);
     lines.push({ text: def.story, color: COL.textMuted });
     lines.push({ text: `Life story: ${def.tags.join(' · ')}`, color: COL.textMuted });
@@ -2262,7 +2343,7 @@ function residentSections(w, it) {
   const they = theirOf(it.id) === 'her' ? 'she' : 'he';
   const room = st.room ? `Room ${w.roomNumber(st.room)}` : 'No room (test home)';
   return [
-    { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `${room} · Support Level ${supportLevel(it.def)}`, `${WAKE.windows[wakeWindowOf(it.def)].name} · gets up at ${clockText(st.wakeAt ?? 7)}`, { text: stayLine(w, it), color: st.stay ? COL.actionDark : COL.textMuted }] },
+    { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `${room} · Support Level ${w.levelOf(it.id) ?? supportLevel(it.def)} · funding ${credits(fundingOf(w.levelOf(it.id) ?? 1))}, required care ${credits(requiredCost(w.levelOf(it.id) ?? 1).total)} a month`, `${WAKE.windows[wakeWindowOf(it.def)].name} · gets up at ${clockText(st.wakeAt ?? 7)}`, { text: stayLine(w, it), color: st.stay ? COL.actionDark : COL.textMuted }] },
     { title: 'Life story', lines: [it.def.story, { text: (st.tags?.length ? st.tags : it.def.tags).join(' · '), color: COL.actionDark }, ...(st.returning ? [{ text: 'Returning: stayed here before', color: COL.good }] : [])] },
     planSection(w, it),
     ...healthSections(w, it),
@@ -2693,7 +2774,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openQuality, openBusiness, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openQuality, openBusiness, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

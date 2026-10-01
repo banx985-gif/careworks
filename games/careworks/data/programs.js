@@ -22,6 +22,7 @@
 //     staff: { roles, shift, hours }  staff hours a week, from that shift's roster (the M7 roster; trainees don't count)
 //     facility                        the facility it runs at / needs (null: none needed); shownAt: where its card says so
 //     weeklyCost                      Credits a week, paid at the end of each week it runs (a ledger cost line)
+//     funding                         Milestone 22: program funding it brings, Credits a week (paid with the cost; none: 0)
 //     prop                            the activity prop its sessions put in the room (null: none)
 //   adds: what it schedules —
 //     { kind: 'session', activity, slot, days, name, liftMult }   a group session in a timetable slot on those days of the
@@ -76,7 +77,7 @@ export const PROGRAMS = [
   p('PRG04', 'Falls Prevention Program', 'Safety/Mobility', {
     text: 'Balance classes, and a lower falls risk for everyone',
     unlock: [{ type: 'role', role: 'AH' }, { type: 'research', node: 'MOB2' }],
-    resources: { staff: { roles: ['AH'], shift: 'morning', hours: 3 }, facility: null, shownAt: ['F07', 'F19', 'F05'], weeklyCost: 50, prop: null },
+    resources: { staff: { roles: ['AH'], shift: 'morning', hours: 3 }, facility: null, shownAt: ['F07', 'F19', 'F05'], weeklyCost: 50, funding: 25, prop: null }, // (Milestone 22: falls-prevention funding, a week)
     adds: { kind: 'session', activity: 'exercise', slot: 'morning', days: [0, 3], name: 'Balance class', liftMult: 1 },
     suits: { text: 'Everyone (the falls risk drops for all); the class suits anyone keen to stay steady on their feet', tags: [] },
     veto: { options: ['MO06'], group: true },
@@ -87,7 +88,7 @@ export const PROGRAMS = [
     scope: 'wing',
     text: 'Faster rehab progress and more successful discharges',
     unlock: [{ type: 'facility', facility: 'F18' }, { type: 'research', node: 'MOB4' }],
-    resources: { staff: { roles: ['AH'], shift: 'morning', hours: 3 }, facility: 'F18', shownAt: ['F18'], weeklyCost: 90, prop: null },
+    resources: { staff: { roles: ['AH'], shift: 'morning', hours: 3 }, facility: 'F18', shownAt: ['F18'], weeklyCost: 90, funding: 40, prop: null }, // (Milestone 22: reablement funding, a week)
     adds: { kind: 'task', name: 'Reablement practice', type: 'mobility', at: 11.5, band: 'morning', days: [1, 3, 5], roles: ['AH', 'CW'], minutes: 20, drops: { mobility: 6 }, outcomes: { independence: 1 }, who: 'rehab', goalKind: 'therapy' },
     suits: { text: 'Residents working on rehab goals (Milestone 16)', supports: ['Rehabilitation', 'Mobility Support'] },
     veto: { options: ['MO07'], group: false },

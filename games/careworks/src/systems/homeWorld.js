@@ -50,6 +50,11 @@
 // task types, round safety, alert actions, falls risk, rehab, memory sessions, Familiar Care, activities, meals, Energy,
 // family meetings and Trust. RP comes only from good care: discharges, compliments, a good month, running programs,
 // the learning facilities. world.research is the API.
+// Milestone 22: the economy (src/systems/economy.js, data/economy.js): each resident's Support Level from their assessed
+// needs (funding and the required care cost by level, Safe Coverage by level), fees by room, respite funding, supplies,
+// equipment wear, upkeep of every placed piece and utilities by floor area at the month's close; program funding;
+// Care Tokens for firsts; debt recovery (Emergency Credit, a Rescue Investor; admissions pause in deep debt); a family
+// may move a resident elsewhere after a week of very low Mood (lost fees). world.economy is the API.
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
@@ -136,6 +141,8 @@ import { PROGRAMS, VISIBLE_PROGRAMS, programById, visibleProgram, EFFECT_TEXT, L
 import { ensureProgramState, newRun, unlockOf, hoursFor, vetoOf, weeksDue, daysUnpaid, countFor } from './programs.js';
 import { activityPct } from './traitEffects.js';
 import { createResearch } from './research.js';
+import { createEconomy, levelOfNeeds } from './economy.js';
+import { UPKEEP, UTILITIES, MOVE_OUT } from '../../data/economy.js';
 import { RP_INCOME } from '../../data/research.js';
 import { joinChance, choiceBand } from './activities.js';
 import { dayOfWeek } from '../../data/activities.js';
@@ -224,6 +231,14 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const crew = createCrew({ grid, state: staffState, sys, perks, roster, spotTile: spot, hourNow, bandNow: () => bandAt(hourNow()), bus, trainingSpot, trainingLabel: (id) => staffing?.trainingOf(id) ? staffing.training.course(staffing.trainingOf(id).courseId)?.name ?? 'a course' : 'a course', energyMult: () => 1 + rb('energyPct') / 100 }); // (Milestone 21: Shift Planning)
   let staffing = null; // (Milestone 11: made with the ledger, below)
   let research = null; // (Milestone 21: made with the ledger, below)
+  let economy = null; // (Milestone 22: made with the ledger, below)
+  // Milestone 22: a resident's Support Level, from their assessed needs (at admission; an older or test resident: their
+  // profile's — the level their support type always had)
+  const levelOf = (p) => p.state.level ?? levelOfNeeds(p.state.assessed ?? p.def.needs);
+  // Milestone 22: their average Mood this month (sampled each day; the fee link, data/economy.js FEE_MOOD)
+  // (the nursing supplement: their assessed Clinical/Nursing need asks for a nurse on every shift)
+  const nursingOf = (p) => (p.state.assessed ?? p.def.needs).clinical > ON_CALL.clinicalNeedAbove;
+  const moodAvgOf = (p) => (p.state.moodMonth?.n ? p.state.moodMonth.sum / p.state.moodMonth.n : null);
   const rb = (key) => research?.bonus(key) ?? 0;
 
   // --- the residents ---------------------------------------------------------------------------------------------
@@ -2150,6 +2165,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const c = { id: `k${fh.nextId++}`, day: clock.totalDays, resident: p.id, name: p.name, from: fromWord(p), kind, text, staff: named, trust: change, morale: K.morale };
     fh.compliments.push(c);
     research?.addRp(RP_INCOME.compliment, `Compliment from ${fromWord(p)}`, 'compliment'); // (Milestone 21)
+    economy?.award('firstCompliment'); // (Milestone 22: Care Tokens)
     if (fh.compliments.length > COMPLIMENT.kept) fh.compliments.shift();
     rec.lastCompliment = clock.totalDays;
     log(p, `A compliment from ${fromWord(p)}${named.length ? ` for ${named.map(helperName).join(' and ')} (Morale +${K.morale})` : ''} · Family Trust ${signedN(change)}`);
@@ -2586,6 +2602,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (!weeks) continue;
       payProgram(d.id, weeks * d.resources.weeklyCost, weeks === 1 ? 'a week' : `${weeks} weeks`);
       research?.addRp(weeks * RP_INCOME.programWeek, `Program: ${d.name}`, 'programs'); // (Milestone 21)
+      if (d.resources.funding) ledger.economy.add('credits', weeks * d.resources.funding, `Program funding: ${d.name}`, 'programFunding'); // (Milestone 22)
       run.paidTo += weeks * PROGRAM_RULES.daysPerWeek;
     }
   }
@@ -2615,6 +2632,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const f = staffState.founder;
     if (!f.ended) f.history.programs = (f.history.programs ?? 0) + 1; // (the Founder's history: programs run)
     planSessions(clock.totalDays, true); // (today's sessions that haven't started take it up)
+    economy?.award('firstProgram'); // (Milestone 22)
     bus?.emit('care:program', { id, status: 'started' });
     return { ok: true, reason: null };
   }
@@ -2644,7 +2662,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const aloneOpening = (p) => !!p.state.stay?.opening && !othersHere(p);
   // (Milestone 16: someone in rehab goes home when their goals are met — a discharge — not after a set length)
   const due = (p) => !p.state.rehab?.active && !aloneOpening(p) && (clock.totalDays > p.state.stay.leaveDay || (clock.totalDays === p.state.stay.leaveDay && hourNow() >= STAY_LEAVE_HOUR));
-  function startLeaving(p, { discharge = false } = {}) {
+  function startLeaving(p, { discharge = false, movedOut = false } = {}) {
     const st = p.state;
     for (const t of care.tasks) if (t.resident === p.id && isOpen(t)) finish(t, 'gone');
     st.leaving = true;
@@ -2653,7 +2671,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const room = placed.find((r) => r.id === st.room);
     if (room?.residentId === p.id) room.residentId = null;
     st.leftDay = clock.totalDays;
-    admissions.wentHome({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: st.admittedDay ?? 0, leftDay: clock.totalDays, stay: st.stay?.type ?? p.def.stay, rehab: !!st.rehab?.active, readyDay: st.rehab?.readyDay ?? null, discharged: discharge });
+    admissions.wentHome({ id: p.id, name: p.name, level: levelOf(p), nursing: nursingOf(p), moodAvg: moodAvgOf(p), room: roomList().find((r) => r.id === st.room)?.defId ?? null, respite: (st.stay?.type ?? p.def.stay) === 'Respite', admittedDay: st.admittedDay ?? 0, leftDay: clock.totalDays, stay: st.stay?.type ?? p.def.stay, rehab: !!st.rehab?.active, readyDay: st.rehab?.readyDay ?? null, discharged: discharge, movedOut }); // (Milestone 22: level, room, respite)
     noteLeft(care, { residentId: p.id }, clock.totalDays); // (Milestone 12: their Familiar Care records stay, marked)
     // Milestone 13: their friends here miss them (a small, one-off Mood dip that drifts back)
     for (const q of seated()) {
@@ -2661,7 +2679,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       q.state.outcomes.mood = clamp(q.state.outcomes.mood + FRIENDSHIP.friendLeftMood);
       log(q, `Misses ${first(p.name)}, who has gone home`);
     }
-    addLog(st, logDay(st), now(), discharge ? 'Heading home with family: rehab complete' : 'Heading home: the stay is over');
+    addLog(st, logDay(st), now(), discharge ? 'Heading home with family: rehab complete' : movedOut ? 'Their family has moved them to another home' : 'Heading home: the stay is over');
     bus?.emit('care:leaving', { resident: p.id, name: p.name, stay: st.stay?.type ?? p.def.stay, discharge });
     walkOut(p);
   }
@@ -2690,6 +2708,22 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   care.rewards ??= { reputation: 0, research: 0, positiveOutcomes: 0, discharges: [] };
   research = createResearch({ ledger, care, bus, today: () => clock.totalDays, hasPiece: (id) => layout.ofDef(id).length > 0 });
   layout.setResearchCheck((id) => research.has(id)); // (Build Mode: a facility research opens)
+  // --- the economy (Milestone 22) ---------------------------------------------------------------------------------------
+  economy = createEconomy({ ledger, care, bus, today: () => clock.totalDays });
+  function moveOuts(day) {
+    const M = MOVE_OUT;
+    for (const p of seated()) {
+      if (!joined(p)) continue;
+      const st = p.state;
+      st.lowMood = st.outcomes.mood < M.moodBelow ? (st.lowMood ?? 0) + 1 : 0;
+      if (day % 7 !== 0 || st.lowMood < M.days) continue;
+      const rec = familyOf(p);
+      if (!rec?.contact || rec.trust >= M.trustBelow) continue;
+      if (new Rng(`${seed}:moveOut:${p.id}:${day}`).next() >= M.weeklyChance) continue;
+      startLeaving(p, { movedOut: true });
+      bus?.emit('care:movedOut', { resident: p.id, name: p.name });
+    }
+  }
   // A good month (both lines met over the month's last days): Clinical Safety and the residents' average Mood.
   function monthRp(label) {
     const M = RP_INCOME.month;
@@ -2723,7 +2757,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const roomTemplatesHere = () => new Set(roomList().map((r) => r.defId));
   const team = () => crew.people.filter((q) => !q.agency && !q.leftTeam);
   const teamRoles = () => new Set(team().map((q) => q.role));
-  const admitCtx = () => ({ roles: teamRoles(), freeRooms: freeRooms().map((r) => r.id), freeRoomsFor: (def) => roomsFor(def).map((r) => r.id), day: clock.totalDays, placeable: roomTemplatesHere(), buildable: (id) => layout.unlock(id).ok, paused: coverage.admissionsPaused() });
+  const admitCtx = () => ({ roles: teamRoles(), freeRooms: freeRooms().map((r) => r.id), freeRoomsFor: (def) => roomsFor(def).map((r) => r.id), day: clock.totalDays, placeable: roomTemplatesHere(), buildable: (id) => layout.unlock(id).ok, paused: coverage.admissionsPaused() ?? economy?.admissionsPaused() ?? null }); // (Milestone 22: deep debt)
   const monthRange = (endDay = null) => {
     const len = clock.daysPerMonth;
     const toDay = endDay ?? (Math.floor(clock.totalDays / len) + 1) * len;
@@ -2732,9 +2766,20 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // Milestone 9: plus who went home (they pay for their days here: admittedDay → leftDay)
   const payers = () => [
     // (Milestone 16: rehab residents bring rehab funding; once ready to go home, their funding drops — data/mobility.js)
-    ...residents.filter((p) => !p.state.leaving && !p.state.guest).map((p) => ({ id: p.id, name: p.name, level: supportLevel(p.def), admittedDay: p.state.admittedDay ?? 0, rehab: !!p.state.rehab?.active, readyDay: p.state.rehab?.readyDay ?? null })),
-    ...admissions.homeGoings.map((h) => ({ id: h.id, name: h.name, level: h.level, admittedDay: h.admittedDay ?? 0, leftDay: h.leftDay, rehab: !!h.rehab, readyDay: h.readyDay ?? null })),
+    ...residents.filter((p) => !p.state.leaving && !p.state.guest).map((p) => ({ id: p.id, name: p.name, level: levelOf(p), nursing: nursingOf(p), moodAvg: moodAvgOf(p), room: roomList().find((r) => r.id === p.state.room)?.defId ?? null, respite: (p.state.stay?.type ?? p.def.stay) === 'Respite', admittedDay: p.state.admittedDay ?? 0, rehab: !!p.state.rehab?.active, readyDay: p.state.rehab?.readyDay ?? null })),
+    ...admissions.homeGoings.map((h) => ({ id: h.id, name: h.name, level: h.level, nursing: !!h.nursing, moodAvg: h.moodAvg ?? null, room: h.room ?? null, respite: !!h.respite, admittedDay: h.admittedDay ?? 0, leftDay: h.leftDay, rehab: !!h.rehab, readyDay: h.readyDay ?? null })),
   ];
+  // Milestone 22: the home's own monthly costs — every placed room and facility's upkeep, utilities by open floor
+  let tilesCache = { v: null, n: 0 };
+  function homeCosts() {
+    if (tilesCache.v !== layout.version) {
+      let n = 0;
+      for (let r = 0; r < MAX_FLOOR.rows; r++) for (let c = 0; c < MAX_FLOOR.cols; c++) if (layout.isOpen(c, r)) n++;
+      tilesCache = { v: layout.version, n };
+    }
+    const upkeep = layout.pieces.map((pc) => ({ name: pc.name, amount: Math.round((layout.costOf(pc.defId) * UPKEEP.pctOfCost) / 100) })).filter((x) => x.amount > 0);
+    return { upkeep, utilities: Math.round(tilesCache.n * UTILITIES.perTile), tiles: tilesCache.n };
+  }
   const payroll = () => team().map((q) => ({ id: q.id, name: q.name, salary: q.model.salary })); // agency is paid per shift
   // --- care-plan rules (Milestone 8) -------------------------------------------------------------------------------
   const facilityIds = () => new Set(placed.filter((x) => x.kind !== 'room').map((x) => x.defId)); // (Milestone 10: by facility, F01 …)
@@ -2862,6 +2907,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     familyDay(day); // (Milestone 19: what families saw yesterday, compliments and complaints, requests, today's visits)
     programDay(day); // (Milestone 20: each running program's weekly cost)
     research.dailyTick(day); // (Milestone 21: research progress; the learning facilities' weekly RP)
+    if (research.doneIds().length) economy.award('firstResearch'); // (Milestone 22: Care Tokens, once)
+    economy.daily(day); // (Milestone 22: Emergency Credit below the floor)
+    moveOuts(day); // (Milestone 22: a week of very low Mood — a family may move them elsewhere)
+    for (const p of seated()) if (joined(p)) { const m = (p.state.moodMonth ??= { sum: 0, n: 0 }); m.sum += p.state.outcomes.mood; m.n += 1; } // (Milestone 22: the month's Mood)
     // Milestone 15: yesterday's food (a simple cost per meal served), today's diet tags
     const meals = dining.served(day - 1);
     if (meals) ledger.economy.add('credits', -meals * FOOD_COST.perMeal, `Food: ${meals} meal${meals === 1 ? '' : 's'} served`, 'food');
@@ -2873,8 +2922,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     staffing.tick(day); // Milestone 11: the free board refresh every 56 days, training days
     if (day % clock.daysPerMonth === 0) {
       const d = clock.dateOf(day - 1);
-      ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll() });
-      monthRp(`Month ${d.month}, Year ${d.year}`); // (Milestone 21)
+      ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll(), home: homeCosts() });
+      if (monthRp(`Month ${d.month}, Year ${d.year}`) > 0) economy.award('goodMonth'); // (Milestone 21; Milestone 22: a Care Token)
+      economy.monthClosed({ month: `Month ${d.month}, Year ${d.year}` }); // (Milestone 22: loan, investor, history, offers)
+      for (const p of residents) delete p.state.moodMonth; // (a new month's Mood)
     }
   }
 
@@ -2910,7 +2961,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     state: staffState,
     roster,
     team: () => crew.people,
-    levels: () => residents.filter((p) => !p.state.leaving && !p.state.guest).map((p) => supportLevel(p.def)),
+    levels: () => residents.filter((p) => !p.state.leaving && !p.state.guest).map((p) => levelOf(p)), // (Milestone 22: from needs)
     // Milestone 10 fix: anyone here whose assessed clinical need is above the line needs a real RN on shift
     clinicalHigh: () => residents.some((p) => !p.state.leaving && !p.state.guest && (p.def.needs?.clinical ?? 0) > ON_CALL.clinicalNeedAbove),
     ledger,
@@ -2975,6 +3026,15 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       }
       if (hired.length) bus?.emit('staff:filled', { ids: hired });
       return hired;
+    },
+    // Tests and the balance runs (Milestone 22): hire one eligible person straight away onto a shift (the same rules
+    // as a board card — the team cap, eligibility — without waiting for the board). → { ok, reason, person }
+    hireDirectForTests(defId, shiftId = 'morning') {
+      const r = staffing.takeDirect(defId);
+      if (!r.ok) return r;
+      const q = joinTeam(r.def);
+      roster.move(q.id, shiftId);
+      return { ok: true, reason: null, person: q };
     },
     setRankForTests(r) {
       rankNow = r;
@@ -3384,6 +3444,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return care.rewards;
     },
     familyOf: (residentId) => (byResident(residentId) ? familyOf(byResident(residentId)) : care.families?.[residentId] ?? null),
+    // --- Milestone 22: the economy ---------------------------------------------------------------------------------------------
+    get economy() {
+      return economy;
+    },
+    levelOf: (residentId) => (byResident(residentId) ? levelOf(byResident(residentId)) : null),
+    homeCosts: () => homeCosts(),
     // --- Milestone 21: research -----------------------------------------------------------------------------------------------
     get research() {
       return research;
@@ -3524,6 +3590,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       // (Milestone 19: the family's thank-you is a compliment carrying M16's Family Trust reward)
       compliment(p, 'discharge', { amount: R.familyTrust });
       research?.addRp(RP_INCOME.discharge, `Successful discharge: ${p.name}`, 'discharge'); // (Milestone 21)
+      economy?.award('firstDischarge'); // (Milestone 22)
       p.state.rehab.dischargedDay = clock.totalDays;
       startLeaving(p, { discharge: true });
       bus?.emit('care:discharge', { resident: p.id, name: p.name, first, auto, art: first ? DISCHARGE.firstArt : null });
@@ -3713,6 +3780,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const room = roomList().find((r) => r.id === roomsFor(def)[0]?.id);
       const st = newResidentState(def, { room: room.id });
       st.needs = { ...app.needs };
+      st.assessed = { ...app.needs }; // (Milestone 22: their Support Level comes from these)
+      st.level = levelOfNeeds(app.needs);
       st.outcomes = { ...app.outcomes };
       st.admittedDay = clock.totalDays;
       // Milestone 9: the stay's length from their application, their tags; a returning resident is marked
@@ -3733,6 +3802,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       p.agent.walkTo(grid, t.col, t.row);
       addLog(st, logDay(st), now(), `Moved in to room ${layout.roomNumber(room.id)}`);
       for (const slot of Object.keys(TIMETABLE.slots)) acts.addChoice(clock.totalDays, slot, p, friendIds); // (Milestone 14: today's sessions)
+      economy.award('firstAdmission'); // (Milestone 22: Care Tokens)
       bus?.emit('care:admit', { resident: p.id, name: p.name, room: room.id });
       return { ok: true, reason: null, resident: p };
     },
