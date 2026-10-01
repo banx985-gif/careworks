@@ -89,7 +89,8 @@ export function changeTrust(rec, amount, { day, t = null, reason, kind = 'other'
 //     alert (an open alert), tidy (a room check done today), greeter (name | null), favourite (name | null), so (SO07),
 //     party (a family birthday party) }
 // → [{ key, text, value }] (a part that doesn't apply is left out)
-export function visitParts({ mood = 60, comfort = 60, missed = [], bell = false, alert = false, tidy = false, greeter = null, favourite = null, so = false, party = false, call = 'them' } = {}) {
+// (Milestone 20: suite — they live in a Premium Suite (RM03): a small steady lift every visit)
+export function visitParts({ mood = 60, comfort = 60, missed = [], bell = false, alert = false, tidy = false, greeter = null, favourite = null, so = false, party = false, suite = false, call = 'them' } = {}) {
   const N = NOTICE;
   const out = [];
   if (mood >= N.mood.good) out.push({ key: 'mood', text: `${call} was cheerful`, value: N.mood.goodTrust });
@@ -105,6 +106,7 @@ export function visitParts({ mood = 60, comfort = 60, missed = [], bell = false,
   if (favourite) out.push({ key: 'favourite', text: `${favourite} (the favourite) was on`, value: N.favourite.trust });
   if (so) out.push({ key: 'so', text: 'visit support (Family Connection Plan)', value: SO_VISITS.visitSupport });
   if (party) out.push({ key: 'party', text: 'a family birthday party', value: REQUESTS.birthdayParty.partyTrust });
+  if (suite) out.push({ key: 'suite', text: N.suite.text, value: N.suite.trust });
   return out;
 }
 // The visit's Trust change before F29: the parts added, the positive ones × (1 + communicatorPct / 100) — a Family

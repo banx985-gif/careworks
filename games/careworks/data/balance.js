@@ -37,7 +37,7 @@ export const FEES = {
   careSupportFundingByLevel: { 1: 150, 2: 300, 3: 450, 4: 600, 5: 750 }, // Credits a month by Support Level
 };
 export const LEDGER = {
-  categories: { opening: 'Opening balance', fees: 'Accommodation fees', funding: 'Care Support Funding', wages: 'Wages', agency: 'Agency cover', careRecovery: 'Care recovery', build: 'Building', sell: 'Sold (50% back)', food: 'Food', rehabFunding: 'Rehab funding' }, // (Milestone 16: rehab funding — data/mobility.js REHAB_FUNDING) // (Milestone 15: food, per meal served — data/dining.js FOOD_COST)
+  categories: { opening: 'Opening balance', fees: 'Accommodation fees', funding: 'Care Support Funding', wages: 'Wages', agency: 'Agency cover', careRecovery: 'Care recovery', build: 'Building', sell: 'Sold (50% back)', food: 'Food', rehabFunding: 'Rehab funding', programs: 'Specialist programs' }, // (Milestone 20: each running program's weekly cost — data/programs.js) // (Milestone 16: rehab funding — data/mobility.js REHAB_FUNDING) // (Milestone 15: food, per meal served — data/dining.js FOOD_COST)
   maxLines: 400, // older lines fold into one (core/EconomySystem)
 };
 

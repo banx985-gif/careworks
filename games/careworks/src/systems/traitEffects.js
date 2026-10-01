@@ -8,6 +8,7 @@
 //   familiarPct(traits)        % faster Familiar Care ('familiar')
 //   shiftPct(traits)           % more Morale from working their preferred shift ('shift')
 //   dietSkillsOf(traits) → Set of diets · dietPct(traits, diet) · diningPct(traits)   Milestone 15 ('diet', 'dining')
+//   activityPct(traits, activityId, { event, outcome })   Milestone 20 ('activity')
 //   isLive(id) · pendingOf(id) → 'Mnn' | null
 import { TRAITS } from '../../data/staff.js';
 
@@ -32,5 +33,7 @@ export const memoryPct = (traits) => sum(effectsOf(traits, 'memory'), 'pct');
 export const clinicalPct = (traits) => sum(effectsOf(traits, 'clinical'), 'pct');
 // Milestone 19: % better visits (on shift) and family meetings (attending) ('family')
 export const familyPct = (traits) => sum(effectsOf(traits, 'family'), 'pct');
+// Milestone 20: % more on a session of this activity (or a community event), for this outcome ('activity')
+export const activityPct = (traits, activityId, { event = false, outcome = null } = {}) => sum(effectsOf(traits, 'activity').filter((fx) => (fx.activities?.includes(activityId) || (event && fx.events)) && (!fx.outcomes || !outcome || fx.outcomes.includes(outcome))), 'pct');
 export const isLive = (id) => !!TRAITS[id]?.live;
 export const pendingOf = (id) => TRAITS[id]?.pendingSystem ?? null;

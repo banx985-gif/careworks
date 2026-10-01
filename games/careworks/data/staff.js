@@ -135,6 +135,9 @@ export const namedTrait = (def) => def.traits.find((t) => TRAITS[t]?.signature) 
 //                                                 these goals, if given)
 //     { kind: 'family', pct }                     Milestone 19: a visit's good parts go pct% further while they are on
 //                                                 shift, and a family meeting they attend lifts Family Trust pct% more
+//     { kind: 'activity', activities, events?, pct, outcomes? }   Milestone 20: sessions of these activities (or any
+//                                                 community event) lift pct% more while they are on shift (only these
+//                                                 outcomes, if given)
 //     { kind: 'dining', pct }                     Milestone 15: meals they serve lift Social Connection pct% more, and
 //                                                 dining satisfaction a little (data/dining.js SATISFACTION.host)
 //   or pendingSystem: 'Mnn'  the effect needs a system built in that milestone: stored and shown, a no-op until then
@@ -168,9 +171,10 @@ export const TRAITS = {
   fastResponse: later('Fast Response', 'Answers call bells a little faster', 'M25', { bellResponsePct: -10 }),
   memoryFriendly: live('Memory Friendly', 'Calmer support for residents with memory needs: never a new face to them', { kind: 'memory', pct: 8 }), // (Milestone 17)
   companion: live('Companion', 'One-to-one time goes further', task(['visit'], 8)),
-  gardenLover: later('Garden Lover', 'Outdoor and garden activities go further', 'M14', { gardenActivityPct: 10 }),
-  musicMaker: later('Music Maker', 'Music activities lift Social Connection more', 'M14', { musicActivityPct: 10 }),
-  communityLink: later('Community Link', 'Brings visitors and volunteers in', 'M14', { communityEventPct: 8 }),
+  // (Milestone 20: the lifestyle-programme traits M12 / M14 left waiting are live — kind 'activity', while they are on shift)
+  gardenLover: live('Garden Lover', 'Gardening sessions go 10% further while they are on shift', { kind: 'activity', activities: ['gardening'], pct: 10 }),
+  musicMaker: live('Music Maker', 'Music sessions lift Social Connection 10% more while they are on shift', { kind: 'activity', activities: ['music'], pct: 10, outcomes: ['connection'] }),
+  communityLink: live('Community Link', 'Visitors and volunteers: community sessions go 8% further while they are on shift', { kind: 'activity', activities: ['petTherapy', 'communityVisit'], events: true, pct: 8 }),
   quietConnector: live('Quiet Connector', 'Reaches the residents who keep to themselves', match(['visit'])),
   balanceCoach: live('Balance Coach', 'Walking practice builds confidence', task(['mobility'], 8)),
   rehabPlanner: live('Rehab Planner', 'Rehab goals move a little faster in their sessions', { kind: 'rehab', pct: 8 }), // (Milestone 16)
@@ -205,7 +209,7 @@ export const TRAITS = {
   perfectPath: sig('Perfect Path', 'Every resident walks a little further', 'M16', 'perfectPath', { independencePct: 20 }),
   homeFeast: sig('Home Feast', 'A monthly feast lifts the whole home', 'M15', 'homeFeast', { feastMood: 10 }),
 };
-export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift', 'diet', 'dining', 'rehab', 'memory', 'clinical', 'family'];
+export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift', 'diet', 'dining', 'rehab', 'memory', 'clinical', 'family', 'activity'];
 
 // Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator; taskTypes = data/tasks.js
 // TASK_TYPES ids (optional: the trait task checks).
@@ -238,6 +242,7 @@ export function validateStaff(v, list = STAFF, { taskTypes = null } = {}) {
       v.check(TRAIT_KINDS.includes(fx.kind), `${who}: effect kind "${fx.kind}"`);
       if (fx.types && taskTypes) for (const ty of fx.types) v.check(taskTypes.includes(ty), `${who}: task type "${ty}"`);
       if (fx.kind === 'task') v.check(fx.pct > 0 && fx.pct <= 15, `${who}: a small task bonus`);
+      if (fx.kind === 'activity') v.check(fx.pct > 0 && fx.pct <= 15 && (fx.activities?.length || fx.events), `${who}: a small activity bonus`);
       if (fx.shift) v.check(['morning', 'afternoon', 'night'].includes(fx.shift), `${who}: shift "${fx.shift}"`);
     }
   }

@@ -5,7 +5,7 @@
 // The run's activity state (care.activities, saved with the care state):
 //   { timetable: [{ morning, afternoon }] (7 days), sessions: { 'day:slot': session }, bookings: { day: { event,
 //     activity, liftMult } }, events (core/EventSystem state), birthdays: { first: day | null, held: { 'RES02': year } } }
-//   a session: { day, slot, activity, event?, birthday?, choices: { residentId: 'join' | 'maybe' | 'decline' },
+//   a session: { day, slot, activity, event?, birthday?, program? / name? (Milestone 20: a running program's session), choices: { residentId: 'join' | 'maybe' | 'decline' },
 //     joined: [ids], declined: [ids] }
 //
 //   feelingOf(def, st, activity) → 'love' | 'like' | 'neutral' | 'dislike' | 'refuse'
@@ -103,6 +103,8 @@ export function createActivities({ care, seed = 'careworks', bus = null, today =
   });
   events.load(st.events, today());
   let isSpecial = () => false;
+  let programFor = () => null; // (Milestone 20)
+  let vetoFor = () => null;
 
   const slotKey = (day, slot) => `${day}:${slot}`;
   const api = {
@@ -110,6 +112,12 @@ export function createActivities({ care, seed = 'careworks', bus = null, today =
     events,
     setBirthdayCheck(fn) {
       isSpecial = fn;
+    },
+    // Milestone 20: a running program's session for a slot ({ activity, program, name, liftMult } or null), and its
+    // veto (a resident who refuses a plan option the program is part of, or group activities: never asked).
+    setProgramHooks({ sessionFor = null, veto = null } = {}) {
+      programFor = sessionFor ?? (() => null);
+      vetoFor = veto ?? (() => null);
     },
     // The timetable (Mon–Sun × Morning / Afternoon): an activity id or null (free time).
     timetable: () => st.timetable,
@@ -120,11 +128,14 @@ export function createActivities({ care, seed = 'careworks', bus = null, today =
       st.timetable[dow][slot] = activityId;
       return { ok: true, reason: null };
     },
-    // What runs in a slot on a given day: a booked community event, a birthday (afternoon), else the timetable.
+    // What runs in a slot on a given day: a booked community event, a birthday (afternoon), a running program's session
+    // (Milestone 20), else the timetable.
     activityOn(day, slot, birthdayIds = []) {
       if (slot === 'afternoon' && birthdayIds.length) return { activity: activityById('birthday'), birthday: birthdayIds[0] };
       const b = slot === 'afternoon' ? st.bookings[day] : null;
       if (b) return { activity: activityById(b.activity), event: b.event, liftMult: b.liftMult };
+      const prog = programFor(day, slot);
+      if (prog) return { activity: activityById(prog.activity), program: prog.program, name: prog.name, liftMult: prog.liftMult ?? 1 };
       const id = st.timetable[dayOfWeek(day)]?.[slot];
       return id ? { activity: activityById(id) } : null;
     },
@@ -135,7 +146,7 @@ export function createActivities({ care, seed = 'careworks', bus = null, today =
         delete st.sessions[slotKey(day, slot)];
         return null;
       }
-      const s = { day, slot, activity: info.activity.id, event: info.event ?? null, birthday: info.birthday ?? null, liftMult: info.liftMult ?? 1, choices: {}, chances: {}, joined: [], declined: [] };
+      const s = { day, slot, activity: info.activity.id, event: info.event ?? null, birthday: info.birthday ?? null, program: info.program ?? null, name: info.name ?? null, liftMult: info.liftMult ?? 1, choices: {}, chances: {}, joined: [], declined: [] };
       // two passes: first on their own, then with friends who join counted in
       const first = {};
       for (const p of residents) first[p.id] = joinChance({ def: p.def, st: p.state, activity: info.activity });
@@ -144,6 +155,7 @@ export function createActivities({ care, seed = 'careworks', bus = null, today =
         const friendsJoining = friendsOf(p.id).filter((id) => first[id] >= CHOICE.bands.join).length;
         let pj = joinChance({ def: p.def, st: p.state, activity: info.activity, friendsJoining, groupSize: likely });
         if (info.birthday && (info.birthday === p.id || friendsOf(info.birthday).includes(p.id))) pj = Math.max(pj, 1); // (their own tea, and their friends)
+        if (s.program && vetoFor(s, p)) pj = 0; // (Milestone 20: a refusal is never overridden)
         s.chances[p.id] = Math.round(pj * 1000) / 1000;
         s.choices[p.id] = choiceBand(pj);
       }
@@ -159,6 +171,7 @@ export function createActivities({ care, seed = 'careworks', bus = null, today =
       const fj = friendsJoining ?? friendsOf(p.id).filter((id) => s.choices[id] === 'join').length;
       let pj = joinChance({ def: p.def, st: p.state, activity: act, friendsJoining: fj, groupSize: Object.values(s.choices).filter((c) => c === 'join').length });
       if (s.birthday && (s.birthday === p.id || friendsOf(s.birthday).includes(p.id))) pj = 1;
+      if (s.program && vetoFor(s, p)) pj = 0; // (Milestone 20)
       s.chances[p.id] = Math.round(pj * 1000) / 1000;
       s.choices[p.id] = choiceBand(pj);
       return s;

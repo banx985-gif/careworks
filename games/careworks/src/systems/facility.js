@@ -241,6 +241,7 @@ export const SAVE_MIGRATIONS = {
   16: (record) => record, // (Milestone 17: memory-support residents start steady, with no sessions yet and a full Choice score; no walking path)
   17: (record) => ({ ...record, data: upgradeV17(record.data) }), // (Milestone 18: renamed ids; no open alerts)
   18: (record) => record, // (Milestone 19: no family state = a record per resident from their Visitors column, Trust 60 (an M16 record keeps its change); no visits yet)
+  19: (record) => record, // (Milestone 20: no program state = no programs running)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

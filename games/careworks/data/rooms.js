@@ -28,7 +28,7 @@ const room = (id, name, bestFor, effect, unlock, cost, general) => ({ id, name, 
 export const ROOMS = [
   room('RM01', 'Standard Room', 'General long-term care', { key: 'roomBalanced', value: 0, text: 'Balanced' }, { type: 'start', text: 'Available from the start' }, 1200, true),
   room('RM02', 'Garden Room', 'Outdoor preference / mood support', { key: 'roomMood', value: 4, text: 'Mood +4 for its resident' }, { type: 'rank', value: 'D', text: 'Needs Rank D' }, 1800, true),
-  room('RM03', 'Premium Suite', 'Privacy / family space', { key: 'roomFamilyTrust', value: 5, text: 'Family Trust +5 for its resident' }, { type: 'rank', value: 'C', text: 'Needs Rank C' }, 2600, true),
+  room('RM03', 'Premium Suite', 'Privacy / family space', { key: 'roomFamilyTrust', value: 1, text: 'Family Trust +1 on every family visit (Milestone 20)' }, { type: 'rank', value: 'C', text: 'Needs Rank C' }, 2600, true),
   room('RM04', 'High-Care Room', 'Complex nursing proximity', { key: 'roomClinical', value: 5, text: 'Clinical care +5%' }, { type: 'rank', value: 'B', text: 'Needs Rank B' }, 3000, false),
   room('RM05', 'Memory Support Room', 'Low-stimulation / secure wing', { key: 'roomMemory', value: 5, text: 'Memory support +5%' }, { type: 'wing', value: 'memory', text: 'Needs the Memory Wing' }, 2800, false),
   room('RM06', 'Rehabilitation Room', 'Short-stay / therapy proximity', { key: 'roomRehab', value: 5, text: 'Rehabilitation +5%' }, { type: 'wing', value: 'rehab', text: 'Needs the Rehab Wing' }, 2400, true),

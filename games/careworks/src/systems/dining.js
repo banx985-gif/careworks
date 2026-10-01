@@ -13,7 +13,7 @@
 //   dietOf(st) → diet id · favouritesOf(def, st?) → [dish ids]
 //   skillsOf({ traits, specialties }) → Set of diets they can make
 //   canMake(diet, { office, onShift: [{ role, skills }] }) → true | false
-//   mealQuality({ kitchen, prep, cook, hospitalityOn }) → { quality, parts }
+//   mealQuality({ kitchen, prep, cook, hospitalityOn, program }) → { quality, parts }   (Milestone 20: program)
 //   satisfaction({ quality, … }) → { sat, parts, reason }
 //   nutritionMult(sat, office) · moodFrom(sat)
 //   createDining({ care }) → the rota / meal records controller
@@ -68,12 +68,14 @@ export const dietWords = (diet) => DIETS[diet]?.menu ?? DIETS.standard.menu;
 // --- meal quality -----------------------------------------------------------------------------------------------------
 // kitchen: 'F16' | 'F04' | null · prep: 'onTime' | 'late' | 'none' · cook: { nut, traits } | null (who prepped it) ·
 // hospitalityOn: a Hospitality worker is on shift (else care staff serve).
-export function mealQuality({ kitchen = null, prep = 'none', cook = null, hospitalityOn = true }) {
+// (Milestone 20: program — Nutrition Plus's quality points when it runs, 0 otherwise)
+export function mealQuality({ kitchen = null, prep = 'none', cook = null, hospitalityOn = true, program = 0 }) {
   const parts = { base: QUALITY.base };
   parts.kitchen = kitchen ? KITCHENS[kitchen].quality : QUALITY.noKitchen;
   parts.prep = kitchen ? QUALITY.prep[prep] ?? 0 : 0;
   parts.cook = cook ? Math.min(QUALITY.nutMax, Math.max(0, (cook.nut - QUALITY.nutFrom) / QUALITY.nutPer)) + taskPct(cook.traits, 'meal') : 0;
   parts.serve = hospitalityOn ? 0 : QUALITY.careStaffServe;
+  if (program) parts.program = program;
   const quality = clamp(Object.values(parts).reduce((a, v) => a + v, 0));
   return { quality: Math.round(quality * 10) / 10, parts };
 }

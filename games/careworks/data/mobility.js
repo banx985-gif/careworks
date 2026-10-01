@@ -37,7 +37,7 @@ export const LEVEL_DRIFT = { needFrom: 40, perNeed: 0.25, maxShift: 8, pull: 0.2
 export const TWO_PERSON = { needAt: 70, name: 'Second helper for the transfer', roles: ['CW', 'AH', 'RN'] };
 // Which done tasks count for rehab goals (by plan task name → kind), and the daily therapy step for anyone in rehab.
 export const GOAL_TASKS = {
-  therapy: ['Therapy session', 'Strength and balance session', 'Afternoon balance exercises'],
+  therapy: ['Therapy session', 'Strength and balance session', 'Afternoon balance exercises', 'Reablement practice'], // (Milestone 20: the Reablement Pathway's practice)
   walk: ['Supervised walk', 'Afternoon supervised walk', 'Walk with his frame', 'Afternoon walk with his frame', 'Steady walk'],
   transfer: ['Morning transfer', 'Midday transfer', 'Evening transfer', 'Wheelchair transfer'],
 };

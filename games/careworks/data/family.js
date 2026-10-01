@@ -48,6 +48,7 @@ export const NOTICE = {
   room: { bell: -2, alert: -1, tidy: 0.5 }, // a call bell ringing and not answered · an open alert · a room check done today
   greeted: { familiarity: 30, trust: 1 }, // someone on shift who knows them well says hello
   favourite: { trust: 1 }, // their favourite staff member (Milestone 13) is on shift
+  suite: { trust: 1, room: 'RM03', text: 'the Premium Suite: room to sit together in private' }, // (Milestone 20: RM03's Family Trust +, every visit)
 };
 // (A Family Communicator on shift makes a visit's positive parts go 6% further, and a meeting they attend: data/staff.js.)
 
@@ -67,6 +68,7 @@ export const MEETING_KINDS = {
   meeting: { name: 'Care-plan meeting' },
   request: { name: 'Care-plan meeting (the family asked)' },
   complaint: { name: 'Meeting about a complaint' },
+  partnership: { name: 'Family partnership meeting' }, // (Milestone 20: booked by the Family Partnership Program)
   palliative: { name: 'Palliative support meeting', stored: true, milestone: 'M27' },
 };
 // The family's wish, noted on the plan after a meeting (the first that fits).

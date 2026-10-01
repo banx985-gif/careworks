@@ -29,6 +29,10 @@
 // paid ones; each candidate's card (portrait, role, tier, level, stats, salary, trait, shift preference) with Hire —
 // greyed at the Rank E cap of 12. The staff card gains Specialties, Training (a course list with what each would add,
 // "Would reach cap" when the tier cap trims it) and Let go (asks first; the Founder twice).
+// Milestone 20: Develop → Programs — the ten specialist programs (icon, focus, the unlock reason or Start, the staff hours
+// against the roster, the weekly cost); a program's sheet says what it adds, who it suits and its effect, with Start /
+// Stop. Running programs show on the facility they use, in the Ledger (a cost line) and on the roster (the hours they
+// take); a resident's card shows their part in each. ?debug=1 unlocks the research / partner / wing ones.
 // Add ?debug=1 for the FPS/state overlay, ?screen=test for the scaling / tap / asset-loader test screen.
 import { THEME, font } from '../../../core/Theme.js';
 import { EventBus } from '../../../core/EventBus.js';
@@ -84,6 +88,9 @@ import { WALKING } from '../data/memory.js';
 import { ACTIONS, ACTION_IDS, CLINICIAN, HOSPITAL } from '../data/clinical.js';
 import { TRUST, MEETING, MEETING_ASK, COMPLAINT, COMPLAINTS, FIXES, REQUESTS, REQUEST, FAMILY_ICONS } from '../data/family.js';
 import { yearsEmployed } from './systems/staffTeam.js';
+import { VISIBLE_PROGRAMS, validatePrograms, dayList, LEDGER_CATEGORY } from '../data/programs.js';
+import { unlockWords } from './systems/programs.js';
+import { FACILITIES } from '../data/facilities.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
 import { createSlotsScreen } from './screens/SlotsScreen.js';
@@ -294,6 +301,9 @@ async function prepareSaves() {
     const c = validateCarePlans(new DataValidator(), known).report();
     debug.log(c.ok ? `care options: ${CARE_OPTIONS.length} checked` : `care plan data: ${c.errors.join('; ')}`);
     if (!c.ok) console.error('[CAREWORKS] care plan data', c.errors);
+    const pv = validatePrograms(new DataValidator(), { facilities: FACILITIES.map((f) => f.id), activities: ACTIVITIES.map((a) => a.id), options: CARE_OPTIONS.map((o) => o.id) }).report();
+    debug.log(pv.ok ? `programs: ${VISIBLE_PROGRAMS.length} visible checked` : `program data: ${pv.errors.join('; ')}`);
+    if (!pv.ok) console.error('[CAREWORKS] program data', pv.errors);
   }
 }
 const cards = () => campaigns?.cards ?? [];
@@ -667,6 +677,8 @@ function openRoster() {
     for (const a of warns) lines.push({ text: `${SHIFTS[a.shift].name} ${a.running ? 'is running short' : `starts short at ${clockText(SHIFTS[a.shift].from)}`}: ${a.reasons.join(', ')}.`, color: COL.bad });
     // Milestone 16 (fix first): a shift with nobody to serve its meal (amber, like the coverage warnings; no automatic fix)
     for (const m of w.mealCover()) lines.push({ text: mealCoverText(m), color: COL.warn });
+    // Milestone 20: the staff hours the running programs take from each shift
+    for (const u of w.programs.useByShift()) lines.push({ text: `Programs use ${u.hours} h a week of ${u.roles.map((x) => ROLES[x].short).join(' / ')} time on ${SHIFTS[u.shift].name} (${u.ids.map((id) => w.programs.byId(id).name).join(', ')})`, color: COL.actionDark });
     lines.push({ text: picked ? `Moving ${first(picked.name)}: tap Morning, Afternoon, Night or Off.` : 'Tap someone, then a shift (or Off), to move them. Off shift they rest in the Staff Room.', color: COL.textMuted });
     // One card per person working (or rostered on) each shift; agency workers and float cover for the shift now / next.
     const card = (p, sid) => {
@@ -1433,6 +1445,10 @@ function openDevelop() {
       homeScreen.setBuildMode(true);
     } }];
     if (next) stageRows.push({ id: 'dev:stage', label: `Stage ${next.n}: ${next.name}`, sub: `Locked — needs Rank ${next.unlock.value} · room for ${next.capacity} residents and more floor`, disabled: true, accent: COL.progress });
+    // Milestone 20: the specialist programs
+    const nRun = w.programs.running().length;
+    const nReady = w.programs.list().filter((x) => x.can.ok).length;
+    stageRows.push({ id: 'dev:programs', label: 'Programs', sub: `${nRun} running · ${nReady} ready to start · sessions residents choose to join`, icon: 'program_prg01', accent: COL.action, onTap: () => openPrograms() });
     const dbg = debug.enabled
       ? [{ title: 'Debug', columns: 1, buttons: [
         ...(next ? [{ id: 'dev:upgrade', label: `Upgrade to Stage ${next.n} now (debug)`, sub: 'Skips the Rank D rule for testing', accent: COL.progress, onTap: () => upgradeStage() }] : []),
@@ -1453,6 +1469,139 @@ function openDevelop() {
       ],
     };
   });
+}
+// --- Specialist programs (Milestone 20, bible §23) ----------------------------------------------------------------------
+const SLOT_TIME = { morning: 'mornings', afternoon: 'afternoons' };
+// "Gardening club: Tue, Fri mornings" · "Music & Memory session: Mon, Wed, Fri at 15:00" · "nothing extra on the timetable"
+function programSchedule(d) {
+  const A = d.adds;
+  if (A.kind === 'session') return `${A.name}: ${dayList(A.days)} ${SLOT_TIME[A.slot]}`;
+  if (A.kind === 'task') return `${A.name}: ${dayList(A.days)} at ${(Array.isArray(A.at) ? A.at : [A.at]).map(clockText).join(' and ')}`;
+  return 'Nothing extra on the timetable: it changes what already happens';
+}
+function programSub(w, x) {
+  const d = x.def;
+  const cost = `${credits(d.resources.weeklyCost)} Credits a week`;
+  if (x.running) return `Running since ${agoWord(w, x.running.since)} · ${x.running.joined} joined, ${x.running.declined} chose not to · ${cost}`;
+  if (!x.can.ok) return `${x.can.reason} · ${cost}`;
+  return `Start · ${x.hours.text} · ${cost}`;
+}
+// Develop → Programs: the ten visible programs (PRG11 / PRG12 are secret and never listed).
+function openPrograms() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const list = w.programs.list();
+    const row = (x) => ({ id: `prog:${x.def.id}`, label: `${x.def.name} · ${x.def.focus}`, sub: programSub(w, x), icon: x.def.icon, accent: x.running ? COL.good : x.can.ok ? COL.action : COL.progress, onTap: () => openProgram(x.def.id) });
+    const running = list.filter((x) => x.running);
+    const rest = list.filter((x) => !x.running);
+    const weekly = running.reduce((a, x) => a + x.def.resources.weeklyCost, 0);
+    const dbg = debug.enabled
+      ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'prog:debug', label: `Unlock research, partner and wing programs (debug): ${w.programs.debug ? 'On' : 'Off'}`, sub: 'For testing: the facility, staff-hours and Credits rules still apply', accent: w.programs.debug ? COL.good : COL.progress, onTap: () => {
+        w.programs.setDebugUnlock(!w.programs.debug);
+        autosave.request('debug');
+      } }] }]
+      : [];
+    return {
+      title: 'Programs',
+      subtitle: `${running.length} running · ${credits(weekly)} Credits a week · residents choose whether to join`,
+      art: 'program_prg01',
+      accent: accentNow(),
+      sections: [
+        { lines: [{ text: 'A program offers sessions and support; each resident decides for themselves. A refusal is never overridden, and a program runs whether or not anyone joins.', color: COL.textMuted }] },
+        ...(running.length ? [{ title: 'Running', columns: 1, buttons: running.map(row) }] : []),
+        { title: running.length ? 'Not running' : 'Programs', columns: 1, buttons: rest.map(row) },
+        ...dbg,
+        { columns: 1, buttons: [{ id: 'prog:back', label: '‹ Back to Develop', accent: COL.progress, onTap: () => openDevelop() }] },
+      ],
+    };
+  });
+}
+// One program: what it is, its unlock, resources against the roster, what it adds, who it suits, its effect, how
+// residents have taken part — and Start / Stop.
+function openProgram(id) {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    const x = w?.programs.list().find((y) => y.def.id === id);
+    if (!x) return { title: '', sections: [] };
+    const d = x.def;
+    const R = d.resources;
+    const run = x.running;
+    const fac = R.facility ? facilityById(R.facility) : null;
+    const head = [{ text: d.text, color: COL.actionDark }, { text: `Unlock: ${unlockWords(d)}`, color: x.unlock.ok ? COL.good : COL.textMuted }, `Scope: ${d.scope === 'wing' ? 'one wing (Home)' : 'the whole home'}`];
+    if (message) head.unshift({ text: message, color: COL.bad });
+    const res = [
+      { text: `Staff: ${x.hours.text}`, color: x.hours.ok || run ? COL.actionDark : COL.bad },
+      { text: fac ? `Facility: ${fac.name}${w.layout.ofDef(R.facility).length ? ' (placed)' : ' (not placed yet)'}` : 'Facility: none needed', color: !fac || w.layout.ofDef(R.facility).length ? COL.actionDark : COL.bad },
+      `Cost: ${credits(R.weeklyCost)} Credits a week, paid at the end of each week it runs (stopping pays only for the days it ran)`,
+      ...(R.prop ? ['Brings its own things to the session (the activity prop)'] : []),
+    ];
+    if (run && !x.hours.ok) res.push({ text: 'Short of staff hours on the roster now: sessions still run when someone can lead them', color: COL.warn });
+    const adds = [programSchedule(d), { text: `Suits: ${d.suits.text}`, color: COL.actionDark }, { text: 'Residents choose: nobody is made to join, and a refused plan option or activity is never overridden.', color: COL.textMuted }];
+    const fx = [{ text: x.effect, color: COL.good }];
+    const part = run ? [
+      { text: `Running since ${agoWord(w, run.since)}: ${run.sessions} session${run.sessions === 1 ? '' : 's'} so far`, color: COL.actionDark },
+      `Offered ${run.offered} · joined ${run.joined} · chose not to ${run.declined}`,
+      `Paid so far: ${credits(run.paid)} Credits`,
+    ] : [{ text: 'Not running', color: COL.textMuted }];
+    const btn = run
+      ? { id: 'prog:stop', label: 'Stop this program', sub: 'No penalty: residents just lose the benefit', accent: COL.bad, onTap: () => confirmStopProgram(id) }
+      : { id: 'prog:start', label: `Start · ${credits(R.weeklyCost)} Credits a week`, sub: x.can.ok ? x.hours.text : x.can.reason, disabled: !x.can.ok, accent: COL.good, onTap: () => {
+        const r = w.programs.start(id);
+        message = r.ok ? null : r.reason;
+        if (r.ok) autosave.request('program');
+      } };
+    return {
+      title: d.name,
+      subtitle: `${d.focus} · ${run ? 'Running' : x.can.ok ? 'Ready to start' : 'Not running'}`,
+      art: d.icon,
+      accent: accentNow(),
+      sections: [
+        { lines: head },
+        { title: 'Resources', lines: res },
+        { title: 'What it adds', lines: adds },
+        { title: 'Effect', lines: fx },
+        { title: 'Taking part', lines: part, columns: 1, buttons: [btn] },
+        { columns: 1, buttons: [{ id: 'prog:list', label: '‹ Back to Programs', accent: COL.progress, onTap: () => openPrograms() }] },
+      ],
+    };
+  });
+}
+function confirmStopProgram(id) {
+  const w = open?.world;
+  const d = w?.programs.byId(id);
+  if (!d) return;
+  dialog.confirm({
+    title: `Stop ${d.name}?`,
+    body: 'It can start again any time. It pays only for the days it ran this week; residents lose its sessions and benefit.',
+    art: d.icon,
+    yes: 'Stop it',
+    danger: true,
+    onYes: () => {
+      if (w.programs.stop(id).ok) autosave.request('program');
+      openProgram(id);
+    },
+  });
+}
+// The resident card: their part in each running program (joined / chose not to).
+function programSections(w, it) {
+  const mine = w.programs.residentOf(it.id);
+  if (!mine.length) return [];
+  return [{ title: 'Programs', lines: [...mine.map((m) => `${m.def.name}: joined ${m.joined}${m.declined ? ` · chose not to ${m.declined}` : ''}`), { text: 'Always their choice', color: COL.textMuted }] }];
+}
+// The Ledger: what the programs cost this month (paid at the end of each week they run).
+function programLedger(w, range) {
+  const lines = w.programs.costsSince(range.fromDay);
+  const running = w.programs.running();
+  const sum = lines.reduce((a, l) => a + l.amount, 0);
+  return {
+    title: 'Specialist programs (paid each week)',
+    lines: [
+      ...(running.length ? running.map((r) => ({ text: `${r.def.name}: ${credits(r.def.resources.weeklyCost)} a week`, color: COL.actionDark })) : [{ text: 'No programs running', color: COL.textMuted }]),
+      { text: `This month so far: ${sum ? '−' : ''}${credits(-sum)}`, color: sum ? COL.bad : COL.textMuted },
+    ],
+  };
 }
 // The Build list: every room and facility (not the two secret ones) with its picture, cost, what it does or why it is
 // locked. Tap one to place it (a ghost in the home).
@@ -1607,6 +1756,7 @@ function openLedger() {
         { text: `Rehab funding: ${REHAB_FUNDING.perMonth} Credits a month for each resident working on their goals (paid at the close)`, color: COL.textMuted },
       ] },
       clinicalLedger(w, range),
+      programLedger(w, range), // (Milestone 20)
       last ? { title: `Last close: ${last.month}`, lines: ledgerLines(last.lines) } : { title: 'Last close', lines: [{ text: 'No month has closed yet.', color: COL.textMuted }] },
       { columns: 1, buttons: [{ id: 'ledger:back', label: '‹ Back to Business', accent: COL.progress, onTap: () => openBusiness() }] },
     ];
@@ -1989,6 +2139,7 @@ function residentSections(w, it) {
     friendsSection(w, it),
     familySection(w, it), // (Milestone 19)
     activitySection(w, it),
+    ...programSections(w, it), // (Milestone 20)
     mealsSection(w, it),
     ...rehabSections(w, it),
     ...memorySections(w, it),
@@ -2321,6 +2472,7 @@ function openHomeSheet(id, from = null) {
       const trainees = w.team.filter((q) => w.roster.isTraining(q.id));
       lines.push(trainees.length ? `Training now: ${trainees.map((q) => `${first(q.name)} (${w.staffing.training.course(w.staffing.trainingOf(q.id)?.courseId)?.name ?? ''})`).join(', ')}` : 'Nobody training right now: choose a course from a staff card.');
     }
+    for (const r of w.programs.at(it.defId)) lines.push({ text: `Program here: ${r.def.name} — ${programSchedule(r.def)}`, color: COL.good }); // (Milestone 20)
     sections.push({ columns: 1, buttons: [{ id: 'place:build', label: 'Move or sell in Build Mode', sub: it.def.effect ? `${it.def.effect.text}${it.def.effect.wired ? '' : ' (its system comes later)'}` : '', accent: COL.progress, onTap: () => {
       homeScreen.setBuildMode(true);
       homeScreen.pick(it);

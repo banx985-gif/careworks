@@ -39,6 +39,11 @@
 // Family Room when there is one) and notice how things are, care-plan meetings (the Founder or a nurse attends for an
 // hour), compliments, complaints as improvement tasks with an evidence trail (never Credits or a score), and family
 // requests (a room move, a birthday party). world.family is the API; visitors are world.visitors (not world.people).
+// Milestone 20: specialist programs (src/systems/programs.js, data/programs.js): ten programs the player starts from
+// Develop → Programs when their unlock rules pass and their staff hours are free on the roster; each runs its sessions
+// (a timetable slot on set days) or one-to-one offers, costs Credits each week (a ledger line) and adds a small effect
+// on an outcome an earlier milestone built. A program only offers: residents join or decline by the M14 choice rules,
+// and a refused option (or group activities) is never overridden. world.programs is the API.
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
@@ -121,6 +126,11 @@ import { clinicalPct, familyPct } from './traitEffects.js';
 import { TRUST, VISIT, NOTICE as FAMILY_NOTICE, MEETING, MEETING_ASK, MEETING_KINDS, NOTES, COMPLIMENTS, COMPLIMENT, COMPLAINT, COMPLAINTS, FIXES, REQUESTS, REQUEST, VIEW, FIRSTS, SO_VISITS, PATTERNS } from '../../data/family.js';
 import { ensureFamily, ensureFamilyHome, changeTrust, nextVisitDay, visitParts, visitTotal, visitWords, homeTrust, callOf, whoOf, theirWord, noteSeen, seenOf } from './family.js';
 import { SHIFT_TEMPLATES } from '../../data/shifts.js';
+import { PROGRAMS, VISIBLE_PROGRAMS, programById, visibleProgram, EFFECT_TEXT, LEDGER_CATEGORY, PROGRAM_RULES } from '../../data/programs.js';
+import { ensureProgramState, newRun, unlockOf, hoursFor, vetoOf, weeksDue, daysUnpaid, countFor } from './programs.js';
+import { activityPct } from './traitEffects.js';
+import { joinChance, choiceBand } from './activities.js';
+import { dayOfWeek } from '../../data/activities.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
 // own live layout; these are for older saves' upgrades and the tests.
@@ -345,6 +355,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
 
   // --- care tasks (Milestone 4) --------------------------------------------------------------------------------
   const care = ensureCareState(careSaved);
+  const progState = (care.programs = ensureProgramState(care.programs)); // (Milestone 20; an M19 save: none running)
   const assignSys = new AssignmentSystem({ staff: sys, getJobs: () => care.tasks.filter((t) => t.status === 'claimed' || t.status === 'working') });
   const absNow = () => absHour(clock.totalDays, hourNow());
   const now = () => clockText(hourNow());
@@ -374,6 +385,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const dayOfYear = (day) => (((day % BIRTHDAY.daysPerYear) + BIRTHDAY.daysPerYear) % BIRTHDAY.daysPerYear) + 1;
   const birthdaysOn = (day) => residents.filter((p) => !p.state.leaving && !p.state.guest && birthdayOf(p.id) === dayOfYear(day)).map((p) => p.id);
   acts.setBirthdayCheck((day) => birthdaysOn(day).length > 0);
+  acts.setProgramHooks({ sessionFor: (day, slot) => programSession(day, slot), veto: (s, p) => vetoOf(programById(s.program), p.state) }); // (Milestone 20)
   // --- nutrition and dining (Milestone 15) -------------------------------------------------------------------------------
   const dining = createDining({ care });
   const kitchenNow = () => KITCHEN_IDS.map((id) => layout.ofDef(id)[0]).find(Boolean) ?? null; // (the best one placed)
@@ -417,7 +429,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (!info) continue; // free time
       const a = info.activity;
       const who = info.birthday ? first(byResident(info.birthday)?.name ?? '') : null;
-      out.push({ ...def, name: who ? `${who}'s birthday tea` : info.event ? a.name : a.name, log: a.log, place: a.where.place, roles: [...a.leaders], drops: { ...a.drops }, minutes: a.minutes, activityId: a.id, slot, doing: `At ${a.name.toLowerCase()}`, going: `Walking to ${a.name.toLowerCase()}` });
+      const named = info.name ?? a.name; // (Milestone 20: a program's session has its own name)
+      out.push({ ...def, name: who ? `${who}'s birthday tea` : named, log: info.name ?? a.log, place: a.where.place, roles: [...a.leaders], drops: { ...a.drops }, minutes: a.minutes, activityId: a.id, slot, ...(info.program ? { program: info.program } : {}), doing: `At ${named.toLowerCase()}`, going: `Walking to ${named.toLowerCase()}` });
     }
     stepsCache.set(key, out);
     return out;
@@ -582,6 +595,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (status === 'missed' && t.essential) coverage?.recordMissed(); // care recovery (Milestone 7)
     clinicalOver(t, status); // (Milestone 18: a missed round stop / health check; an assessment that didn't happen)
     if (t.source === 'meeting') meetingOver(t, status); // (Milestone 19: a family meeting that didn't happen moves on)
+    if (t.source === 'program' && status === 'refused') countFor(progState.running[t.program], t.resident, 'declined'); // (Milestone 20: their choice)
     bus?.emit('care:task', { id: t.id, type: t.type, status, resident: t.resident });
   }
   const helperName = (id) => first(crew.byId(id)?.name ?? id);
@@ -616,10 +630,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (t.source === 'routine') completeRoutine(p, { ...dayStep(p, t.stepId, t.day), drops: t.drops, taskType: t.type }, t.day, helper);
       else {
         const personal = personalSession(p, t, q, famBefore); // (Milestone 17: a life-story / music-and-memory session)
+        if (t.source === 'program' && t.asleepDrops && world.isAsleep(p)) t.drops = { ...t.asleepDrops }; // (Milestone 20: a quiet night check — nobody is woken)
         applyEffects(p, t, helper);
         if (t.type === 'bell') bellState(care, t.resident).cooldownUntil = absNow() + BELL.cooldownHours;
         else if (t.source === 'redirect') endWalk(p, 'redirected', helper); // (Milestone 17: walked back together)
         else if (t.source === 'meeting') meetingDone(p, t, q); // (Milestone 19: the family meeting was held)
+        else if (t.source === 'program') programTaskDone(p, t, helper, personal); // (Milestone 20)
         else log(p, personal ? `${t.name} with ${helperName(helper)}: ${personal}` : `${t.name} (with ${helperName(helper)})`);
         if (t.type === 'hydration') p.state.hydration = { last: absNow() }; // (Milestone 15: their last drink)
         if (t.optionId === SO_VISITS.option && t.type === 'visit') familyCall(p, helper); // (Milestone 19: SO07's family call)
@@ -681,7 +697,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const prepDoneNow = prepStatus === 'done' || prepStatus === 'late';
     const cookQ = prepDoneNow && rec.prep.by ? crew.byId(rec.prep.by) : null;
     const hosp = hospitalityOn();
-    const q = mealQuality({ kitchen: kitchen?.defId ?? null, prep: prepStatus === 'done' ? 'onTime' : prepStatus === 'late' ? 'late' : 'none', cook: cookQ ? { nut: cookQ.model.stats?.NUT ?? 0, traits: cookQ.model.traits } : null, hospitalityOn: hosp });
+    const q = mealQuality({ kitchen: kitchen?.defId ?? null, prep: prepStatus === 'done' ? 'onTime' : prepStatus === 'late' ? 'late' : 'none', cook: cookQ ? { nut: cookQ.model.stats?.NUT ?? 0, traits: cookQ.model.traits } : null, hospitalityOn: hosp, program: programOn('PRG07', p) ? programById('PRG07').effects.quality : 0 }); // (Milestone 20: Nutrition Plus)
     // their menu: made if someone on shift can (or the Nutrition Office plans it)
     const diet = dietOf(st);
     st.diet = diet;
@@ -774,13 +790,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (t && isOpen(t) && !t.tray && !coming && absNow() >= absHour(s.day, at) + TRAY.afterWaking) toTray(p, t, 'still in bed');
   }
   // --- Milestone 16: mobility and rehab ------------------------------------------------------------------------------------
-  const goalKind = (t) => (t.source !== 'plan' ? null : Object.keys(GOAL_TASKS).find((k) => GOAL_TASKS[k].includes(t.name)) ?? null);
+  const goalKind = (t) => (t.source === 'program' ? t.goalKind ?? null : t.source !== 'plan' ? null : Object.keys(GOAL_TASKS).find((k) => GOAL_TASKS[k].includes(t.name)) ?? null); // (Milestone 20: a program's practice)
   // A session done (or a therapy step managed alone): their goals move by the session, the place, the plan, their Mood
   // and eating, and the helper's rehab traits.
   function rehabSession(p, kind, helper) {
     const rh = p.state.rehab;
     if (!rh?.active || rh.readyDay != null) return;
-    const mult = gainMult({ placeMult: kind === 'therapy' || kind === 'self' ? therapySpace(p).mult : 1, plan: p.state.plan, mood: p.state.outcomes.mood, nutritionNeed: p.state.needs.nutrition });
+    const mult = gainMult({ placeMult: kind === 'therapy' || kind === 'self' ? therapySpace(p).mult : 1, plan: p.state.plan, mood: p.state.outcomes.mood, nutritionNeed: p.state.needs.nutrition }) * (programOn('PRG05', p) ? programById('PRG05').effects.rehabMult : 1); // (Milestone 20: the Reablement Pathway)
     const traits = helper ? crew.byId(helper)?.model.traits ?? [] : [];
     addGain(rh, kind, mult, (g) => rehabPct(traits, g));
   }
@@ -799,7 +815,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function updateFalls(p) {
     const st = p.state;
     if (!st.mobility) return null;
-    st.falls = fallsRisk({ level: st.mobility.level, aid: st.mobility.aid, plan: st.plan ?? {}, fallsStaff: fallsStaffOn(), lab: layout.ofDef('F19').length > 0 });
+    st.falls = fallsRisk({ level: st.mobility.level, aid: st.mobility.aid, plan: st.plan ?? {}, fallsStaff: fallsStaffOn(), lab: layout.ofDef('F19').length > 0, program: programOn('PRG04', p) ? { value: programById('PRG04').effects.falls, text: programById('PRG04').name } : null }); // (Milestone 20)
     return st.falls;
   }
   function setSpeed(p) {
@@ -1370,7 +1386,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (r.band !== inst.band.id) continue;
       const due = absHour(inst.day, r.at + HYDRATION.dueAfter);
       if (due <= at) continue;
-      addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: 'hydration', name: r.name, source: 'round', round: r.id, place: 'resident', roles: [...HYDRATION.roles], minutes: HYDRATION.minutes, drops: { ...HYDRATION.drops }, outcomes: {}, opens: absHour(inst.day, r.at), due, at: r.at });
+      const plus = programOn('PRG07', p) ? programById('PRG07').effects.hydrationMult : 1; // (Milestone 20: Nutrition Plus — more to drink)
+      addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: 'hydration', name: r.name, source: 'round', round: r.id, place: 'resident', roles: [...HYDRATION.roles], minutes: HYDRATION.minutes, drops: Object.fromEntries(Object.entries(HYDRATION.drops).map(([k, v]) => [k, v * plus])), outcomes: {}, opens: absHour(inst.day, r.at), due, at: r.at });
     }
   }
   // Milestone 14: joining lifts Mood / Social Connection / Independence by how much they like it (less when crowded; more
@@ -1382,7 +1399,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const feeling = feelingOf(p.def, p.state, act);
     const crowded = (s.going?.length ?? 0) > act.group.max;
     const m = outcomeMult(feeling, crowded, s.liftMult ?? 1);
-    for (const [o, v] of Object.entries(act.lifts)) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v * m);
+    // (Milestone 20: Garden Lover / Music Maker / Community Link on shift lift their kind of session a little more)
+    const on = onShiftNow().filter((q) => !q.agency);
+    const traitMult = (o) => 1 + Math.max(0, ...on.map((q) => activityPct(q.model.traits, act.id, { event: !!s.event || !!s.program, outcome: o }))) / 100;
+    for (const [o, v] of Object.entries(act.lifts)) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v * m * traitMult(o));
+    if (s.program) programSessionDone(p, s); // (Milestone 20: the program's own lift)
     if (!s.joined.includes(p.id)) s.joined.push(p.id);
     if (feeling === 'love' || feeling === 'like' || s.birthday) p.state.lastLikedDay = day;
     delete p.state.wouldEnjoy;
@@ -1524,6 +1545,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const s = acts.addChoice(day, step.slot, p, friendIds); // (someone admitted today chooses now)
       const go = acts.decide(day, step.slot, p.id, feeling === 'dislike' ? mult : 1) === 'go';
       if (feeling === 'dislike') countDislike(st, !go);
+      if (s.program) programSessionChoice(p, s, go); // (Milestone 20: participation counts — their own choice)
       if (!go) {
         st.step = { id: step.id, day, status: 'refused', declined: true, helper: null };
         if (t && isOpen(t)) finish(t, 'refused');
@@ -1625,6 +1647,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       planKitchen(inst, at); // (Milestone 15: kitchen prep for the band's meals, and each resident's drinks rounds)
       for (const p of residents) if (inCare(p)) planRounds(p, inst, at);
       for (const p of residents) if (inCare(p)) planLifeStory(p, inst, at); // (Milestone 17)
+      for (const p of residents) if (inCare(p)) planProgramTasks(p, inst, at); // (Milestone 20: one-to-one program offers)
       for (const p of residents) if (inCare(p)) maybeAlert(p, inst, at); // (Milestone 18: someone may become unwell)
       planExtraChecks(inst, at); // (Milestone 18: Increase observation)
       for (const p of residents) if (inCare(p)) logRefused(p, roundLead(inst, secondHelpers(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p), steps: stepsFor(p, inst.day) }))));
@@ -1884,7 +1907,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       bell: !!openBell(care, p.id), alert: !!world.clinical.wordOf(p.id),
       tidy: care.tasks.some((t) => t.resident === p.id && t.type === 'roomCheck' && t.day === clock.totalDays && t.status === 'done'),
       greeter: v.greeter ? helperName(v.greeter) : null, favourite: v.favourite && v.favourite !== v.greeter ? helperName(v.favourite) : null,
-      so: soOf(p), party: v.party, call,
+      so: soOf(p), party: v.party, call, suite: roomOf(p)?.defId === FAMILY_NOTICE.suite.room, // (Milestone 20: RM03's Family Trust +)
     });
     const total = visitTotal(parts, { communicatorPct: v.communicatorPct });
     const change = trust(p, total, `Visit: ${parts.map((x2) => x2.text).join(', ')}`, 'visit', parts);
@@ -2037,6 +2060,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     rec.lastMeeting = clock.totalDays;
     rec.meeting = null;
     fh.meetings = (fh.meetings ?? 0) + 1;
+    if (m.kind === 'partnership') countFor(progState.running.PRG06, p.id, 'joined'); // (Milestone 20: a partnership meeting held)
     const change = trust(p, lift, `${MEETING_KINDS[m.kind]?.name ?? 'Care-plan meeting'} with ${helperName(q.id)}${pct ? ' (Family Room)' : ''}`, 'meeting');
     log(p, `Family meeting with ${helperName(q.id)}: ${fromWord(p)}'s wish noted — "${note}" (Family Trust ${signedN(change)})`);
     let first = false;
@@ -2139,7 +2163,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const text = K.text({ from: fromWord(p), call: callFor(p), detail });
     const fixText = FIXES[K.fix].text({ shift: SHIFT_TEMPLATES[shift].name, name: first(p.name), their: theirWord(p.def), relation: rec.contact.relation.toLowerCase() });
     const c = { id: `c${fh.nextId++}`, resident: p.id, name: p.name, from: fromWord(p), kind, text, fix: K.fix, fixText, shift, owner: owner?.id ?? null, raised: clock.totalDays, due: clock.totalDays + COMPLAINT.dueDays, status: 'open', drop: 0, drifted: 0, improved: null, resolved: null, recovered: 0, lastEvent, alert, option, domain, trail: [] };
-    c.drop = trust(p, K.drop, `Complaint: ${text}`, 'complaint');
+    c.drop = trust(p, K.drop * (programOn('PRG06', p) ? programById('PRG06').effects.complaintMult : 1), `Complaint: ${text}`, 'complaint'); // (Milestone 20: a smaller dip with the Family Partnership Program)
     trail(c, `Raised: ${text} (Family Trust ${signedN(c.drop)})`);
     trail(c, `Improvement task: ${fixText} · owner ${owner ? helperName(owner.id) : 'nobody yet'} · due in ${COMPLAINT.dueDays} days`);
     rec.lastComplaint = clock.totalDays;
@@ -2378,6 +2402,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     for (const a of fh.asks.filter((o) => o.until < day || !byResident(o.resident))) answerAsk(a, false, true);
     newRequests(day);
     newAsks(day);
+    partnershipMeetings(day); // (Milestone 20: the Family Partnership Program books its meetings)
     planVisits(day);
   }
   // A plan option they dislike (or refuse): the family expects to hear about it — a meeting or a family call does it.
@@ -2402,6 +2427,194 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (v.phase === 'leaving') x.agent.walkTo(grid, ENTRANCE.col, ENTRANCE.row);
   }
   fh.visits = fh.visits.filter((v) => v.phase !== 'gone');
+
+  // --- Milestone 20: specialist programs ------------------------------------------------------------------------------
+  // (src/systems/programs.js, data/programs.js) A program only offers: each resident joins or declines by the M14 choice
+  // rules; a refused option (or group activities) is never overridden; nobody has to take part for it to count as running.
+  // (function declarations: the activities controller asks for today's sessions while the world is still being made)
+  function runOf(id) {
+    return progState.running[id] ?? null;
+  }
+  function wingOfResident(p) {
+    return roster.wingOfRoom?.(p.state.room) ?? 'home';
+  }
+  // Is it running for this resident (a wing program: their wing; one wing, "Home", until Milestone 24)?
+  function programOn(id, p = null) {
+    const run = runOf(id);
+    if (!run) return false;
+    return !p || programById(id).scope === 'facility' || wingOfResident(p) === run.wing;
+  }
+  function runningDefs() {
+    return PROGRAMS.filter((d) => progState.running[d.id]);
+  }
+  // A running program's group session for this day and slot (the activities controller asks: a birthday or a booked
+  // visitor still comes first).
+  function programSession(day, slot) {
+    for (const d of runningDefs()) {
+      const A = d.adds;
+      if (A.kind !== 'session' || A.slot !== slot || !A.days.includes(dayOfWeek(day)) || runOf(d.id).since > day) continue;
+      return { activity: A.activity, program: d.id, name: A.name, liftMult: A.liftMult ?? 1 };
+    }
+    return null;
+  }
+  // The answer to a one-to-one offer, by their own choice (never overridden): → { go, why }
+  function programChoice(d, p, day) {
+    const veto = vetoOf(d, p.state);
+    if (veto) return { go: false, why: veto };
+    if (!d.choice) return { go: true, why: null };
+    const act = activityById(d.choice);
+    if (feelingOf(p.def, p.state, act) === 'refuse') return { go: false, why: 'their choice' };
+    const pj = joinChance({ def: p.def, st: p.state, activity: act });
+    const band = choiceBand(pj);
+    if (band === 'join') return { go: true, why: null };
+    if (band === 'decline') return { go: false, why: 'their choice' };
+    return new Rng(`${seed}:${p.id}:${day}:${d.id}:program`).next() < pj ? { go: true, why: null } : { go: false, why: 'their choice' };
+  }
+  const suitsOffer = (d, p) => (d.adds.who === 'memory' ? !!memoryOf(p) : d.adds.who === 'rehab' ? !!p.state.rehab?.active && p.state.rehab.readyDay == null : true);
+  // Each band: the running programs' one-to-one offers for this resident (Music & Memory, Reablement practice, the night
+  // comfort checks).
+  function planProgramTasks(p, inst, at) {
+    for (const d of runningDefs()) {
+      const A = d.adds;
+      if (A.kind !== 'task' || A.band !== inst.band.id || !A.days.includes(dayOfWeek(inst.day)) || !programOn(d.id, p) || !suitsOffer(d, p)) continue;
+      const run = runOf(d.id);
+      const due = bandEnd(inst.band, inst.day);
+      for (const h of Array.isArray(A.at) ? A.at : [A.at]) {
+        const when = absHour(h < inst.band.from && inst.band.from > inst.band.to ? inst.day + 1 : inst.day, h);
+        const until = Math.min(due, when + 2.5);
+        if (until <= at) continue;
+        countFor(run, p.id, 'offered');
+        const c = programChoice(d, p, inst.day);
+        if (!c.go) {
+          countFor(run, p.id, 'declined');
+          if (A.band !== 'night') log(p, `Chose not to join ${A.name}${c.why && c.why !== 'their choice' ? ` (${c.why})` : ''}: ${d.name}`);
+          honour(memoryOf(p)); // (Milestone 17: the Choice signal — their decline respected)
+          continue;
+        }
+        addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: A.type, essential: false, name: A.name, source: 'program', program: d.id, ...(A.optionId ? { optionId: A.optionId } : {}), ...(A.goalKind ? { goalKind: A.goalKind } : {}), ...(A.asleepDrops ? { asleepDrops: { ...A.asleepDrops } } : {}), at: h, place: A.place ?? 'resident', roles: [...A.roles], minutes: A.minutes, drops: { ...A.drops }, outcomes: { ...A.outcomes }, opens: Math.max(at, when), due: until });
+      }
+    }
+  }
+  // A one-to-one offer done: counted, logged (a quiet night check on someone asleep is not).
+  function programTaskDone(p, t, helper, personal) {
+    const run = runOf(t.program);
+    countFor(run, p.id, 'joined');
+    if (run) run.sessions = (run.sessions ?? 0) + 1;
+    if (t.band === 'night' && world.isAsleep(p)) return;
+    log(p, personal ? `${t.name} with ${helperName(helper)}: ${personal}` : `${t.name} (with ${helperName(helper)})`);
+  }
+  // A program's group session: who joined and who chose free time (counted), and the session held.
+  function programSessionChoice(p, s, go) {
+    const run = runOf(s.program);
+    if (!run) return;
+    if (!s.held) {
+      s.held = true;
+      run.sessions = (run.sessions ?? 0) + 1;
+    }
+    countFor(run, p.id, 'offered');
+    countFor(run, p.id, go ? 'joined' : 'declined');
+  }
+  // The program's own lift for someone who joined: every joiner (joined), those it suits most (suited: their tags).
+  function programSessionDone(p, s) {
+    const d = programById(s.program);
+    if (!d) return;
+    const E = d.effects;
+    const tags = new Set([...(p.state.tags ?? p.def.tags ?? []), p.def.interest].filter(Boolean));
+    const add = (lifts) => {
+      for (const [o, v] of Object.entries(lifts ?? {})) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v);
+    };
+    add(E.joined);
+    if (E.suited && (d.suits.tags ?? []).some((t) => tags.has(t))) add(E.suited);
+  }
+  // Night Comfort: anyone awake in the Night band is a little more comfortable (a warm drink, a quiet word, low lights).
+  function programHour(p, hours) {
+    if (!programOn('PRG08', p) || bandAt(hourNow()).id !== 'night' || world.isAsleep(p) || !inCare(p)) return;
+    p.state.outcomes.comfort = clamp(p.state.outcomes.comfort + programById('PRG08').effects.awakeComfortPerHour * hours);
+  }
+  // Family Partnership: a partnership meeting for each family not met in a while (a few a day at most); never for a
+  // resident who refuses the Family Connection Plan.
+  function partnershipMeetings(day) {
+    if (!programOn('PRG06')) return;
+    const E = programById('PRG06').effects;
+    let booked = 0;
+    for (const p of seated()) {
+      if (booked >= E.perDay) break;
+      const rec = familyOf(p);
+      if (!rec?.contact || !joined(p) || rec.meeting || !programOn('PRG06', p) || vetoOf(programById('PRG06'), p.state)) continue;
+      const last = Math.max(rec.lastMeeting ?? -Infinity, progState.meetings[p.id] ?? -Infinity);
+      if (day - last < E.meetingEveryDays) continue;
+      if (!bookMeeting(p, { kind: 'partnership' }).ok) continue;
+      progState.meetings[p.id] = day;
+      countFor(runOf('PRG06'), p.id, 'offered');
+      booked++;
+    }
+  }
+  const progHistory = (entry) => {
+    progState.history.push({ day: clock.totalDays, ...entry });
+    if (progState.history.length > PROGRAM_RULES.historyKept) progState.history.shift();
+  };
+  // Pay a program's Credits: whole weeks at each week's end (or, stopping, the days it ran).
+  function payProgram(id, amount, what) {
+    const run = runOf(id);
+    if (!run || amount <= 0) return 0;
+    ledger.economy.add('credits', -amount, `Specialist programs: ${programById(id).name} (${what})`, LEDGER_CATEGORY);
+    run.paid += amount;
+    progHistory({ id, what: 'paid', amount, text: what });
+    return amount;
+  }
+  function programDay(day) {
+    for (const d of runningDefs()) {
+      const run = runOf(d.id);
+      const weeks = weeksDue(run, day);
+      if (!weeks) continue;
+      payProgram(d.id, weeks * d.resources.weeklyCost, weeks === 1 ? 'a week' : `${weeks} weeks`);
+      run.paidTo += weeks * PROGRAM_RULES.daysPerWeek;
+    }
+  }
+  // What the rules read: placed facilities, the team's roles, the Night shift, the debug switch.
+  const programCtx = () => ({ facilities: facilityIds(), roles: teamRoles(), night: team().some((q) => roster.shiftOf(q.id)?.id === 'night' && !roster.isTraining(q.id)), debug: !!progState.debug });
+  const hoursPeople = () => team().map((q) => ({ id: q.id, role: q.role, shift: roster.shiftOf(q.id)?.id ?? null, training: roster.isTraining(q.id) }));
+  const programHours = (d) => hoursFor(d, { people: hoursPeople(), state: progState });
+  // Can it start now? → { ok, reason }
+  function canStartProgram(id) {
+    const d = visibleProgram(id);
+    if (!d) return { ok: false, reason: 'No such program' };
+    if (runOf(id)) return { ok: false, reason: 'Already running' };
+    const u = unlockOf(d, programCtx());
+    if (!u.ok) return { ok: false, reason: u.reason, lock: u.lock };
+    const fac = d.resources.facility;
+    if (fac && !hasPiece(fac)) return { ok: false, reason: `Needs a ${facilityById(fac)?.name ?? fac} (${fac})` };
+    const h = programHours(d);
+    if (!h.ok) return { ok: false, reason: `Not enough staff hours: ${h.text}`, hours: h };
+    if (ledger.balance < d.resources.weeklyCost) return { ok: false, reason: `Not enough Credits for a week (${d.resources.weeklyCost})` };
+    return { ok: true, reason: null };
+  }
+  function startProgram(id, { wing = 'home' } = {}) {
+    const c = canStartProgram(id);
+    if (!c.ok) return c;
+    progState.running[id] = newRun(id, clock.totalDays, wing);
+    progHistory({ id, what: 'started' });
+    const f = staffState.founder;
+    if (!f.ended) f.history.programs = (f.history.programs ?? 0) + 1; // (the Founder's history: programs run)
+    planSessions(clock.totalDays, true); // (today's sessions that haven't started take it up)
+    bus?.emit('care:program', { id, status: 'started' });
+    return { ok: true, reason: null };
+  }
+  // Stop anytime: it pays only for the days it ran this week, its offers not yet under way are withdrawn.
+  function stopProgram(id) {
+    const run = runOf(id);
+    if (!run) return { ok: false, reason: 'Not running' };
+    const d = programById(id);
+    const days = daysUnpaid(run, clock.totalDays);
+    const owed = PROGRAM_RULES.stopPaysDays ? Math.round((d.resources.weeklyCost * days) / PROGRAM_RULES.daysPerWeek) : 0;
+    if (owed) payProgram(id, owed, `${days} day${days === 1 ? '' : 's'}`);
+    for (const t of care.tasks) if (t.source === 'program' && t.program === id && t.status === 'open') finish(t, 'stopped');
+    delete progState.running[id];
+    progHistory({ id, what: 'stopped', amount: owed });
+    planSessions(clock.totalDays, true);
+    bus?.emit('care:program', { id, status: 'stopped', paid: owed });
+    return { ok: true, reason: null, paid: owed };
+  }
 
   // --- going home (Milestone 9) -------------------------------------------------------------------------------------
   // A set stay (Respite, Rehab / Short Stay) ends on its leaveDay at STAY_LEAVE_HOUR (or at once when that has passed,
@@ -2510,7 +2723,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
     // Milestone 15: the special menus someone on the team can make (a diet trait, or the Nutrition specialty)
     const dietSkills = new Set(team().flatMap((q) => [...skillsOf({ traits: q.model.traits, specialties: specialtiesOf(q.id) })]));
-    return { name: p.name, needs: p.state.needs, level: supportLevel(p.def), support: p.def.support, stay: p.def.stay, visitors: p.def.visitors, teamRoles: roles, shiftRoles, shiftCounts, rooms: roomTemplatesHere(), facilities: facilityIds(), programs: new Set(), dietSkills };
+    return { name: p.name, needs: p.state.needs, level: supportLevel(p.def), support: p.def.support, stay: p.def.stay, visitors: p.def.visitors, teamRoles: roles, shiftRoles, shiftCounts, rooms: roomTemplatesHere(), facilities: facilityIds(), programs: new Set(Object.keys(progState.running)), dietSkills }; // (Milestone 20: running programs)
   }
   // End of a day: who had essential care missed (a run of such days makes their plan stale).
   function noteMissed(day) {
@@ -2615,6 +2828,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     mobilityDay(day); // (Milestone 16: rehab progress, mobility levels and aids, ready to go home, falls risk)
     memoryDay(day); // (Milestone 17: steady / unsettled, the Choice signal)
     familyDay(day); // (Milestone 19: what families saw yesterday, compliments and complaints, requests, today's visits)
+    programDay(day); // (Milestone 20: each running program's weekly cost)
     // Milestone 15: yesterday's food (a simple cost per meal served), today's diet tags
     const meals = dining.served(day - 1);
     if (meals) ledger.economy.add('credits', -meals * FOOD_COST.perMeal, `Food: ${meals} meal${meals === 1 ? '' : 's'} served`, 'food');
@@ -2825,6 +3039,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         driftOutcomes(p.state, hours);
         noteMobilityNeed(p.state, hours); // (Milestone 16)
         if (p.state.memory) memoryHour(p, hours); // (Milestone 17: stimulation)
+        programHour(p, hours); // (Milestone 20: Night Comfort — calmer for anyone awake at night)
       }
       const b = bandAt(hourNow());
       if (b !== band) {
@@ -3135,6 +3350,51 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return care.rewards;
     },
     familyOf: (residentId) => (byResident(residentId) ? familyOf(byResident(residentId)) : care.families?.[residentId] ?? null),
+    // --- Milestone 20: specialist programs --------------------------------------------------------------------------------
+    // world.programs: the ten visible programs (PRG11 / PRG12 are secret: never listed, never startable).
+    programs: {
+      get state() {
+        return progState;
+      },
+      // [{ def, running (its run or null), unlock { ok, reason, lock }, hours, can { ok, reason }, effect (plain words) }]
+      list: () => VISIBLE_PROGRAMS.map((d) => ({ def: d, running: runOf(d.id), unlock: unlockOf(d, programCtx()), hours: programHours(d), can: runOf(d.id) ? { ok: false, reason: 'Running' } : canStartProgram(d.id), effect: EFFECT_TEXT[d.id](d.effects) })),
+      byId: (id) => visibleProgram(id),
+      running: () => runningDefs().map((d) => ({ def: d, run: runOf(d.id) })),
+      isRunning: (id) => !!runOf(id),
+      runOf: (id) => runOf(id),
+      canStart: (id) => canStartProgram(id),
+      start: (id, opts) => startProgram(id, opts),
+      stop: (id) => stopProgram(id),
+      hours: (id) => (visibleProgram(id) ? programHours(visibleProgram(id)) : null),
+      // Staff hours the running programs take from each shift (the roster sheet): [{ shift, roles, hours, ids }]
+      useByShift() {
+        const out = [];
+        for (const d of runningDefs()) {
+          const S = d.resources.staff;
+          let row = out.find((r) => r.shift === S.shift && r.roles.join() === S.roles.join());
+          if (!row) out.push((row = { shift: S.shift, roles: [...S.roles], hours: 0, ids: [] }));
+          row.hours += S.hours;
+          row.ids.push(d.id);
+        }
+        return out;
+      },
+      // The running programs a placed facility shows (each at the first of its shownAt that is placed).
+      at(defId) {
+        return runningDefs().filter((d) => d.resources.shownAt.find((id) => hasPiece(id)) === defId).map((d) => ({ def: d, run: runOf(d.id) }));
+      },
+      // Their part in each running program: [{ def, joined, declined }]
+      residentOf: (residentId) => runningDefs().map((d) => ({ def: d, ...(runOf(d.id).residents[residentId] ?? { joined: 0, declined: 0 }) })).filter((x) => x.joined || x.declined),
+      // This month's program costs so far (the Ledger): the lines paid since the month began
+      costsSince: (fromDay) => ledger.economy.ledger.filter((l) => l.category === LEDGER_CATEGORY && l.day >= fromDay),
+      get debug() {
+        return !!progState.debug;
+      },
+      // ?debug=1: research, partners and wings count as unlocked (the facility, staff and Credits rules still apply)
+      setDebugUnlock(on) {
+        progState.debug = !!on;
+      },
+      payDayForTests: (day = clock.totalDays) => programDay(day),
+    },
     // --- Milestone 19: family trust -------------------------------------------------------------------------------------
     visitors,
     family: {
