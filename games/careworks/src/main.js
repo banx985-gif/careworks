@@ -96,6 +96,7 @@ import { ACTIONS, ACTION_IDS, CLINICIAN, HOSPITAL } from '../data/clinical.js';
 import { TRUST, MEETING, MEETING_ASK, COMPLAINT, COMPLAINTS, FIXES, REQUESTS, REQUEST, FAMILY_ICONS } from '../data/family.js';
 import { yearsEmployed } from './systems/staffTeam.js';
 import { LEDGER_ROWS, CLOSE_CATS, DEBT, ROOM_FEES } from '../data/economy.js';
+import { TIERS as PARTNER_TIERS, GRANT_RULES, PILOT, partnerById, grantById, COUNTER_LABELS } from '../data/partners.js';
 import { levelOfNeeds, requiredCost, fundingOf } from './systems/economy.js';
 import { VISIBLE_PROGRAMS, validatePrograms, dayList, LEDGER_CATEGORY } from '../data/programs.js';
 import { unlockWords } from './systems/programs.js';
@@ -486,7 +487,7 @@ const topBar = createTopBar({
   },
   onStats: () => openLedger(),
   onInbox: () => openInbox(),
-  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting() + (open?.world?.economy?.offers().length ?? 0), // (Milestone 22: debt offers) // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home; Milestone 18: alerts waiting for a choice; Milestone 19: family asks, requests, new complaints)
+  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting() + (open?.world?.economy?.offers().length ?? 0) + (open?.world?.partners?.offers().length ?? 0), // (Milestone 23: partnership offers) // (Milestone 22: debt offers) // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home; Milestone 18: alerts waiting for a choice; Milestone 19: family asks, requests, new complaints)
   onHelp: () => openTopSheet('help'),
   onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_LOCKED, accent: COL.progress, sections: [] })),
 });
@@ -905,6 +906,7 @@ function openInbox() {
     if (message) sections.push({ lines: [{ text: message, color: COL.bad }] });
     // Milestone 22: Emergency Credit / a Rescue Investor
     for (const o of w.economy.offers()) sections.push(offerSection(w, o, (m) => (message = m)));
+    sections.push(...partnerInbox(w)); // (Milestone 23: partnership offers)
     // Milestone 18: alerts — the six high-level choices
     for (const a of w.clinical.alerts()) sections.push(alertSection(w, a, 'inbox'));
     // Milestone 16: residents ready to go home — send them home now, or it happens on its own
@@ -926,7 +928,7 @@ function openInbox() {
     }
     const past = w.activities.history().slice(-4).reverse();
     sections.push({ title: 'Earlier', lines: past.length ? past.map((h) => ({ text: `${h.def.name}: ${h.accepted ? 'accepted' : h.auto ? 'no answer (let go)' : 'declined'}`, color: COL.textMuted })) : [{ text: notices.length ? '' : 'Nothing yet. Letters from families, partners and inspectors will arrive here too.', color: COL.textMuted }] });
-    const waiting = notices.length + alertsWaiting() + familyWaiting() + w.economy.offers().length;
+    const waiting = notices.length + alertsWaiting() + familyWaiting() + w.economy.offers().length + w.partners.offers().length; // (Milestone 23)
     return { title: 'Inbox', subtitle: waiting ? `${waiting} waiting` : 'Nothing waiting', art: 'care_ui_01', accent: accentNow(), sections };
   });
 }
@@ -1727,8 +1729,10 @@ function confirmStopProgram(id) {
 // The resident card: their part in each running program (joined / chose not to).
 function programSections(w, it) {
   const mine = w.programs.residentOf(it.id);
-  if (!mine.length) return [];
-  return [{ title: 'Programs', lines: [...mine.map((m) => `${m.def.name}: joined ${m.joined}${m.declined ? ` · chose not to ${m.declined}` : ''}`), { text: 'Always their choice', color: COL.textMuted }] }];
+  const pilot = w.pilotOf(it.id); // (Milestone 23: their own answer to the assistive-tech pilot)
+  if (!mine.length && !pilot) return [];
+  const pl = pilot ? [{ text: pilot.answer === 'yes' ? `Assistive-tech pilot: said yes · ${pilot.sessions} of ${PILOT.sessions} sessions` : 'Assistive-tech pilot: chose not to take part', color: COL.actionDark }] : [];
+  return [{ title: 'Programs', lines: [...mine.map((m) => `${m.def.name}: joined ${m.joined}${m.declined ? ` · chose not to ${m.declined}` : ''}`), ...pl, { text: 'Always their choice', color: COL.textMuted }] }];
 }
 // The Ledger: what the programs cost this month (paid at the end of each week they run).
 function programLedger(w, range) {
@@ -1851,6 +1855,7 @@ function openBusiness() {
           lines: [...(open?.world ? open.world.economy.warnings().map((t) => ({ text: t, color: COL.bad })) : []), 'Your home saves itself as you play.'], // (Milestone 22: debt)
           buttons: [
             { id: 'ledger', label: 'Ledger', sub: `Balance ${credits(b)} Credits · this month and last, line by line`, icon: 'care_ui_05', accent: COL.action, onTap: () => openLedger() },
+            ...(open?.world ? [partnersButton(open.world), grantsButton(open.world)] : []), // (Milestone 23)
             { id: 'mainMenu', label: 'Save and Main Menu', accent: COL.progress, onTap: () => leaveHome() },
           ],
         },
@@ -1858,6 +1863,196 @@ function openBusiness() {
     };
   });
 }
+// --- Milestone 23: community partners and grants ----------------------------------------------------------------------
+// Partners support the home; they never buy access to residents. Every obligation is a number the game counts, and only
+// what residents chose to join counts. Grants are recovery / expansion help — never required.
+const pctBar = (count, min) => Math.round((100 * Math.min(count, min)) / Math.max(1, min));
+function partnersButton(w) {
+  const P = w.partners;
+  const act = P.active();
+  const offers = P.offers().length;
+  return { id: 'business:partners', label: 'Community partners', sub: `${act.length} of ${P.slots()} slot${P.slots() === 1 ? '' : 's'} in use${act.length ? ` (${act.map((a) => a.def.name).join(', ')})` : ''}${offers ? ` · ${offers} offer${offers === 1 ? '' : 's'} waiting` : ''}`, icon: act[0]?.def.logo ?? 'partner_logo_spn01', accent: offers ? COL.good : COL.action, onTap: () => openPartners() };
+}
+function grantsButton(w) {
+  const G = w.partners.grants;
+  return { id: 'business:grants', label: 'Grant board', sub: `${G.active().length} of ${GRANT_RULES.maxActive} active · ${G.board().length} on offer this month`, icon: 'care_ui_05', accent: COL.action, onTap: () => openGrants() };
+}
+// One deal's progress as a bar: the exact count ("Family reviews 2 / 3") or the month checks.
+function dealBar(x) {
+  const g = x.progress;
+  if (!g) return [];
+  if (g.kind === 'count') return [{ label: g.text, value: pctBar(g.count, g.min), color: g.met ? COL.good : COL.progress, text: `${Math.min(g.count, g.min)} / ${g.min}` }];
+  return [{ label: `${x.def.obligation.label} now`, value: g.now == null ? 0 : Math.min(100, g.now), color: g.broken ? COL.bad : g.now != null && g.now < x.def.obligation.min ? COL.warn : COL.good, text: g.now == null ? '—' : `${Math.round(g.now)} / ${x.def.obligation.min}` }];
+}
+function dealLines(w, x) {
+  const g = x.progress;
+  const out = [{ text: `Perk: ${w.partners.perksActive().filter((k) => k.def.id === x.def.id).map((k) => k.text + (x.tier.perkMult > 1 ? ` (× ${x.tier.perkMult} at ${x.tier.name})` : '')).join(' · ')}`, color: COL.good }, { text: `Obligation: ${x.def.obligation.text}`, color: COL.actionDark }];
+  if (g?.kind === 'check') out.push({ text: g.broken ? `Missed at a month check (last: ${g.last}) — this deal won't be met, with no other penalty` : `Kept at ${g.count} of ${g.checks} month check${g.checks === 1 ? '' : 's'} so far`, color: g.broken ? COL.bad : COL.textMuted });
+  else if (g?.met) out.push({ text: 'Met — the relationship grows when the deal ends', color: COL.good });
+  out.push({ text: `${x.daysLeft} day${x.daysLeft === 1 ? '' : 's'} left of 6 months · ${x.tier.name}`, color: COL.textMuted });
+  return out;
+}
+function openPartners() {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const P = w.partners;
+    const say = (r, why) => {
+      message = r.ok ? null : r.reason;
+      if (r.ok) autosave.request(why);
+    };
+    const sections = [{ lines: [
+      ...(message ? [{ text: message, color: COL.bad }] : []),
+      { text: 'Partners support the home. They never buy access to residents, and nothing they ask needs a resident to take part who doesn’t want to.', color: COL.textMuted },
+      { text: `Slots: ${P.active().length} of ${P.slots()} in use (Rank ${P.rank()}; more slots at Rank C and A) · deals last 6 months · cancel any time (the perk ends)`, color: COL.actionDark },
+    ] }];
+    for (const x of P.active()) sections.push({ title: `${x.def.name} · ${x.tier.name}`, lines: dealLines(w, x), bars: dealBar(x), columns: 1, buttons: [
+      { id: `partner:open:${x.def.id}`, label: `${x.def.name}`, sub: `${x.def.theme} · tap for the full card`, icon: x.def.logo, accent: COL.action, onTap: () => openPartner(x.def.id) },
+      { id: `partner:cancel:${x.def.id}`, label: 'Cancel this partnership', sub: 'The perk ends now; no other penalty', accent: COL.bad, onTap: () => confirmCancelPartner(x.def.id) },
+    ] });
+    for (const o of P.offers()) {
+      const can = P.canSign(o.def.id);
+      const T = PARTNER_TIERS[P.tierOf(o.def.id)];
+      sections.push({ title: `Offer: ${o.def.name}${o.offer.renewal ? ' (to renew)' : ''}`, lines: [
+        { text: `${o.def.theme} · ${T.name} · ${credits(T.supportPerMonth)} Credits support a month while it runs`, color: COL.actionDark },
+        { text: `Perk: ${o.def.perks.map((k) => k.text).join(' · ')}${T.perkMult > 1 ? ` (× ${T.perkMult})` : ''}`, color: COL.good },
+        { text: `Obligation: ${o.def.obligation.text}`, color: COL.actionDark },
+        { text: `The offer stands for ${Math.max(0, o.offer.untilDay - w.clock.totalDays)} more day${o.offer.untilDay - w.clock.totalDays === 1 ? '' : 's'}`, color: COL.textMuted },
+      ], columns: 2, buttons: [
+        { id: `partner:sign:${o.def.id}`, label: 'Sign · 6 months', sub: can.ok ? 'The perk starts at once' : can.reason, icon: o.def.logo, disabled: !can.ok, accent: COL.good, onTap: () => say(P.sign(o.def.id), 'partner') },
+        { id: `partner:decline:${o.def.id}`, label: 'Not now', sub: 'With thanks: they may ask again', accent: COL.progress, onTap: () => say(P.decline(o.def.id), 'partner') },
+      ] });
+    }
+    sections.push({ title: 'All partners', columns: 1, buttons: P.list().map((x) => ({ id: `partner:card:${x.def.id}`, label: `${x.def.name} · ${x.tier.name}`, sub: x.active ? `Partner now · ${x.progress?.text ?? ''}` : x.locked ? x.locked : x.offer ? 'Offer waiting' : `${x.def.theme} · ${x.def.obligation.text}`, icon: x.def.logo, accent: x.active ? COL.good : x.locked ? COL.progress : COL.action, onTap: () => openPartner(x.def.id) })) });
+    const hist = P.history(4).reverse();
+    if (hist.length) sections.push({ title: 'Earlier deals', lines: hist.map((h) => ({ text: `${partnerById(h.id).name}: ${h.result === 'met' ? 'met' : h.result === 'cancelled' ? 'cancelled' : 'not met'} (day ${h.startDay + 1}–${h.endDay + 1}) · ${PARTNER_TIERS[h.tierAfter].name}`, color: h.result === 'met' ? COL.good : COL.textMuted })) });
+    if (debug.enabled) sections.push({ title: 'Debug', columns: 1, buttons: [
+      { id: 'partner:debug', label: `Unlock locked partners and grants (debug): ${P.debug ? 'On' : 'Off'}`, sub: 'SilverLine (outings) and the transport grant', accent: P.debug ? COL.good : COL.progress, onTap: () => {
+        P.setDebug(!P.debug);
+        autosave.request('debug');
+      } },
+      { id: 'partner:rank', label: `Rank for partner slots (debug): ${P.rank()}`, sub: 'Tap to step E → D → C → B → A → S', accent: COL.progress, onTap: () => {
+        const R = ['E', 'D', 'C', 'B', 'A', 'S'];
+        P.setRank(R[(R.indexOf(P.rank()) + 1) % R.length]);
+        autosave.request('debug');
+      } },
+      { id: 'partner:offer', label: 'An offer now (debug)', sub: 'The next offer arrives today', accent: COL.progress, onTap: () => {
+        P.state.nextOfferDay = w.clock.totalDays;
+        P.daily(w.clock.totalDays);
+      } },
+      { id: 'partner:outing', label: 'Count a stub outing (debug)', sub: 'Outings come in a later update', disabled: !P.debug, accent: COL.progress, onTap: () => P.outingForDebug() },
+    ] });
+    sections.push({ columns: 1, buttons: [{ id: 'partners:back', label: '‹ Back to Business', accent: COL.progress, onTap: () => openBusiness() }] });
+    return { title: 'Community partners', subtitle: `${P.active().length} of ${P.slots()} slots · ${P.offers().length} offer${P.offers().length === 1 ? '' : 's'}`, art: P.active()[0]?.def.logo ?? 'partner_logo_spn01', accent: accentNow(), sections };
+  });
+}
+// One partner's card: logo, theme, tier, perk, obligation (and why it is locked), this deal and earlier ones.
+function openPartner(id) {
+  sheet.open(() => {
+    const w = open?.world;
+    const x = w?.partners.list().find((y) => y.def.id === id);
+    if (!x) return { title: '', sections: [] };
+    const d = x.def;
+    const T = x.tier;
+    const next = PARTNER_TIERS[Math.min(PARTNER_TIERS.length - 1, PARTNER_TIERS.indexOf(T) + 1)];
+    const head = [{ text: `${d.theme} · relationship: ${T.name}`, color: COL.actionDark }, { text: `Perk: ${d.perks.map((k) => k.text).join(' · ')}${T.perkMult > 1 ? ` (× ${T.perkMult} at ${T.name})` : ''}`, color: COL.good }, { text: `Obligation: ${d.obligation.text}`, color: COL.actionDark }, { text: `Support: ${credits(T.supportPerMonth)} Credits a month while a deal runs${next !== T ? ` · at ${next.name}: perk × ${next.perkMult}, ${credits(next.supportPerMonth)} a month` : ''}`, color: COL.textMuted }];
+    if (x.locked) head.unshift({ text: x.locked, color: COL.warn });
+    if (d.pilot) head.push({ text: 'The pilot is offered to every resident here; only those who say yes take part, and they can still say no on the day. If nobody wants to, the deal simply isn’t met.', color: COL.textMuted });
+    const hist = w.partners.history(20).filter((h) => h.id === id).slice(-4).reverse();
+    return {
+      title: d.name,
+      subtitle: `${d.theme} · ${x.active ? 'Partner now' : x.offer ? 'Offer waiting' : x.locked ? 'Locked' : 'Not a partner'}`,
+      art: d.logo,
+      accent: accentNow(),
+      sections: [
+        { lines: head },
+        ...(x.active ? [{ title: 'This deal', lines: dealLines(w, { ...x, tier: PARTNER_TIERS[x.active.tier ?? 0] }), bars: dealBar(x) }] : []),
+        { title: 'Earlier deals', lines: hist.length ? hist.map((h) => `${h.result === 'met' ? 'Met' : h.result === 'cancelled' ? 'Cancelled' : 'Not met'} · day ${h.startDay + 1}–${h.endDay + 1} · ${PARTNER_TIERS[h.tier].name} → ${PARTNER_TIERS[h.tierAfter].name}`) : [{ text: 'None yet', color: COL.textMuted }] },
+        { columns: 1, buttons: [{ id: 'partner:list', label: '‹ Back to partners', accent: COL.progress, onTap: () => openPartners() }] },
+      ],
+    };
+  });
+}
+function confirmCancelPartner(id) {
+  const w = open?.world;
+  const d = partnerById(id);
+  if (!w || !d) return;
+  dialog.confirm({
+    title: `Cancel ${d.name}?`,
+    body: 'The perk ends now. The relationship stays at its tier; there is no other penalty.',
+    art: d.logo,
+    yes: 'Cancel it',
+    danger: true,
+    onYes: () => {
+      if (w.partners.cancel(id).ok) autosave.request('partner');
+      openPartners();
+    },
+  });
+}
+const grantPay = (c) => [c.payOnAccept ? `${credits(c.payOnAccept)} on acceptance` : null, c.payOnComplete ? `${credits(c.payOnComplete)} when the goal is met` : null].filter(Boolean).join(' + ');
+const grantGoal = (c) => `${COUNTER_LABELS[c.goal.counter] ?? c.goal.counter}${c.goal.stay ? ` (${c.goal.stay})` : ''}`;
+// The Grant board (§29): this month's offers, the active ones (at most 2) with their goal as a bar, and what came of
+// earlier ones. Recovery and expansion help — never required, and missing a deadline costs nothing.
+function openGrants() {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const G = w.partners.grants;
+    const say = (r) => {
+      message = r.ok ? null : r.reason;
+      if (r.ok) autosave.request('grant');
+    };
+    const sections = [{ lines: [
+      ...(message ? [{ text: message, color: COL.bad }] : []),
+      { text: `Grants and service contracts help a home recover or grow. Up to ${GRANT_RULES.maxActive} at once; a new board each month${G.struggling() ? ' (more offers while the home is struggling)' : ''}. Missing a deadline costs nothing: any advance is simply handed back.`, color: COL.textMuted },
+    ] }];
+    for (const c of G.active()) {
+      const g = G.progressOf(c);
+      sections.push({ title: c.name, lines: [{ text: grantById(c.grantId).text, color: COL.actionDark }, { text: `Pays ${grantPay(c)}`, color: COL.good }, { text: `${Math.max(0, c.dueDay - w.clock.totalDays)} days left`, color: COL.textMuted }], bars: [{ label: grantGoal(c), value: pctBar(g.count, g.min), color: g.met ? COL.good : COL.progress, text: `${Math.min(g.count, g.min)} / ${g.min}` }] });
+    }
+    if (!G.active().length) sections.push({ title: 'Active', lines: [{ text: 'No grants active', color: COL.textMuted }] });
+    const board = G.board();
+    sections.push({ title: 'On offer this month', lines: board.length ? [] : [{ text: 'Nothing on offer: a new board comes with the month’s close', color: COL.textMuted }], columns: 1, buttons: board.flatMap((c) => {
+      const can = G.canAccept(c.id);
+      return [
+        { id: `grant:accept:${c.id}`, label: `${c.name} · ${grantPay(c)}`, sub: `${can.ok ? `Goal: ${grantGoal(c)} ${c.goal.min} within ${c.deadlineDays} days` : can.reason} · ${grantById(c.grantId).text}`, icon: 'care_ui_05', disabled: !can.ok, accent: COL.good, onTap: () => say(G.accept(c.id)) },
+        { id: `grant:decline:${c.id}`, label: `Pass on the ${c.name.toLowerCase()}`, sub: 'It leaves the board', accent: COL.progress, onTap: () => say(G.decline(c.id)) },
+      ];
+    }) });
+    const done = G.done(4).reverse();
+    if (done.length) sections.push({ title: 'Earlier grants', lines: done.map((c) => ({ text: `${c.name}: ${c.status === 'success' ? 'goal met, paid' : c.result?.reason === 'deadline' ? 'deadline passed (nothing lost)' : 'ended'}`, color: c.status === 'success' ? COL.good : COL.textMuted })) });
+    sections.push({ columns: 1, buttons: [{ id: 'grants:back', label: '‹ Back to Business', accent: COL.progress, onTap: () => openBusiness() }] });
+    return { title: 'Grant board', subtitle: `${G.active().length} of ${GRANT_RULES.maxActive} active · ${board.length} on offer`, art: 'care_ui_05', accent: accentNow(), sections };
+  });
+}
+// The Inbox: partner offers (sign or not now).
+function partnerInbox(w) {
+  return w.partners.offers().map((o) => {
+    const can = w.partners.canSign(o.def.id);
+    return { title: `A partnership offer: ${o.def.name}`, lines: [{ text: `${o.def.theme} · Perk: ${o.def.perks.map((k) => k.text).join(' · ')}`, color: COL.good }, { text: `Obligation: ${o.def.obligation.text}`, color: COL.actionDark }], columns: 2, buttons: [
+      { id: `inbox:partner:${o.def.id}`, label: 'Sign · 6 months', sub: can.ok ? 'The perk starts at once' : can.reason, icon: o.def.logo, disabled: !can.ok, accent: COL.good, onTap: () => {
+        if (w.partners.sign(o.def.id).ok) autosave.request('partner');
+      } },
+      { id: `inbox:partnerNo:${o.def.id}`, label: 'Not now', sub: 'Or see Business → Community partners', accent: COL.progress, onTap: () => {
+        w.partners.decline(o.def.id);
+        autosave.request('partner');
+      } },
+    ] };
+  });
+}
+// The Ledger: what partners and grants brought this month.
+function partnerLedger(w, range) {
+  const ls = w.ledger.economy.ledger.filter((l) => ['partnerSupport', 'partnerPerk', 'grants'].includes(l.category) && l.day >= range.fromDay);
+  const perks = w.partners.perksActive();
+  return { title: 'Partners and grants', lines: [
+    ...(perks.length ? perks.map((k) => ({ text: `${k.def.name}: ${k.text}`, color: COL.good })) : [{ text: 'No partner perks running', color: COL.textMuted }]),
+    ...ls.slice(-4).map((l) => ({ text: `${l.reason}: +${credits(l.amount)}`, color: COL.actionDark })),
+    { text: 'Food, equipment and upkeep savings post at the month’s close', color: COL.textMuted },
+  ] };
+}
+
 // Milestone 22: the Ledger — this month (so far, with the close's lines as they stand) and last month for every income and
 // cost line, a small 6-month balance line, the loan / investor status.
 function ledgerMonth(w) {
@@ -1969,6 +2164,7 @@ function openLedger() {
       // (Milestone 7: shifts run unsafe; Milestone 16: the care-outcome counters)
       { title: 'Care outcomes', lines: [{ text: `Successful discharges: ${w.rewards.positiveOutcomes}${w.rewards.discharges.length ? ` (last: ${first(w.rewards.discharges.at(-1).name)})` : ''}`, color: COL.actionDark }, `Reputation: ${w.rewards.reputation}`, { text: `Unsafe shifts so far: ${w.staffState.coverage.unsafe} (run under minimum with no agency cover)`, color: w.staffState.coverage.unsafe ? COL.bad : COL.textMuted }] },
       { title: 'Other currencies', lines: [`Research Points: ${w.research.rp.toLocaleString('en-GB')} (Develop → Research)`, `Care Tokens: ${w.economy.tokens} (earned for firsts and good months; nothing to spend them on yet)`, `Prestige Tokens: ${w.economy.prestige} (account; New Game+ brings them later)`] },
+      partnerLedger(w, w.monthRange()), // (Milestone 23)
       programLedger(w, w.monthRange()),
       researchLedger(w, w.monthRange()),
       clinicalLedger(w, w.monthRange()),
@@ -2774,7 +2970,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openQuality, openBusiness, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

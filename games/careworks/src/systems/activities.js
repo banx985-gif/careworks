@@ -155,7 +155,7 @@ export function createActivities({ care, seed = 'careworks', bus = null, today =
         const friendsJoining = friendsOf(p.id).filter((id) => first[id] >= CHOICE.bands.join).length;
         let pj = joinChance({ def: p.def, st: p.state, activity: info.activity, friendsJoining, groupSize: likely });
         if (info.birthday && (info.birthday === p.id || friendsOf(info.birthday).includes(p.id))) pj = Math.max(pj, 1); // (their own tea, and their friends)
-        if (s.program && vetoFor(s, p)) pj = 0; // (Milestone 20: a refusal is never overridden)
+        if (vetoFor(s, p)) pj = 0; // (Milestone 20: a refusal is never overridden; Milestone 23: on every session, not only a program's)
         s.chances[p.id] = Math.round(pj * 1000) / 1000;
         s.choices[p.id] = choiceBand(pj);
       }
@@ -171,7 +171,7 @@ export function createActivities({ care, seed = 'careworks', bus = null, today =
       const fj = friendsJoining ?? friendsOf(p.id).filter((id) => s.choices[id] === 'join').length;
       let pj = joinChance({ def: p.def, st: p.state, activity: act, friendsJoining: fj, groupSize: Object.values(s.choices).filter((c) => c === 'join').length });
       if (s.birthday && (s.birthday === p.id || friendsOf(s.birthday).includes(p.id))) pj = 1;
-      if (s.program && vetoFor(s, p)) pj = 0; // (Milestone 20)
+      if (vetoFor(s, p)) pj = 0; // (Milestone 20; Milestone 23: every session)
       s.chances[p.id] = Math.round(pj * 1000) / 1000;
       s.choices[p.id] = choiceBand(pj);
       return s;

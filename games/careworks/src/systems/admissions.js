@@ -167,6 +167,24 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
       if (!free?.length) return { ok: false, reason: def.requires?.room ? `No free ${ROOM_TEMPLATES[def.requires.room].name}: build another in Build Mode.` : `No free ${ROOM_TEMPLATES[def.room].name}: every room has a resident.` };
       return { ok: true, reason: null };
     },
+    // Milestone 23: referred applicants (a respite allocation, a rehabilitation pathway): up to count people of this stay
+    // type who are not here or applying arrive on the board now, tagged with the grant (admitting one counts for it).
+    // fits(def): someone the home could take (a room of the kind they need placed or buildable) — they come first.
+    // → the applicants added
+    allocate({ stay, count, tag, day, inHome, fits = () => true }) {
+      const out = [];
+      const all = residents.filter((r) => r.stay === stay && !inHome.has(r.id) && !get(r.id) && !(s.away[r.id] > day));
+      const pool = all.some(fits) ? all.filter(fits) : all;
+      for (let i = 0; i < count && pool.length; i++) {
+        const rng = new Rng(`${seed}:allocate:${tag}:${i}`);
+        const def = pool.splice(rng.int(0, pool.length - 1), 1)[0];
+        const roll = s.arrivals++;
+        const app = { id: def.id, status: 'board', arrived: day, leaveDay: day + A.boardDays, ...varied(def, seed, roll), assessed: false, assessReady: null, rolls: [roll], stayDays: stayLengthFor(def, seed, roll), returning: !!s.wentHome[def.id], allocated: tag };
+        s.applicants.push(app);
+        out.push(app);
+      }
+      return out;
+    },
     admit(id, ctx) {
       const app = get(id);
       const r = board.canAdmit(app, ctx);

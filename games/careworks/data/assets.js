@@ -15,6 +15,7 @@ import { DISCHARGE } from './mobility.js';
 import { ROUND } from './clinical.js';
 import { FAMILY_ICONS, FIRSTS, COMPLIMENT } from './family.js';
 import { VISIBLE_PROGRAMS } from './programs.js';
+import { PARTNERS } from './partners.js';
 
 const art = (folder, key) => [key, `assets/images/${folder}/${key}.png`];
 
@@ -53,6 +54,8 @@ export const ASSETS = {
   ...Object.fromEntries([art('events', FIRSTS.visitArt), art('rewards', COMPLIMENT.firstArt)]),
   // Milestone 20: the ten visible program icons (PRG11 / PRG12 are secret: not loaded, never listed)
   ...Object.fromEntries(VISIBLE_PROGRAMS.map((p) => art('programs', p.icon))),
+  // Milestone 23: the eight community partners' logos (the Partners sheet)
+  ...Object.fromEntries(PARTNERS.map((p) => art('logos', p.logo))),
   // Milestone 0 loader test (?screen=test): the placeholder PWA icon as a real image, and one deliberately missing file.
   m0Real: 'assets/branding/pwa/icon-192.png',
   m0Missing: 'assets/m0-missing-test.png',

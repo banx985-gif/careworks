@@ -55,6 +55,11 @@
 // equipment wear, upkeep of every placed piece and utilities by floor area at the month's close; program funding;
 // Care Tokens for firsts; debt recovery (Emergency Credit, a Rescue Investor; admissions pause in deep debt); a family
 // may move a resident elsewhere after a week of very low Mood (lost fees). world.economy is the API.
+// Milestone 23: community partners and grants (src/systems/partners.js, data/partners.js): partner deals in slots by
+// Rank, each with a perk (pp: cost savings posted as their own ledger lines, meal quality, family Trust, garden and
+// community activities, training time) and a countable obligation; grants with a countable goal and a deadline. The home
+// feeds the counters only with what residents chose to join (a session with a joiner, a pilot session someone said yes
+// to). The assistive-tech pilot is offered to everyone here; only those who say yes take part. world.partners is the API.
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
@@ -113,7 +118,7 @@ import { eligibilityOf, optionPrefOf, staleReasons, markReviewed, noteDay, admis
 import { optionById, domainById, OPTION_PREF_MOOD, DOMAINS } from '../../data/carePlans.js';
 import { SHIFT_IDS } from '../../data/shifts.js';
 import { createCrew } from './staffCrew.js';
-import { createAdmissions, stayLengthFor, varied } from './admissions.js';
+import { createAdmissions, stayLengthFor, varied, prereqOf } from './admissions.js';
 import { createLedger } from './ledger.js';
 import { createStaffing } from './staffing.js';
 import { SPECIALTIES, TRAINING } from '../../data/training.js';
@@ -146,6 +151,8 @@ import { UPKEEP, UTILITIES, MOVE_OUT } from '../../data/economy.js';
 import { RP_INCOME } from '../../data/research.js';
 import { joinChance, choiceBand } from './activities.js';
 import { dayOfWeek } from '../../data/activities.js';
+import { createPartners, environmentScore } from './partners.js';
+import { PILOT } from '../../data/partners.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
 // own live layout; these are for older saves' upgrades and the tests.
@@ -232,6 +239,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   let staffing = null; // (Milestone 11: made with the ledger, below)
   let research = null; // (Milestone 21: made with the ledger, below)
   let economy = null; // (Milestone 22: made with the ledger, below)
+  let partners = null; // (Milestone 23: made with the ledger, below)
+  const pp = (key) => partners?.perk(key) ?? 0; // (Milestone 23: an active partner's perk)
   // Milestone 22: a resident's Support Level, from their assessed needs (at admission; an older or test resident: their
   // profile's — the level their support type always had)
   const levelOf = (p) => p.state.level ?? levelOfNeeds(p.state.assessed ?? p.def.needs);
@@ -410,7 +419,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const dayOfYear = (day) => (((day % BIRTHDAY.daysPerYear) + BIRTHDAY.daysPerYear) % BIRTHDAY.daysPerYear) + 1;
   const birthdaysOn = (day) => residents.filter((p) => !p.state.leaving && !p.state.guest && birthdayOf(p.id) === dayOfYear(day)).map((p) => p.id);
   acts.setBirthdayCheck((day) => birthdaysOn(day).length > 0);
-  acts.setProgramHooks({ sessionFor: (day, slot) => programSession(day, slot), veto: (s, p) => vetoOf(programById(s.program), p.state) }); // (Milestone 20)
+  acts.setProgramHooks({ sessionFor: (day, slot) => programSession(day, slot), veto: (s, p) => (s.program ? vetoOf(programById(s.program), p.state) : null) ?? groupRefusal(s, p) }); // (Milestone 20; Milestone 23: someone who refuses group activities is never put in any session)
+  // Milestone 23: a resident who refuses group activities is not put in a session — unless the activity has its own
+  // preference (Cards: their M2 Cards preference decides, as it always has).
+  const groupRefusal = (s, p) => (p.state.prefs?.groupActivity === 'refuse' && !(activityById(s.activity)?.prefKey && p.state.prefs?.[activityById(s.activity).prefKey]) ? 'prefers not to join group activities' : null);
   // --- nutrition and dining (Milestone 15) -------------------------------------------------------------------------------
   const dining = createDining({ care });
   const kitchenNow = () => KITCHEN_IDS.map((id) => layout.ofDef(id)[0]).find(Boolean) ?? null; // (the best one placed)
@@ -661,12 +673,14 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         else if (t.source === 'redirect') endWalk(p, 'redirected', helper); // (Milestone 17: walked back together)
         else if (t.source === 'meeting') meetingDone(p, t, q); // (Milestone 19: the family meeting was held)
         else if (t.source === 'program') programTaskDone(p, t, helper, personal); // (Milestone 20)
+        else if (t.source === 'pilot') pilotTaskDone(p, t, helper); // (Milestone 23: an assistive-tech pilot session they said yes to)
         else log(p, personal ? `${t.name} with ${helperName(helper)}: ${personal}` : `${t.name} (with ${helperName(helper)})`);
         if (t.type === 'hydration') p.state.hydration = { last: absNow() }; // (Milestone 15: their last drink)
         if (t.optionId === SO_VISITS.option && t.type === 'visit') familyCall(p, helper); // (Milestone 19: SO07's family call)
         clinicalDone(p, t, q); // (Milestone 18: a round stop, a health check, an assessment — and noticing an alert)
         const kind = goalKind(t);
         if (kind) rehabSession(p, kind, helper); // (Milestone 16: therapy, walks and transfers move rehab goals)
+        if (t.optionId === 'MO06' && t.type === 'mobility') partners?.record('fallsSession', { kind: 'strengthBalance', resident: p.id }); // (Milestone 23: a Strength & Balance session done — the option was not refused)
       }
     }
     assignSys.unassign(t, helper);
@@ -722,7 +736,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const prepDoneNow = prepStatus === 'done' || prepStatus === 'late';
     const cookQ = prepDoneNow && rec.prep.by ? crew.byId(rec.prep.by) : null;
     const hosp = hospitalityOn();
-    const q = mealQuality({ kitchen: kitchen?.defId ?? null, prep: prepStatus === 'done' ? 'onTime' : prepStatus === 'late' ? 'late' : 'none', cook: cookQ ? { nut: cookQ.model.stats?.NUT ?? 0, traits: cookQ.model.traits } : null, hospitalityOn: hosp, program: programOn('PRG07', p) ? programById('PRG07').effects.quality : 0, research: rb('mealQuality') }); // (Milestone 21) // (Milestone 20: Nutrition Plus)
+    const q = mealQuality({ kitchen: kitchen?.defId ?? null, prep: prepStatus === 'done' ? 'onTime' : prepStatus === 'late' ? 'late' : 'none', cook: cookQ ? { nut: cookQ.model.stats?.NUT ?? 0, traits: cookQ.model.traits } : null, hospitalityOn: hosp, program: programOn('PRG07', p) ? programById('PRG07').effects.quality : 0, research: rb('mealQuality') + pp('mealQuality') }); // (Milestone 21; Milestone 23: Hearth Nutrition) // (Milestone 20: Nutrition Plus)
     // their menu: made if someone on shift can (or the Nutrition Office plans it)
     const diet = dietOf(st);
     st.diet = diet;
@@ -1428,12 +1442,20 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (!s || !act) return;
     const feeling = feelingOf(p.def, p.state, act);
     const crowded = (s.going?.length ?? 0) > act.group.max;
-    const m = outcomeMult(feeling, crowded, s.liftMult ?? 1) * (1 + rb('activityPct') / 100); // (Milestone 21: research)
+    const community = act.id === 'gardening' || act.id === 'communityVisit' || !!s.event; // (Milestone 23: a garden or community session)
+    const m = outcomeMult(feeling, crowded, s.liftMult ?? 1) * (1 + rb('activityPct') / 100) * (community ? 1 + pp('communityActivityPct') / 100 : 1); // (Milestone 21: research; Milestone 23: GreenLeaf)
     // (Milestone 20: Garden Lover / Music Maker / Community Link on shift lift their kind of session a little more)
     const on = onShiftNow().filter((q) => !q.agency);
     const traitMult = (o) => 1 + Math.max(0, ...on.map((q) => activityPct(q.model.traits, act.id, { event: !!s.event || !!s.program, outcome: o }))) / 100;
     for (const [o, v] of Object.entries(act.lifts)) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v * m * traitMult(o));
     if (s.program) programSessionDone(p, s); // (Milestone 20: the program's own lift)
+    // (Milestone 23: the session counts for partners and grants once someone who chose to come is there)
+    if (!s.counted) {
+      s.counted = true;
+      if (s.program === 'PRG04') partners?.record('fallsSession', { kind: 'balanceClass' });
+      if (act.id === 'communityVisit' || s.event) partners?.record('communityActivity', { activity: act.id, event: s.event ?? null }); // (a visitor or community session — gardening is its own counter)
+      if (act.id === 'gardening') partners?.record('gardenSession', {});
+    }
     if (!s.joined.includes(p.id)) s.joined.push(p.id);
     if (feeling === 'love' || feeling === 'like' || s.birthday) p.state.lastLikedDay = day;
     delete p.state.wouldEnjoy;
@@ -1678,6 +1700,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       for (const p of residents) if (inCare(p)) planRounds(p, inst, at);
       for (const p of residents) if (inCare(p)) planLifeStory(p, inst, at); // (Milestone 17)
       for (const p of residents) if (inCare(p)) planProgramTasks(p, inst, at); // (Milestone 20: one-to-one program offers)
+      for (const p of residents) if (inCare(p)) planPilot(p, inst, at); // (Milestone 23: assistive-tech pilot sessions, for those who said yes)
       for (const p of residents) if (inCare(p)) maybeAlert(p, inst, at); // (Milestone 18: someone may become unwell)
       planExtraChecks(inst, at); // (Milestone 18: Increase observation)
       for (const p of residents) if (inCare(p)) logRefused(p, roundLead(inst, secondHelpers(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p), steps: stepsFor(p, inst.day) }))));
@@ -1798,6 +1821,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const rec = familyOf(p);
     if (!rec || (!amount && kind !== 'visit')) return 0; // (a visit is always logged, even when its parts add to nothing)
     if (amount > 0 && rb('trustPct')) amount *= 1 + rb('trustPct') / 100; // (Milestone 21: research)
+    if (amount > 0 && (kind === 'meeting' || kind === 'call') && pp('familyPct')) amount *= 1 + pp('familyPct') / 100; // (Milestone 23: Kindred Connect)
     const change = changeTrust(rec, amount, { day: clock.totalDays, t: now(), reason, kind, partnership: hasPiece(TRUST.partnership), parts });
     bus?.emit('care:trust', { resident: p.id, change, reason, kind, trust: rec.trust });
     return change;
@@ -2091,6 +2115,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     rec.lastMeeting = clock.totalDays;
     rec.meeting = null;
     fh.meetings = (fh.meetings ?? 0) + 1;
+    partners?.record('familyReview', { resident: p.id, kind: m.kind, review: !!m.review }); // (Milestone 23)
     if (m.kind === 'partnership') countFor(progState.running.PRG06, p.id, 'joined'); // (Milestone 20: a partnership meeting held)
     const change = trust(p, lift, `${MEETING_KINDS[m.kind]?.name ?? 'Care-plan meeting'} with ${helperName(q.id)}${pct ? ' (Family Room)' : ''}`, 'meeting');
     log(p, `Family meeting with ${helperName(q.id)}: ${fromWord(p)}'s wish noted — "${note}" (Family Trust ${signedN(change)})`);
@@ -2710,6 +2735,61 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   layout.setResearchCheck((id) => research.has(id)); // (Build Mode: a facility research opens)
   // --- the economy (Milestone 22) ---------------------------------------------------------------------------------------
   economy = createEconomy({ ledger, care, bus, today: () => clock.totalDays });
+  // --- community partners and grants (Milestone 23) ----------------------------------------------------------------------
+  // The home's Nutrition outcome (the residents' average dining satisfaction; null before anyone has eaten here) and its
+  // Environment score (room quality and cleanliness — src/systems/partners.js environmentScore).
+  function nutritionOutcome() {
+    const v = seated().map((p) => p.state.dining?.avg).filter((x) => x != null);
+    return v.length ? v.reduce((a, b) => a + b, 0) / v.length : null;
+  }
+  const roomChecksOn = (day) => {
+    const ts = care.tasks.filter((t) => t.type === 'roomCheck' && t.day === day);
+    return [ts.filter((t) => t.status === 'done').length, ts.filter((t) => t.status === 'missed').length];
+  };
+  const environmentNow = () => environmentScore({ rooms: roomList().map((r) => r.defId), facilities: [...facilityIds()], checks: partners.roomChecks() });
+  partners = createPartners({
+    care,
+    ledger,
+    bus,
+    seed,
+    today: () => clock.totalDays,
+    hooks: {
+      rank: () => rankNow,
+      score: (name) => (name === 'nutrition' ? nutritionOutcome() : name === 'environment' ? environmentNow().score : null),
+      buildable: (id) => hasPiece(id) || layout.unlock(id).ok,
+      emergency: () => !!(economy.state.debt.loan || economy.state.debt.investor),
+      allocate: ({ stay, count, tag }) => {
+        // (someone the home can take now, or once a room it can build is placed)
+        const fits = (def) => prereqOf(def, { roles: teamRoles(), placeable: roomTemplatesHere() }).ok || (!!def.requires?.room && layout.unlock(def.requires.room).ok && (!def.requires.role || teamRoles().has(def.requires.role)));
+        const out = admissions.allocate({ stay, count, tag, day: clock.totalDays, inHome: inHome(), fits });
+        if (out.length) bus?.emit('admissions:change', { day: clock.totalDays, left: [], arrived: out.map((a) => a.id) });
+        return out;
+      },
+      residents: () => seated().filter((p) => joined(p)),
+      log: (id, text) => byResident(id) && log(byResident(id), text),
+    },
+  });
+  // The assistive-tech pilot: a short session for each resident who said yes, on their session days (they may still say
+  // no on the day — then it simply waits). Nobody who said no is ever offered one.
+  function planPilot(p, inst, at) {
+    if (inst.band.id !== PILOT.band || !partners.pilot.due(p.id, inst.day)) return;
+    if (care.tasks.some((t) => t.source === 'pilot' && t.resident === p.id && t.day === inst.day)) return;
+    const when = absHour(inst.day, PILOT.at);
+    const until = bandEnd(inst.band, inst.day);
+    if (until <= at) return;
+    if (!partners.pilot.door(p.id, inst.day)) {
+      partners.pilot.skipped(p.id, inst.day);
+      log(p, 'Chose not to have an assistive-tech pilot session today (their choice)');
+      honour(memoryOf(p)); // (Milestone 17: the Choice signal — their no respected)
+      return;
+    }
+    addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: 'visit', name: PILOT.name, source: 'pilot', at: PILOT.at, place: 'resident', roles: [...PILOT.roles], minutes: PILOT.minutes, drops: {}, outcomes: { ...PILOT.outcomes }, opens: Math.max(at, when), due: until });
+  }
+  function pilotTaskDone(p, t, helper) {
+    const done = partners.pilot.session(p.id, t.day);
+    const n = partners.pilot.state?.answers[p.id]?.sessions ?? 0;
+    log(p, `${t.name} ${n} of ${PILOT.sessions} with ${helperName(helper)}${done ? ': the pilot is complete' : ''}`);
+  }
   function moveOuts(day) {
     const M = MOVE_OUT;
     for (const p of seated()) {
@@ -2738,9 +2818,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // The home's Rank for the eligibility rules (Milestone 12). Rank is Milestone 26's: always E until then; the Node
   // tests set it with world.setRankForTests.
   let rankNow = RANK_NOW;
-  staffing = createStaffing({ state: staffState, sys, ledger, seed, bus, today: () => clock.totalDays, year: () => clock.year, teamSize: () => crew.people.filter((q) => !q.agency && !q.leftTeam).length, trainingPlaces: () => layout.ofDef('F11').length * TRAINING.placesPerRoom, rank: () => rankNow, hasFacility: (defId) => layout.ofDef(defId).length > 0 });
+  staffing = createStaffing({ state: staffState, sys, ledger, seed, bus, today: () => clock.totalDays, year: () => clock.year, teamSize: () => crew.people.filter((q) => !q.agency && !q.leftTeam).length, trainingPlaces: () => layout.ofDef('F11').length * TRAINING.placesPerRoom, rank: () => rankNow, hasFacility: (defId) => layout.ofDef(defId).length > 0, trainingPct: () => pp('trainingDaysPct') }); // (Milestone 23)
   staffing.onTrained((s, c, gains, specialty) => {
     roster.setTraining(s.id, false);
+    partners?.record('staffTrained', { staff: s.id, course: c.id }); // (Milestone 23)
     bus?.emit('staff:trained', { id: s.id, name: s.name, course: c.name, gains, specialty });
   });
   const inHome = () => new Set(residents.map((p) => p.id));
@@ -2914,6 +2995,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     // Milestone 15: yesterday's food (a simple cost per meal served), today's diet tags
     const meals = dining.served(day - 1);
     if (meals) ledger.economy.add('credits', -meals * FOOD_COST.perMeal, `Food: ${meals} meal${meals === 1 ? '' : 's'} served`, 'food');
+    if (meals) partners.noteSaving('foodPct', meals * FOOD_COST.perMeal); // (Milestone 23: Hearth Nutrition's saving, posted at the month's close)
+    partners.noteRoomChecks(day - 1, ...roomChecksOn(day - 1)); // (Milestone 23: the Environment score's cleanliness)
+    partners.daily(day); // (Milestone 23: deals end, new offers, grants met or past their deadline)
     for (const p of inSession()) p.state.diet = dietOf(p.state);
     bus?.emit('care:dayEnd', world.daySummary(day - 1));
     if (shortStaffing) coverage.dayEnd(day - 1); // care recovery for yesterday's missed essential tasks (Milestone 7)
@@ -2922,7 +3006,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     staffing.tick(day); // Milestone 11: the free board refresh every 56 days, training days
     if (day % clock.daysPerMonth === 0) {
       const d = clock.dateOf(day - 1);
-      ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll(), home: homeCosts() });
+      const closed = ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll(), home: homeCosts() });
+      // (Milestone 23: the partners' savings on this close — GoldenStep on equipment, BOTWORKS on upkeep and utilities —
+      // their month checks, and a new grant board)
+      const closeSum = (cats) => (closed ?? []).filter((l) => cats.includes(l.category)).reduce((t, l) => t + l.amount, 0);
+      partners.noteSaving('equipmentPct', closeSum(['equipment']));
+      partners.noteSaving('adminPct', closeSum(['upkeep', 'utilities']));
+      partners.monthClosed(day);
       if (monthRp(`Month ${d.month}, Year ${d.year}`) > 0) economy.award('goodMonth'); // (Milestone 21; Milestone 22: a Care Token)
       economy.monthClosed({ month: `Month ${d.month}, Year ${d.year}` }); // (Milestone 22: loan, investor, history, offers)
       for (const p of residents) delete p.state.moodMonth; // (a new month's Mood)
@@ -3450,6 +3540,14 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     levelOf: (residentId) => (byResident(residentId) ? levelOf(byResident(residentId)) : null),
     homeCosts: () => homeCosts(),
+    // --- Milestone 23: community partners and grants ----------------------------------------------------------------------
+    get partners() {
+      return partners;
+    },
+    nutritionOutcome: () => nutritionOutcome(),
+    environment: () => environmentNow(),
+    // The resident card: their answer to the assistive-tech pilot (null: not asked)
+    pilotOf: (residentId) => partners.pilot.state?.answers[residentId] ?? null,
     // --- Milestone 21: research -----------------------------------------------------------------------------------------------
     get research() {
       return research;
@@ -3803,6 +3901,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       addLog(st, logDay(st), now(), `Moved in to room ${layout.roomNumber(room.id)}`);
       for (const slot of Object.keys(TIMETABLE.slots)) acts.addChoice(clock.totalDays, slot, p, friendIds); // (Milestone 14: today's sessions)
       economy.award('firstAdmission'); // (Milestone 22: Care Tokens)
+      if (app.allocated) partners.record('allocatedAdmission', { resident: p.id, stay: def.stay, grant: app.allocated }); // (Milestone 23: a respite allocation / rehab pathway referral)
       bus?.emit('care:admit', { resident: p.id, name: p.name, room: room.id });
       return { ok: true, reason: null, resident: p };
     },
@@ -3819,6 +3918,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       staffing.serialize();
       acts.serialize(); // (Milestone 14: the timetable, sessions, bookings, community notices, birthdays)
       research.serialize(); // (Milestone 21: the tree, its slots and progress, into care.research)
+      partners.serialize(); // (Milestone 23: deals, tiers, history, the grant board and active grants, into care.partners)
       staffState.pos = crew.positions();
       staffState.modes = crew.modes();
       staffState.bandDone = Object.fromEntries(crew.people.map((q) => [q.id, q.bandDone ?? 0]));
@@ -3900,6 +4000,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (!r.ok) return r;
       const cost = layout.costOf(defId);
       pay(-cost, `Build: ${r.piece.name}`, 'build');
+      // (Milestone 23: BrightHome's saving on a new room; a facility built counts for the equipment grant)
+      if (roomById(defId)) partners?.noteSaving('roomBuildPct', cost, 'now');
+      else partners?.record('facilityBuilt', { facility: defId });
       relayout();
       bus?.emit('home:built', { id: r.piece.id, def: defId, cost });
       return { ...r, cost };

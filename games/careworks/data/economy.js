@@ -43,7 +43,6 @@ export const ROOM_FEES = { RM01: 1000, RM02: 1100, RM03: 1250, RM04: 1000, RM05:
 export const RESPITE_FUNDING = { perMonth: 550 };
 // Not built yet: shown on the Ledger as "comes later" and never paid.
 export const STUB_INCOME = {
-  grants: { name: 'Grants and community partners', milestone: 'M23' },
   recognition: { name: 'Recognition bonuses', milestone: 'M26' },
 };
 
@@ -97,7 +96,9 @@ export const LEDGER_ROWS = [
   { cat: 'respiteFunding', name: 'Respite funding', icon: 'care_ui_01', kind: 'income' },
   { cat: 'rehabFunding', name: 'Rehab funding', icon: 'care_ui_01', kind: 'income' },
   { cat: 'programFunding', name: 'Program funding', icon: 'care_ui_03', kind: 'income' },
-  { cat: 'grants', name: 'Grants and partners (later)', icon: 'care_ui_05', kind: 'income' },
+  { cat: 'grants', name: 'Grants and service contracts', icon: 'care_ui_05', kind: 'income' }, // (Milestone 23)
+  { cat: 'partnerSupport', name: 'Partner support', icon: 'care_ui_05', kind: 'income' }, // (Milestone 23: on signing)
+  { cat: 'partnerPerk', name: 'Partner perks (savings)', icon: 'care_ui_03', kind: 'income' }, // (Milestone 23)
   { cat: 'recognition', name: 'Recognition bonuses (later)', icon: 'care_reward_02', kind: 'income' },
   { cat: 'loan', name: 'Emergency Credit', icon: 'care_ui_05', kind: 'income' },
   { cat: 'investor', name: 'Rescue Investor', icon: 'care_ui_05', kind: 'income' },
@@ -120,7 +121,7 @@ export const LEDGER_ROWS = [
   { cat: 'investorShare', name: 'Rescue Investor share', icon: 'care_ui_05', kind: 'cost' },
 ];
 // The categories posted at the month's close (the rest post as they happen).
-export const CLOSE_CATS = ['fees', 'funding', 'respiteFunding', 'rehabFunding', 'wages', 'supplies', 'equipment', 'upkeep', 'utilities'];
+export const CLOSE_CATS = ['fees', 'funding', 'respiteFunding', 'rehabFunding', 'wages', 'supplies', 'equipment', 'upkeep', 'utilities', 'partnerPerk']; // (Milestone 23: the partners' savings post with the close)
 
 // Care Support Funding by level (Credits a month): the level's required care cost + its margin, rounded to 5.
 //   required = CARE_MINUTES × 28 × MINUTE_COST (staff time) + suppliesPerDay × 28 + equipmentPerMonth

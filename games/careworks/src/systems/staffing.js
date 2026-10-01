@@ -2,7 +2,7 @@
 // rules on plain state (no walking, no drawing): the home world walks new hires in, takes trainees off the roster and
 // pays through the ledger via the hooks here.
 //
-//   createStaffing({ state, sys, ledger, seed, bus, today, year, teamSize, trainingPlaces, rank, hasFacility, score }) → staffing
+//   createStaffing({ state, sys, ledger, seed, bus, today, year, teamSize, trainingPlaces, rank, hasFacility, score, trainingPct }) → staffing
 //     state            the run's staff state (its .staffing part is made here when missing: an M10 save → a fresh board)
 //     sys              the run's core/StaffSystem · ledger (src/systems/ledger.js)
 //     today() / year() the game day and year · teamSize() the team without agency workers
@@ -45,7 +45,7 @@ export function ensureStaffingState(saved) {
 const toCoreCourse = (c) => ({ id: c.id, name: c.name, cost: c.cost, days: c.days, requires: null, effect: c.gains ? { kind: 'stats', stats: c.gains } : { kind: 'lowest', count: c.lowest.count, min: c.lowest.min, max: c.lowest.max } });
 const cardOf = (d) => ({ personId: d.id, name: d.name, role: d.role, tier: d.tier, level: d.level, stats: { ...d.stats }, salary: d.salary, trait: namedTrait(d), traits: [...d.traits], shiftPref: d.shiftPref, art: d.art });
 
-export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = null, today = () => 0, year = () => 1, teamSize = () => sys.staff.length, trainingPlaces = () => 0, rank = () => RANK_NOW, hasFacility = () => false, score = () => null }) {
+export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = null, today = () => 0, year = () => 1, teamSize = () => sys.staff.length, trainingPlaces = () => 0, rank = () => RANK_NOW, hasFacility = () => false, score = () => null, trainingPct = () => 0 }) {
   state.staffing = ensureStaffingState(state.staffing);
   const st = state.staffing;
 
@@ -138,6 +138,7 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
       statCap: (s) => TIERS[s.tier]?.statCap ?? 220,
       primaryStat: (s) => ROLES[s.role]?.primaryStat,
       slotCount: () => (st.debug ? Math.max(trainingPlaces(), 2) : trainingPlaces()),
+      durationPct: () => trainingPct(), // (Milestone 23: WellSpring Training's shorter courses)
       canPay: (c) => (ledger.balance >= c.cost ? null : `Not enough Credits: it costs ${c.cost.toLocaleString('en-GB')}`),
       pay: (c, s) => ledger.economy.add('credits', -c.cost, `Training: ${c.name} (${s.name})`, 'training'),
       now: () => ({ day: today(), year: year() }),
