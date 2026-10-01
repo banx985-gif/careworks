@@ -245,6 +245,7 @@ export const SAVE_MIGRATIONS = {
   20: (record) => record, // (Milestone 21: no research state = nothing researched, 0 RP — the M16 Research counter becomes RP once)
   21: (record) => record, // (Milestone 22: the balance as it is; no economy state = no debt, 0 Care Tokens; levels from each resident's profile)
   22: (record) => record, // (Milestone 23: no partner state = no deals, every partner at Partner tier, a first grant board, nothing active)
+  23: (record) => record, // (Milestone 24: no wings painted = the one Home wing; nothing being built; the stage as it was)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

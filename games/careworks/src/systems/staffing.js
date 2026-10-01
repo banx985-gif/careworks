@@ -123,7 +123,8 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
     if (st.debug && c.unlock.type !== 'condition') return { ok: true, reason: null };
     return { ok: false, reason: c.unlock.text };
   };
-  const cap = () => EMPLOYEE_CAP[RANK_NOW];
+  let capDebug = null; // (Milestone 24: ?debug=1 "Fill to cap" grows the team past Rank E's cap; never saved)
+  const cap = () => capDebug ?? EMPLOYEE_CAP[RANK_NOW];
 
   // --- training ------------------------------------------------------------------------------------------------------
   let onDone = null;
@@ -192,6 +193,9 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
     eligible,
     get eliteUnlock() {
       return !!st.eliteUnlock;
+    },
+    setCapForDebug(n) {
+      capDebug = n ?? null;
     },
     setEliteUnlock(on) {
       st.eliteUnlock = !!on;

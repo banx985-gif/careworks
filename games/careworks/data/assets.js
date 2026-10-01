@@ -16,6 +16,7 @@ import { ROUND } from './clinical.js';
 import { FAMILY_ICONS, FIRSTS, COMPLIMENT } from './family.js';
 import { VISIBLE_PROGRAMS } from './programs.js';
 import { PARTNERS } from './partners.js';
+import { WINGS_SPECIAL } from './wings.js';
 
 const art = (folder, key) => [key, `assets/images/${folder}/${key}.png`];
 
@@ -56,6 +57,8 @@ export const ASSETS = {
   ...Object.fromEntries(VISIBLE_PROGRAMS.map((p) => art('programs', p.icon))),
   // Milestone 23: the eight community partners' logos (the Partners sheet)
   ...Object.fromEntries(PARTNERS.map((p) => art('logos', p.logo))),
+  // Milestone 24: a wing's opening moment (the Memory Wing's own picture; the others show their hub, already listed)
+  ...Object.fromEntries(WINGS_SPECIAL.filter((w) => w.beat.startsWith('care_event')).map((w) => art('events', w.beat))),
   // Milestone 0 loader test (?screen=test): the placeholder PWA icon as a real image, and one deliberately missing file.
   m0Real: 'assets/branding/pwa/icon-192.png',
   m0Missing: 'assets/m0-missing-test.png',

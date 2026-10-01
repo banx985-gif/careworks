@@ -37,7 +37,7 @@ export function staffPoints(model, energy = model.energy) {
 export const requiredPoints = (shiftId, levels) => levels.reduce((t, l) => t + (C.supportWeight[l] ?? l), 0) * SHIFTS[shiftId].demand;
 export const colourOf = (pct) => (pct >= C.good ? 'good' : pct >= C.amber ? 'amber' : 'red');
 
-export function assess({ shiftId, staff, levels, onCall = false, teamHasRN = false, clinicalHigh = false }) {
+export function assess({ shiftId, staff, levels, onCall = false, teamHasRN = false, clinicalHigh = false, wings = null }) {
   const t = SHIFTS[shiftId];
   const required = requiredPoints(shiftId, levels);
   const onCallOk = !!t.clinical?.onCall && !!onCall && teamHasRN && !clinicalHigh && levels.length <= (ON_CALL.maxResidents[shiftId] ?? Infinity);
@@ -50,7 +50,39 @@ export function assess({ shiftId, staff, levels, onCall = false, teamHasRN = fal
   const reasons = [];
   if (pct < C.minimumPct) reasons.push(`${Math.round(pct)}% of the Safe Coverage Points it needs`);
   if (!rnOk) reasons.push(t.clinical?.onCall ? (clinicalHigh ? 'no Registered Nurse on shift (a resident needs clinical care)' : 'no Registered Nurse on shift or on call') : 'no Registered Nurse');
-  return { shift: shiftId, required: round1(required), provided: round1(provided), pct: Math.round(pct), rnOn, rnOk, onCallUsed, onCallOk, onCallPoints, safe: !reasons.length, colour: colourOf(pct), reasons };
+  // Milestone 24: per wing (wings = [{ id, name, levels }]; staff carry their wing — null for floats, agency and anyone
+  // tied to no wing). Each wing's own staff count for its residents; the floats / agency / nurse-on-call pool then tops
+  // up the wings short of the minimum, the shortest first. With one wing this is exactly the shift's own number.
+  const byWing = wingBreakdown({ shiftId, staff, wings, pool0: onCallPoints });
+  if (byWing.length > 1) for (const w of byWing) if (w.pct < C.minimumPct) reasons.push(`${w.name}: ${w.pct}% of its points`);
+  return { shift: shiftId, required: round1(required), provided: round1(provided), pct: Math.round(pct), rnOn, rnOk, onCallUsed, onCallOk, onCallPoints, safe: !reasons.length, colour: colourOf(pct), reasons, wings: byWing };
+}
+// → [{ id, name, required, own, pooled, provided, pct, colour }] — only the wings with residents or staff on this shift.
+export function wingBreakdown({ shiftId, staff, wings, pool0 = 0 }) {
+  if (!wings?.length) return [];
+  const rows = wings.map((w) => {
+    const required = requiredPoints(shiftId, w.levels);
+    const own = staff.filter((m) => m.wing === w.id).reduce((s, m) => s + staffPoints(m, m.energy), 0);
+    return { id: w.id, name: w.name, required, own, pooled: 0 };
+  });
+  const known = new Set(rows.map((r) => r.id));
+  let pool = pool0 + staff.filter((m) => !m.wing || !known.has(m.wing)).reduce((s, m) => s + staffPoints(m, m.energy), 0);
+  // the pool covers the wings short of the minimum first (the biggest gap first), then whatever is left is spread by need
+  const gap = (r) => Math.max(0, (r.required * C.minimumPct) / 100 - r.own - r.pooled);
+  for (const r of [...rows].sort((a, b) => gap(b) - gap(a))) {
+    const give = Math.min(pool, gap(r));
+    r.pooled += give;
+    pool -= give;
+  }
+  const need = rows.reduce((s, r) => s + r.required, 0);
+  for (const r of rows) r.pooled += need > 0 ? (pool * r.required) / need : pool / rows.length;
+  return rows
+    .filter((r) => r.required > 0 || r.own > 0)
+    .map((r) => {
+      const provided = r.own + r.pooled;
+      const pct = r.required > 0 ? Math.round((provided / r.required) * 100) : 100;
+      return { id: r.id, name: r.name, required: round1(r.required), own: round1(r.own), pooled: round1(r.pooled), provided: round1(provided), pct, colour: colourOf(pct) };
+    });
 }
 
 export function newCoverageState() {
@@ -71,7 +103,8 @@ export function warnLead(shiftId) {
 }
 const ACTIVITY_AT = ROUTINE.find((s) => s.activity)?.at ?? 13.5;
 
-export function createCoverage({ state, roster, team, levels, clinicalHigh = () => false, ledger, abs, hire, log: logLine = null, bus = null }) {
+// Milestone 24: wings() → [{ id, name, levels }] the residents' levels by wing (none: one Home wing — the shift's number)
+export function createCoverage({ state, roster, team, levels, wings = null, clinicalHigh = () => false, ledger, abs, hire, log: logLine = null, bus = null }) {
   const cs = state.coverage;
   const B = STAFF_BALANCE.energy;
   const dayOf = (t) => Math.floor(t / 24);
@@ -95,9 +128,9 @@ export function createCoverage({ state, roster, team, levels, clinicalHigh = () 
       .filter((id) => id !== without)
       .map(person)
       .filter(Boolean)
-      .map((p) => ({ id: p.id, role: p.role, stats: p.model.stats, energy: energyAt(p, inst, projected) }));
+      .map((p) => ({ id: p.id, role: p.role, stats: p.model.stats, energy: energyAt(p, inst, projected), wing: roster.isFloat(p.id) || roster.isAgency(p.id) ? null : roster.assignedWing?.(p.id) ?? null })); // (Milestone 24: floats and agency are the shared pool)
     const onCall = roster.onCallFor ? roster.onCallFor(inst.shift) : roster.onCall;
-    return { ...assess({ shiftId: inst.shift, staff, levels: levels(), onCall, teamHasRN: teamHasRN(), clinicalHigh: clinicalHigh() }), staff: staff.map((s) => s.id), inst };
+    return { ...assess({ shiftId: inst.shift, staff, levels: levels(), onCall, teamHasRN: teamHasRN(), clinicalHigh: clinicalHigh(), wings: wings?.() ?? null }), staff: staff.map((s) => s.id), inst };
   }
   const shiftName = (sid) => SHIFTS[sid].name;
   const warnFrom = (inst) => inst.start - warnLead(inst.shift);

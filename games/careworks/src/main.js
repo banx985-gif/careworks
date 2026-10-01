@@ -76,10 +76,11 @@ import { TRAITS, STAFF, validateStaff, checkStaffArt } from '../data/staff.js';
 import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL } from '../data/balance.js';
 import { SHIFT_IDS, OFF, WINGS, AGENCY } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
-import { STAGES } from '../data/home.js';
+import { STAGES, LOGICAL_CAP } from '../data/home.js';
+import { WINGS_SPECIAL, wingById } from '../data/wings.js';
 import { CHANNELS, RANK_NOW } from '../data/recruitment.js';
 import { SPECIALTIES } from '../data/training.js';
-import { ROOMS } from '../data/rooms.js';
+import { ROOMS, roomById } from '../data/rooms.js';
 import { BUILDABLE_FACILITIES } from '../data/facilities.js';
 import { FOUNDERS } from '../data/setup.js';
 import { DOMAINS, CARE_OPTIONS, optionById, optionsFor, validateCarePlans, OPTION_PREF_MOOD } from '../data/carePlans.js';
@@ -514,7 +515,7 @@ const bottomBar = createBottomBar({
 });
 const vfx = new VfxSystem({ assets, width: W, height: renderer.height, font: THEME.family, maxTexts: 4, maxEffects: 16 });
 const dayBeat = createDayBeat();
-const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it) });
+const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it), onWings: () => openWings() });
 const carePops = createCarePops({ bus, world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused });
 // The end of each day: the medium beat ("Day 3 — all routine care done" / "2 tasks missed").
 bus.on('care:dayEnd', (summary) => {
@@ -579,6 +580,24 @@ bus.on('care:compliment', ({ name, first: isFirst, art }) => {
   if (!open || router.currentName !== 'home') return;
   dayBeat.showText(`A compliment from ${first(name)}'s family`, true);
   if (isFirst && art) bigBeat = { title: 'A first compliment', text: `${first(name)}'s family says thank you`, art, age: 0 };
+});
+// Milestone 24: a stage opens (its big moment), building starts (a quiet line), a wing's first hub (the Memory Wing has
+// its own picture; the others show their hub).
+bus.on('home:stage', ({ stage, name, art, fixed }) => {
+  if (!open) return;
+  const st = STAGES[stage - 1];
+  const wings = (st.wings ?? []).map((id) => wingById(id).short);
+  bigBeat = { title: name, text: `Stage ${stage}: more floor and room for ${Math.min(st.capacity, LOGICAL_CAP)} residents${wings.length ? ` · the ${wings.join(' and ')} wings can be painted` : ''}`, art: art ?? 'care_event_06', age: 0 };
+  if (fixed?.length) debug.log(`Stage ${stage}: ${fixed.length} piece(s) nudged to keep every path open`);
+  autosave.request('stage');
+});
+bus.on('home:building', ({ stage, name }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`Building Stage ${stage}: ${name} — the home carries on as usual`, true);
+});
+bus.on('home:wing', ({ name, art, hub, later }) => {
+  if (!open) return;
+  bigBeat = { title: `The ${name} opens`, text: later ? `${hub} placed · ${later}` : `${hub} placed: the wing is ready for its residents and staff`, art, age: 0 };
+  autosave.request('wing');
 });
 bus.on('care:complaint', ({ name }) => {
   if (open && router.currentName === 'home') dayBeat.showText(`A complaint from ${first(name)}'s family: an improvement task (Quality)`, false);
@@ -674,8 +693,10 @@ function mealCoverText(m) {
 }
 const PEAK_WORDS = { wake: 'wake-ups', meal: 'meals', meds: 'medicine rounds', personal: 'personal care', activity: 'activities', observation: 'health checks', settle: 'settling', bell: 'call bells', roomCheck: 'room checks' };
 let rosterPick = null; // the team member picked to move
+let wingPick = null; // (Milestone 24: the team member picked to assign to a wing)
 function openRoster() {
   rosterPick = null;
+  wingPick = null;
   let message = null;
   sheet.open(() => {
     const w = open?.world;
@@ -748,6 +769,37 @@ function openRoster() {
       const call = a.onCallPoints ? ` (${a.onCallPoints.toFixed(1)} from the nurse on call)` : '';
       return { text: `${T.name}: needs ${a.required.toFixed(1)} points, has ${a.provided.toFixed(1)}${call} · ${rn} · busiest with ${T.peaks.map((k) => PEAK_WORDS[k] ?? k).join(', ')}`, color: a.safe ? COL.textMuted : COL.bad };
     });
+    // Milestone 24: the wings — a lane for the Home wing, each painted wing and the floats; tap someone, then a lane, to
+    // assign them. Safe Coverage per wing on each shift (floats and agency are shared where a wing is short).
+    const painted = WINGS.filter((x) => x.id === 'home' || w.layout.wings.count(x.id));
+    const wingLanes = [...painted.map((x) => x.id), 'float'].map((wid) => {
+      const people = w.team.filter((p) => (wid === 'float' ? r.isFloat(p.id) : !r.isFloat(p.id) && r.assignedWing(p.id) === wid));
+      const name = wid === 'float' ? 'Floats' : WINGS.find((x) => x.id === wid).short;
+      return {
+        id: `wlane:${wid}`,
+        title: name,
+        sub: wid === 'float' ? 'Any wing, any short shift' : ((n) => `${n} resident${n === 1 ? '' : 's'}`)(w.wings.list().find((x) => x.def.id === wid)?.residents ?? w.residents.filter((p) => !p.state.leaving && !p.state.guest && w.wings.ofResident(p.id) === 'home').length),
+        accent: COL.progress,
+        selected: !!wingPick && (wid === 'float' ? r.isFloat(wingPick) : !r.isFloat(wingPick) && r.assignedWing(wingPick) === wid),
+        empty: 'Nobody',
+        items: people.map((p) => ({ id: `wing:${wid}:${p.id}`, label: first(p.name), sub: `${ROLES[p.role].short} · ${r.shiftOf(p.id)?.name ?? 'Off'}`, icon: p.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[p.role].badge, selected: wingPick === p.id, accent: COL.progress, onTap: () => {
+          message = null;
+          wingPick = wingPick === p.id ? null : p.id;
+        } })),
+        onTap: () => {
+          message = null;
+          if (!wingPick) {
+            message = 'Tap someone first, then the wing to assign them to.';
+            return;
+          }
+          const res = wid === 'float' ? w.setFloat(wingPick, true) : w.wings.setStaff(wingPick, wid);
+          if (res && res.ok === false) message = res.reason;
+          else autosave.request('roster');
+          wingPick = null;
+        },
+      };
+    });
+    const wingCover = status.flatMap((a) => (a.wings?.length > 1 ? a.wings.map((x) => ({ text: `${SHIFTS[a.shift].name} · ${x.name}: ${x.pct}% (its staff ${x.own.toFixed(1)}${x.pooled ? ` + ${x.pooled.toFixed(1)} shared` : ''} of ${x.required.toFixed(1)})`, color: x.pct >= 100 ? COL.textMuted : x.pct >= 80 ? COL.warn : COL.bad })) : []));
     const teamRows = [];
     for (const p of w.team) {
       const m = p.model;
@@ -755,7 +807,7 @@ function openRoster() {
       const shift = r.shiftOf(p.id);
       teamRows.push({ id: `staff:${p.id}`, label: p.name, sub: `${shift ? shift.name : 'Off'} · likes ${PREF_WORD[pref] ?? '—'} · E ${Math.round(m.energy)} · M ${Math.round(m.morale)}`, icon: p.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[m.role].badge, accent: m.status.tired || m.status.stressed ? COL.action : COL.progress, onTap: () => openFrom(p.id, 'roster') });
       const float = r.isFloat(p.id);
-      teamRows.push({ id: `float:${p.id}`, label: `Float: ${float ? 'On' : 'Off'}`, sub: float ? 'Not tied to a wing · covers short shifts' : `${WINGS.find((x) => x.id === r.wingOf(p.id))?.name ?? 'No'} wing`, accent: float ? COL.good : COL.progress, onTap: () => {
+      teamRows.push({ id: `float:${p.id}`, label: `Float: ${float ? 'On' : 'Off'}`, sub: float ? 'Not tied to a wing · covers short shifts' : `${WINGS.find((x) => x.id === r.assignedWing(p.id))?.short ?? 'No'} wing`, accent: float ? COL.good : COL.progress, onTap: () => {
         w.setFloat(p.id, !float);
         autosave.request('roster');
       } });
@@ -771,6 +823,7 @@ function openRoster() {
         { lines, lanes },
         { columns: 1, buttons: [{ id: 'recruit', label: 'Recruit', sub: `${w.staffing.board.length} candidates · Staff ${w.team.length} / ${w.staffing.cap} (Rank ${RANK_NOW})`, icon: 'care_ui_02', accent: COL.action, onTap: () => openRecruit() }] },
         { title: 'Safe Coverage', bars, lines: detail },
+        ...(painted.length > 1 ? [{ title: 'Wings', lines: [{ text: 'Staff in a wing care for its residents first; floats (and agency) go where a wing is short.', color: COL.textMuted }, ...wingCover], lanes: wingLanes }] : []), // (Milestone 24)
         { title: 'Team', columns: 2, buttons: teamRows },
         {
           title: 'Continuity groups',
@@ -1461,7 +1514,16 @@ function openDevelop() {
       sheet.close();
       homeScreen.setBuildMode(true);
     } }];
-    if (next) stageRows.push({ id: 'dev:stage', label: `Stage ${next.n}: ${next.name}`, sub: `Locked — needs Rank ${next.unlock.value} · room for ${next.capacity} residents and more floor`, disabled: true, accent: COL.progress });
+    // Milestone 24: the next stage with its real unlock (the parts the game can check show ✓), its cost and building
+    // days — or the building under way; the specialist wings
+    const up = w.build.upgradeStatus();
+    const bld = w.build.building;
+    if (bld) stageRows.push({ id: 'dev:stage', label: `Building Stage ${bld.to}: ${stageOf(bld.to).name}`, sub: `Ready on day ${bld.doneDay + 1} (${Math.max(0, bld.doneDay - w.clock.totalDays)} days left) · the home carries on as usual`, disabled: true, accent: COL.gold });
+    else if (next) stageRows.push({ id: 'dev:stage', label: `Stage ${next.n}: ${next.name}`, sub: `${up.ok ? 'Ready' : 'Locked'} — ${up.parts.map((x) => `${x.ok ? '✓ ' : ''}${x.text}`).join(' · ')} · room for ${Math.min(next.capacity, LOGICAL_CAP)} residents${next.cost ? ` · ${credits(next.cost)} Credits, ${next.buildDays} days to build` : ''}`, disabled: !up.ok, accent: up.ok ? COL.good : COL.progress, onTap: () => upgradeStage() });
+    const wl = w.wings.list();
+    stageRows.push(st.n >= 3
+      ? { id: 'dev:wings', label: 'Specialist wings', sub: wl.filter((x) => x.unlocked).map((x) => `${x.def.short}: ${x.active ? `${x.residents} residents` : x.tiles ? 'needs its hub' : 'not painted'}`).join(' · '), icon: 'facility_f31', accent: COL.action, onTap: () => openWings() }
+      : { id: 'dev:wings', label: 'Specialist wings', sub: 'The Memory and Rehabilitation wings open at Stage 3; High-Care and Palliative at Stage 4', disabled: true, accent: COL.progress });
     // Milestone 21: research
     const rq = w.research.queues().filter((q) => q.open);
     const busy = rq.filter((q) => q.nodeId);
@@ -1472,7 +1534,17 @@ function openDevelop() {
     stageRows.push({ id: 'dev:programs', label: 'Programs', sub: `${nRun} running · ${nReady} ready to start · sessions residents choose to join`, icon: 'program_prg01', accent: COL.action, onTap: () => openPrograms() });
     const dbg = debug.enabled
       ? [{ title: 'Debug', columns: 1, buttons: [
-        ...(next ? [{ id: 'dev:upgrade', label: `Upgrade to Stage ${next.n} now (debug)`, sub: 'Skips the Rank D rule for testing', accent: COL.progress, onTap: () => upgradeStage() }] : []),
+        ...(next && !bld ? [{ id: 'dev:upgrade', label: `Upgrade to Stage ${next.n} now (debug)`, sub: `Skips the Rank rule for testing${next.cost ? ` · ${credits(next.cost)} Credits, ${next.buildDays} days of building` : ''}`, accent: COL.progress, onTap: () => {
+          const r = upgradeStage();
+          if (r && !r.ok) debug.log(r.reason);
+        } }] : []),
+        { id: 'dev:fill', label: `Fill to cap (debug): Stage 5, ${LOGICAL_CAP} rooms, every resident, ~40 staff`, sub: 'For the performance check: Memory and High-Care wings with their hubs and rooms', accent: COL.progress, onTap: () => {
+          const r = w.fillToCapForDebug();
+          debug.log(`fill: ${JSON.stringify(r)}`);
+          window.__cw.fillReport = r;
+          sheet.close();
+          autosave.request('debug');
+        } },
         { id: 'dev:unlock', label: `Unlock all rooms and facilities (debug): ${w.layout.debugUnlock ? 'On' : 'Off'}`, sub: 'For testing (the two secret facilities stay hidden)', accent: w.layout.debugUnlock ? COL.good : COL.progress, onTap: () => {
           w.build.setDebugUnlock(!w.layout.debugUnlock);
           autosave.request('debug');
@@ -1489,6 +1561,33 @@ function openDevelop() {
         ...dbg,
       ],
     };
+  });
+}
+// Milestone 24: the specialist wings — what each is for, its floor, its hub, its rooms, residents and staff — and Paint,
+// which goes to Build Mode with that wing's brush.
+function openWings() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const sections = [{ lines: [{ text: 'A wing is floor you paint in Build Mode, with its hub inside. Wing rooms must stand in their wing; residents who need a wing prefer a room there; staff can be assigned to it on the roster, and Safe Coverage is counted for each wing.', color: COL.textMuted }] }];
+    for (const x of w.wings.list()) {
+      const d = x.def;
+      const hubs = d.hubs.map((id) => facilityById(id).name).join(' or ');
+      const lines = !x.unlocked
+        ? [{ text: `Opens at Stage ${d.stage}`, color: COL.textMuted }]
+        : [
+          { text: x.tiles ? `${x.tiles} tiles of floor` : 'Not painted yet', color: x.tiles ? COL.actionDark : COL.textMuted },
+          { text: x.hub ? `Hub: ${x.hub.name} — the wing is working` : `Needs its hub inside it: ${hubs}`, color: x.hub ? COL.good : COL.warn },
+          `Wing rooms: ${d.rooms.map((id) => roomById(id).name).join(', ')} · ${x.rooms} rooms here, ${x.residents} residents, ${x.staff} staff assigned`,
+          ...(d.later ? [{ text: d.later, color: COL.textMuted }] : []),
+        ];
+      sections.push({ title: d.name, lines, columns: 1, buttons: [{ id: `wing:paint:${d.id}`, label: x.tiles ? `Paint or clear the ${d.short} wing` : `Paint the ${d.short} wing`, sub: x.unlocked ? 'Build Mode: tap two corners of a rectangle' : `Opens at Stage ${d.stage}`, icon: facilityById(d.hubs[0]).art, disabled: !x.unlocked, accent: COL.action, onTap: () => {
+        sheet.close();
+        homeScreen.startWingPaint(d.id);
+      } }] });
+    }
+    sections.push({ columns: 1, buttons: [{ id: 'wings:back', label: '‹ Back to Develop', accent: COL.progress, onTap: () => openDevelop() }] });
+    return { title: 'Specialist wings', subtitle: `Stage ${w.stage.n} · ${w.wings.list().filter((x) => x.active).length} working`, art: 'facility_f31', accent: accentNow(), sections };
   });
 }
 // --- Research (Milestone 21, bible §26) ----------------------------------------------------------------------------------
@@ -1798,15 +1897,16 @@ function confirmSell(it) {
     },
   });
 }
-// Stage 1 → 2 (debug for now): the floor grows, nothing moves, and the big moment.
+// The next stage (debug for now: Rank comes in Milestone 26). Stage 2 opens at once; Stages 3–5 cost Credits and take a
+// few days of building while the home keeps running. The big moment comes when the floor opens ('home:stage').
 function upgradeStage() {
   const w = open?.world;
-  if (!w) return;
-  const r = w.build.upgrade();
-  if (!r.ok) return;
+  if (!w) return null;
+  const r = w.build.startUpgrade({ debug: debug.enabled });
+  if (!r.ok) return r;
   sheet.close();
-  bigBeat = { title: r.stage.name, text: `Stage ${r.stage.n}: more floor and room for ${r.stage.capacity} residents`, art: r.stage.art, age: 0 };
   autosave.request('stage');
+  return r;
 }
 // The big feedback beat (style guide: big moments get a picture): shown over the home for a few seconds, tap to close.
 let bigBeat = null;
@@ -2790,7 +2890,7 @@ function staffMenu(w, p, accent) {
   const wing = w.roster.wingOf(p.id);
   const shiftLines = agency
     ? [w.roster.label(p.id), 'Agency worker: booked for this shift only; builds no Familiar Care and is never on records.']
-    : [w.roster.label(p.id), `Prefers ${PREF_WORD[pref] ?? '—'} shifts${pref !== 'night' ? ' · Night shifts cost a little Morale' : ''} · ${wing ? `${WINGS.find((x) => x.id === wing)?.name} wing` : w.roster.isFloat(p.id) ? 'float: tied to no wing' : 'no wing'}`];
+    : [w.roster.label(p.id), `Prefers ${PREF_WORD[pref] ?? '—'} shifts${pref !== 'night' ? ' · Night shifts cost a little Morale' : ''} · ${wing ? `${WINGS.find((x) => x.id === wing)?.short} wing` : w.roster.isFloat(p.id) ? 'float: tied to no wing' : 'no wing'}`];
   const status = [m.status.tired && 'Tired', m.status.stressed && 'Stressed'].filter(Boolean);
   const fam = w.topResidentsFor(p.id, 3); // (Milestone 12: the three residents here who know them best)
   const sections = [
@@ -2970,7 +3070,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

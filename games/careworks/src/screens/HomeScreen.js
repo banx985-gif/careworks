@@ -31,7 +31,8 @@ import { drawIsoRoom, isoPath, wallPatch } from '../../../../core/IsoRoom.js';
 import { characterPose, drawCharacter } from '../../../../core/CharacterMotion.js';
 import { drawButton, hitRect } from '../../../../core/ui/Button.js';
 import { text } from '../../../../core/ui/Kit.js';
-import { HOME, FLOORS, ART_DRAW, PERSON, MOTION, WINDOWS, ENTRANCE, HOME_LOOK as L } from '../../data/home.js';
+import { HOME, FLOORS, ART_DRAW, PERSON, MOTION, WINDOWS, ENTRANCE, HOME_LOOK as L, STAGES, zonesOf } from '../../data/home.js';
+import { WINGS_SPECIAL, wingById } from '../../data/wings.js';
 import { WALK } from '../../data/balance.js';
 import { paletteById } from '../../data/setup.js';
 import { ROOM_SHAPE, roomById } from '../../data/rooms.js';
@@ -52,7 +53,7 @@ const DETAIL_STEPS = [0.5, 0.7, 1.0, 1.4];
 const detailFor = (zoom) => DETAIL_STEPS.find((d) => d >= zoom - 1e-3) ?? DETAIL_STEPS[DETAIL_STEPS.length - 1];
 const isPerson = (it) => it.kind === 'resident' || it.kind === 'staff';
 
-export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaign, world: getWorld, openSheet, onMenu, topBar, bottomBar, vfx = null, dayBeat = null, debug = null, onStaffWarning = null, onShop = null, onSell = null }) {
+export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaign, world: getWorld, openSheet, onMenu, topBar, bottomBar, vfx = null, dayBeat = null, debug = null, onStaffWarning = null, onShop = null, onSell = null, onWings = null }) {
   const W = renderer.width;
   const { cellSize: CELL, wallH, innerWallH, margin } = HOME;
   const { halfW: HW, halfH: HH } = HOME.view;
@@ -77,9 +78,17 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   let slotN = null;
   let walls = [];
   // Milestone 10: after a layout change (or a stage change): the walls again, the floor picture, what can be tapped.
+  // Milestone 24: fCols / fRows = the open floor; cols / rows = the view, which already takes in the next stage while it
+  // is being built (the site shows), so nothing shifts when it opens.
+  let fCols = cols;
+  let fRows = rows;
   function syncLayout() {
     if (!world) return;
-    const f = world.floor;
+    const b = world.layout.building;
+    const f = b ? STAGES[b.to - 1] : world.floor;
+    fCols = world.floor.cols;
+    fRows = world.floor.rows;
+    camera.minZoom = HOME.zoom.minByStage?.[world.layout.stage] ?? HOME.zoom.min; // (Milestone 24: zoom out further on a bigger home)
     if (f.cols !== cols || f.rows !== rows) {
       const cx = camera.x + camera.visibleW / 2;
       const cy = camera.y + camera.visibleH / 2;
@@ -269,7 +278,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     const w = camera.screenToWorld(sx, sy);
     const plan = iso.toPlan(w.x, w.y);
     const c = { col: Math.floor(plan.x / CELL), row: Math.floor(plan.y / CELL) };
-    return world && c.col >= 0 && c.row >= 0 && c.col < cols && c.row < rows ? c : null;
+    return world && c.col >= 0 && c.row >= 0 && c.col < fCols && c.row < fRows ? c : null;
   };
   const open = (it) => {
     selection.select(it);
@@ -336,7 +345,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     setBuildMode(on) {
       if (buildMode === on) return;
       buildMode = on;
-      Object.assign(B, { ghost: null, picked: null, message: null, drag: null, path: null });
+      Object.assign(B, { ghost: null, picked: null, message: null, drag: null, path: null, wing: null });
       if (on) {
         sheet.close();
         selection.clear();
@@ -389,6 +398,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     },
     onBack() {
       if (buildMode && B.ghost) B.ghost = null;
+      else if (buildMode && B.wing) B.wing = null; // (Milestone 24)
       else if (buildMode && B.picked) {
         B.picked = null;
         selection.clear();
@@ -490,6 +500,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       assets.detail = detailFor(camera.zoom); // sprites cached near the size they are drawn: sharp, and a plain copy each frame
       for (const it of world.placed) if (it.kind === 'room') assets.draw(ctx, it.def.art, ...rectArgs(artRect(it)));
       if (buildMode) drawBuildFloor(ctx);
+      if (buildMode) drawWingEdges(ctx); // (Milestone 24)
       drawWalkPath(ctx); // (Milestone 17: the safe walking path — stepping stones; the loop being traced in Build Mode)
       if (buildMode) drawPicked(ctx);
       drawPersonShadows(ctx);
@@ -509,6 +520,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       // Name tags in screen space: always the small text size (28), whatever the zoom.
       layoutTags(ctx);
       for (const p of [...shownPeople(), ...shownVisitors()]) drawTag(ctx, p);
+      drawSiteSign(ctx); // (Milestone 24: a stage being built)
       drawMarkers(ctx); // a status icon over each staff member (their task, resting, tired); the call bell over Arthur
       // The care pops, in the world but over the tags for their second or two (so a name never hides one).
       if (vfx) {
@@ -600,13 +612,14 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   // runner, windows with their daylight, doormats, and the soft shadows under the facilities and props — drawn once
   // into the cached layer.
   function drawFloor(g) {
-    drawIsoRoom(g, iso, { cols, rows, wallH, look: L, bands: [{ from: 0, to: 0.07, color: L.skirting }, { from: 0.07, to: 0.36, color: L.wainscot }, { from: 0.36, to: 0.39, color: L.rail }] });
+    drawIsoRoom(g, iso, { cols: fCols, rows: fRows, wallH, look: L, bands: [{ from: 0, to: 0.07, color: L.skirting }, { from: 0.07, to: 0.36, color: L.wainscot }, { from: 0.36, to: 0.39, color: L.rail }] });
     g.lineJoin = 'round';
     // Milestone 10: the room floors come with the rooms (wherever they stand); the hall runs the whole floor
     const floors = [
       ...FLOORS.filter((f) => f.look !== 'room'),
       ...(world?.placed ?? []).filter((it) => it.kind === 'room').map((it) => ({ col: it.box.col + ROOM_SHAPE.floor.col, row: it.box.row + ROOM_SHAPE.floor.row, w: ROOM_SHAPE.floor.w, h: ROOM_SHAPE.floor.h, look: 'room' })),
     ];
+    drawStageFloors(g); // (Milestone 24: S3–S5's finishes, the campus courtyards, the wings' zoning colours, the site)
     for (const f of floors) {
       const look = L.floors[f.look];
       if (!look) continue;
@@ -615,8 +628,8 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       }
     }
     // The foot of both outer walls in soft shade.
-    patch(g, [iso.corner(0, 0), iso.corner(cols, 0), iso.corner(cols, 0.3), iso.corner(0.3, 0.3)], L.shadow);
-    patch(g, [iso.corner(0, 0), iso.corner(0.3, 0.3), iso.corner(0.3, rows), iso.corner(0, rows)], L.shadow);
+    patch(g, [iso.corner(0, 0), iso.corner(fCols, 0), iso.corner(fCols, 0.3), iso.corner(0.3, 0.3)], L.shadow);
+    patch(g, [iso.corner(0, 0), iso.corner(0.3, 0.3), iso.corner(0.3, fRows), iso.corner(0, fRows)], L.shadow);
     // Windows, and the soft pool of daylight each one lays across the floor (light from the upper left).
     for (const w of WINDOWS) {
       patch(g, wallPatch(iso, w.side, w.from, w.to, 70, 185), L.window.frame, L.wallCap, 3);
@@ -641,6 +654,143 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       patch(g, iso.outline(it.fp.col + inset, it.fp.row + inset, it.fp.w - inset * 2, it.fp.h - inset * 2), L.softShadow);
     }
     g.restore();
+  }
+  // Milestone 24: each stage's own floor (a two-tone checker, a little brighter and calmer stage by stage — still a home),
+  // the S5 garden courtyards (lawn and shrubs where no piece stands), each wing's soft zoning colour, and the building
+  // site while a stage is being built (sandy ground, hatching, a dashed edge and cones).
+  function drawStageFloors(g) {
+    if (!world) return;
+    const stage = world.layout.stage;
+    const boxes = world.placed.map((it) => it.box);
+    const free = (c, r, w, h) => !boxes.some((b) => c < b.col + b.w && b.col < c + w && r < b.row + b.h && b.row < r + h);
+    for (const st of STAGES) {
+      if (st.n > stage || !st.look) continue;
+      const look = L.stageFloors[st.look];
+      for (const z of zonesOf(st)) {
+        for (let c = z.col; c < z.col + z.w; c++) for (let r = z.row; r < z.row + z.h; r++) patch(g, iso.outline(c, r, 1, 1), (c + r) % 2 ? look.a : look.b, look.line, 1);
+        const cy = look.courtyard;
+        if (!cy) continue;
+        for (let r = z.row + 3; r + cy.h <= z.row + z.h; r += cy.every) {
+          for (let c = z.col + 3; c + cy.w <= z.col + z.w; c += cy.every) {
+            if (!free(c, r, cy.w, cy.h)) continue;
+            for (let i = 0; i < cy.w; i++) for (let j = 0; j < cy.h; j++) patch(g, iso.outline(c + i, r + j, 1, 1), (i + j) % 2 ? look.lawn : look.lawnB);
+            patch(g, iso.outline(c + 0.1, r + 0.1, cy.w - 0.2, cy.h - 0.2), 'rgba(0,0,0,0)', look.shrub, 3);
+            for (const [dc, dr] of [[0.6, 0.6], [cy.w - 0.6, 0.7], [cy.w / 2, cy.h - 0.6]]) {
+              const p = iso.cellCenter(c + dc - 0.5, r + dr - 0.5);
+              g.fillStyle = look.shrub;
+              g.beginPath();
+              g.ellipse(p.x, p.y - 10, 34, 22, 0, 0, Math.PI * 2);
+              g.fill();
+            }
+          }
+        }
+      }
+    }
+    // the wings' zoning colours (soft: Build Mode shows their edges more clearly)
+    for (const w of WINGS_SPECIAL) for (const t of world.layout.wings.tilesOf(w.id)) patch(g, iso.outline(t.col, t.row, 1, 1), w.tint);
+    // the building site
+    for (const z of world.layout.siteZones()) {
+      const S = L.site;
+      patch(g, iso.outline(z.col, z.row, z.w, z.h), S.ground);
+      g.save();
+      isoPath(g, iso.outline(z.col, z.row, z.w, z.h));
+      g.clip();
+      g.strokeStyle = S.hatch;
+      g.lineWidth = 6;
+      for (let k = 0; k <= z.w + z.h; k += 2) {
+        const a = iso.corner(z.col + Math.min(k, z.w), z.row + Math.max(0, k - z.w));
+        const b = iso.corner(z.col + Math.max(0, k - z.h), z.row + Math.min(k, z.h));
+        g.beginPath();
+        g.moveTo(a.x, a.y);
+        g.lineTo(b.x, b.y);
+        g.stroke();
+      }
+      g.restore();
+      g.save();
+      g.setLineDash([22, 16]);
+      patch(g, iso.outline(z.col, z.row, z.w, z.h), 'rgba(0,0,0,0)', S.line, 5);
+      g.restore();
+      for (const [c, r] of [[z.col + 0.5, z.row + 0.5], [z.col + z.w - 0.5, z.row + 0.5], [z.col + 0.5, z.row + z.h - 0.5], [z.col + z.w - 0.5, z.row + z.h - 0.5]]) drawCone(g, iso.cellCenter(c - 0.5, r - 0.5), S);
+    }
+  }
+  function drawCone(g, p, S) {
+    g.fillStyle = S.cone;
+    g.strokeStyle = L.wallCap;
+    g.lineWidth = 3;
+    g.beginPath();
+    g.moveTo(p.x - 22, p.y);
+    g.lineTo(p.x, p.y - 62);
+    g.lineTo(p.x + 22, p.y);
+    g.closePath();
+    g.fill();
+    g.stroke();
+    g.fillStyle = S.coneBand;
+    g.fillRect(p.x - 11, p.y - 34, 22, 9);
+  }
+  // The site's sign (screen space, over the floor): "Building Stage 3 · 4 days left".
+  function drawSiteSign(ctx) {
+    const b = world.layout.building;
+    if (!b) return;
+    const z = world.layout.siteZones()[0];
+    if (!z) return;
+    const w = iso.cellCenter(z.col + z.w / 2, z.row + Math.min(z.h, 12) / 2);
+    const s = camera.worldToScreen(w.x, w.y);
+    if (s.y < camera.viewY || s.y > camera.viewY + camera.viewH || s.x < -200 || s.x > W + 200) return;
+    const left = Math.max(0, b.doneDay - world.clock.totalDays);
+    const label = `Building Stage ${b.to}: ${STAGES[b.to - 1].name} · ${left} day${left === 1 ? '' : 's'} left`;
+    ctx.save();
+    ctx.font = font(S.small, true);
+    const tw = Math.min(W - 40, ctx.measureText(label).width + 48);
+    ctx.fillStyle = 'rgba(255, 246, 228, 0.95)';
+    ctx.strokeStyle = L.site.line;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.roundRect(s.x - tw / 2, s.y - 34, tw, 68, 34);
+    ctx.fill();
+    ctx.stroke();
+    ctx.restore();
+    text(ctx, label, s.x, s.y, { size: S.small, bold: true, color: C.actionDark, align: 'center', baseline: 'middle', maxWidth: tw - 32 });
+  }
+  // Build Mode: each painted wing's edge (where it meets other floor), and the rectangle being painted.
+  function drawWingEdges(ctx) {
+    ctx.save();
+    ctx.lineWidth = 4;
+    for (const w of WINGS_SPECIAL) {
+      const tiles = world.layout.wings.tilesOf(w.id);
+      if (!tiles.length) continue;
+      const set = new Set(tiles.map((t) => `${t.col},${t.row}`));
+      ctx.strokeStyle = w.line;
+      ctx.beginPath();
+      for (const t of tiles) {
+        if (!onScreenCell(t.col, t.row)) continue;
+        const edge = (a, b) => {
+          ctx.moveTo(a.x, a.y);
+          ctx.lineTo(b.x, b.y);
+        };
+        if (!set.has(`${t.col},${t.row - 1}`)) edge(iso.corner(t.col, t.row), iso.corner(t.col + 1, t.row));
+        if (!set.has(`${t.col},${t.row + 1}`)) edge(iso.corner(t.col, t.row + 1), iso.corner(t.col + 1, t.row + 1));
+        if (!set.has(`${t.col - 1},${t.row}`)) edge(iso.corner(t.col, t.row), iso.corner(t.col, t.row + 1));
+        if (!set.has(`${t.col + 1},${t.row}`)) edge(iso.corner(t.col + 1, t.row), iso.corner(t.col + 1, t.row + 1));
+      }
+      ctx.stroke();
+    }
+    const P = B.wing;
+    if (P?.from) {
+      const to = P.hover ?? P.from;
+      const c0 = Math.min(P.from.col, to.col);
+      const r0 = Math.min(P.from.row, to.row);
+      isoPath(ctx, iso.outline(c0, r0, Math.abs(to.col - P.from.col) + 1, Math.abs(to.row - P.from.row) + 1));
+      ctx.fillStyle = P.erase ? 'rgba(214, 64, 52, 0.25)' : 'rgba(242, 181, 48, 0.35)';
+      ctx.fill();
+      ctx.strokeStyle = P.erase ? '#B3261E' : '#8A5A00';
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+  // Is a tile's middle anywhere near the view (Build Mode draws only those: an S5 floor is 5,760 tiles)?
+  function onScreenCell(c, r) {
+    const p = iso.cellCenter(c, r);
+    return p.x > camera.x - HW * 2 && p.x < camera.x + camera.visibleW + HW * 2 && p.y > camera.y - HH * 2 && p.y < camera.y + camera.visibleH + HH * 2;
   }
   // A soft shadow at each person's feet — it stays on the floor while they hop, so the hop reads as a hop.
   function drawPersonShadows(ctx) {
@@ -823,7 +973,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     ctx.save();
     ctx.lineWidth = 1.5;
     world.grid.forEachTile((c, r) => {
-      if (world.grid.isBlocked(c, r) || c >= cols || r >= rows) return;
+      if (world.grid.isBlocked(c, r) || c >= fCols || r >= fRows || !onScreenCell(c, r)) return; // (Milestone 24: only what is on screen)
       isoPath(ctx, iso.outline(c, r, 1, 1));
       ctx.fillStyle = L.buildTint;
       ctx.fill();
@@ -973,7 +1123,8 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   // ghost: { defId, uid (a piece being moved) | null (a new one), col, row, res (the check: { ok, reason }) }
   // picked: the placed piece tapped (Move / Sell); message: the last result line
   // path (Milestone 17): the walking path being traced — { tiles: [{ col, row }] } — or null
-  const B = { ghost: null, picked: null, message: null, drag: null, path: null };
+  // wing (Milestone 24): the wing being painted — { id, erase, from (the first corner tapped) } — or null
+  const B = { ghost: null, picked: null, message: null, drag: null, path: null, wing: null };
   const sizeOf = (defId) => {
     const r = roomById(defId);
     const f = r ? null : facilityById(defId);
@@ -988,7 +1139,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     g.res = world.build.check(g.defId, col, row, g.uid);
   }
   // The middle of the home's view, as a tile (a new piece starts at the nearest valid spot to it).
-  const viewCell = () => cellAt(W / 2, camera.viewY + camera.viewH / 2) ?? { col: Math.floor(cols / 2), row: Math.floor(rows / 2) };
+  const viewCell = () => cellAt(W / 2, camera.viewY + camera.viewH / 2) ?? { col: Math.floor(fCols / 2), row: Math.floor(fRows / 2) };
   screen.startPlacing = (defId) => {
     if (!world) return;
     screen.setBuildMode(true);
@@ -1046,6 +1197,14 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
         { id: 'sell', label: can.ok ? `Sell · +${can.refund.toLocaleString('en-GB')}` : 'Sell', accent: C.bad, disabled: !can.ok, onTap: () => onSell?.(it) },
         { id: 'done', label: 'Done', accent: C.good, onTap: () => screen.setBuildMode(false) },
       ];
+    } else if (B.wing) {
+      // Milestone 24: painting a wing — two taps mark a rectangle's corners
+      const P = B.wing;
+      list = [
+        { id: 'wingMode', label: P.erase ? 'Clearing' : 'Painting', accent: P.erase ? C.bad : C.good, onTap: () => Object.assign(P, { erase: !P.erase, from: null }) },
+        { id: 'wingOther', label: 'Wings', accent: C.progress, onTap: () => onWings?.() },
+        { id: 'done', label: 'Done', accent: C.good, onTap: () => (B.wing = null) },
+      ];
     } else if (B.path) {
       // Milestone 17: tracing the safe walking path
       const n = B.path.tiles.length;
@@ -1059,6 +1218,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       list = [
         { id: 'shop', label: 'Build', accent: C.action, onTap: () => onShop?.() },
         { id: 'walkpath', label: 'Walking path', accent: C.progress, onTap: () => (B.path = { tiles: [], legs: [] }) }, // (Milestone 17)
+        { id: 'wings', label: 'Wings', accent: C.progress, disabled: world.layout.stage < 3, onTap: () => onWings?.() }, // (Milestone 24: from Stage 3)
         { id: 'done', label: 'Done', accent: C.good, onTap: () => screen.setBuildMode(false) },
       ];
     }
@@ -1066,6 +1226,14 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     return list.map((x, i) => ({ ...x, rect: rects[i] }));
   }
   function bannerLine() {
+    if (B.wing) {
+      if (B.message) return { text: B.message.text, color: B.message.good ? '#9BE7A4' : '#FFB3A8' };
+      const w = wingById(B.wing.id);
+      const n = world.layout.wings.count(w.id);
+      const hub = world.layout.wings.hubOf(w.id);
+      const how = B.wing.from ? 'now tap the opposite corner' : `tap one corner, then the opposite one, to ${B.wing.erase ? 'clear' : 'paint'} floor`;
+      return { text: `${how} · ${n} tiles · ${hub ? `hub: ${hub.name}` : `needs its hub inside: ${w.hubs.map((id) => facilityById(id).name).join(' or ')}`}`, color: C.textOnDark };
+    }
     if (B.path) {
       if (B.message) return { text: B.message.text, color: B.message.good ? '#9BE7A4' : '#FFB3A8' };
       const n = B.path.tiles.length;
@@ -1095,6 +1263,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     }
     if (hitRect(p, bannerRect())) return;
     const c = cellAt(p.x, p.y);
+    if (B.wing) return wingTap(c); // (Milestone 24)
     if (B.path) return pathTap(c); // (Milestone 17)
     if (B.ghost) {
       if (!c) return;
@@ -1149,6 +1318,32 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     B.path = null;
     B.message = { text: 'Walking path removed', good: true };
   }
+  // Milestone 24: painting a wing — the first tap marks a corner, the second paints (or clears) the rectangle.
+  function wingTap(c) {
+    B.message = null;
+    if (!c) return;
+    const P = B.wing;
+    if (!P.from) {
+      P.from = c;
+      P.hover = c;
+      return;
+    }
+    const rect = { col: Math.min(P.from.col, c.col), row: Math.min(P.from.row, c.row), w: Math.abs(c.col - P.from.col) + 1, h: Math.abs(c.row - P.from.row) + 1 };
+    P.from = null;
+    const r = world.build.paintWing(P.id, rect, !P.erase);
+    B.message = r.ok ? { text: `${wingById(P.id).name}: ${P.erase ? 'cleared' : 'painted'} ${r.changed} tiles${r.taken ? ` (${r.taken} belong to another wing)` : ''}`, good: true } : { text: r.reason, good: false };
+    debug?.log(B.message.text);
+  }
+  screen.startWingPaint = (id) => {
+    if (!world) return;
+    screen.setBuildMode(true);
+    B.ghost = null;
+    B.picked = null;
+    B.path = null;
+    B.message = null;
+    B.wing = { id, erase: false, from: null, hover: null };
+  };
+  screen.wingTapForTests = (col, row) => wingTap({ col, row });
   screen.pathTapForTests = (col, row) => pathTap({ col, row });
   screen.pathForTests = () => B.path?.tiles ?? null;
   screen.bannerButtonsForTests = () => (buildMode ? bannerButtons().map((x) => ({ id: x.id, label: x.label, disabled: !!x.disabled, rect: x.rect })) : []);
@@ -1189,7 +1384,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     ctx.roundRect(b.x, b.y, b.w, b.h, THEME.panel.radius);
     ctx.fill();
     ctx.restore();
-    const title = B.path ? 'Walking path' : B.ghost ? (B.ghost.uid == null ? `Build: ${nameOf(B.ghost.defId)}` : `Move: ${nameOf(B.ghost.defId)}`) : 'Build Mode';
+    const title = B.wing ? wingById(B.wing.id).name : B.path ? 'Walking path' : B.ghost ? (B.ghost.uid == null ? `Build: ${nameOf(B.ghost.defId)}` : `Move: ${nameOf(B.ghost.defId)}`) : 'Build Mode';
     text(ctx, title, b.x + 36, b.y + 56, { size: S.title, bold: true, color: C.textOnDark, baseline: 'middle', maxWidth: b.w - 72 });
     const line = bannerLine();
     text(ctx, line.text, b.x + 36, b.y + 128, { size: S.small, color: line.color, baseline: 'middle', maxWidth: b.w - 72 });

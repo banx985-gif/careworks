@@ -68,7 +68,9 @@ export function ensureRosterState(saved, ids) {
   };
 }
 
-export function createRoster(state, { abs = () => 0 } = {}) {
+// Milestone 24: wingOfRoom(roomId) → the wing a room is in (the home world reads the layout's painted wings); without
+// it, the Milestone 7 rule (every room in the Home wing). wingExists(wingId) → can staff be assigned to it now.
+export function createRoster(state, { abs = () => 0, wingOfRoom = null, wingExists = null } = {}) {
   const R = () => state.roster;
   const agencyOf = (id) => R().agency.find((a) => a.id === id) ?? null;
   const shiftOf = (id) => {
@@ -100,9 +102,15 @@ export function createRoster(state, { abs = () => 0 } = {}) {
     wingOf(id) {
       if (agencyOf(id) || R().floats[id] || !shiftOf(id)) return null;
       const w = R().wings[id];
+      if (w && w !== DEFAULT_WING && wingExists && !wingExists(w)) return DEFAULT_WING; // (Milestone 24: a wing that was cleared away)
       return w === undefined ? DEFAULT_WING : w; // (null: tied to no wing)
     },
-    wingOfRoom: (roomId) => (roomId ? WINGS.find((w) => w.rooms === 'all' || w.rooms.includes(roomId))?.id ?? null : null),
+    // Their wing as set on the roster, whether or not they are on a shift now (the roster sheet's wing lanes).
+    assignedWing: (id) => {
+      const w = R().wings[id] ?? DEFAULT_WING;
+      return w !== DEFAULT_WING && wingExists && !wingExists(w) ? DEFAULT_WING : w;
+    },
+    wingOfRoom: (roomId) => (!roomId ? null : wingOfRoom ? wingOfRoom(roomId) : WINGS.find((w) => w.rooms === 'all' || w.rooms.includes(roomId))?.id ?? null),
     get onCall() {
       return !!R().onCall;
     },
@@ -161,6 +169,7 @@ export function createRoster(state, { abs = () => 0 } = {}) {
     },
     setWing(id, wingId) {
       if (!(id in R().shifts) || !WINGS.some((w) => w.id === wingId)) return false;
+      if (wingId !== DEFAULT_WING && wingExists && !wingExists(wingId)) return false; // (Milestone 24: a painted wing only)
       R().wings[id] = wingId;
       return true;
     },

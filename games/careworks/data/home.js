@@ -29,7 +29,9 @@ export const HOME = {
   wallH: 230, // the two outer back walls, drawn px
   innerWallH: 70, // inside walls are cut down low (dollhouse), so nobody is ever hidden behind one
   margin: 90, // empty world round the home (the camera stops at the home plus this)
-  zoom: { min: 0.35, max: 1.4, start: 0.85 }, // start close in (style guide §2); 0.35 shows the whole home on a phone
+  zoom: { min: 0.35, max: 1.4, start: 0.85, minByStage: { 1: 0.35, 2: 0.35, 3: 0.3, 4: 0.27, 5: 0.24 } }, // start close in (style guide §2); 0.35 shows the whole home on a phone
+  // Milestone 24: a bigger home can be zoomed out a little further (by stage)
+  // (the floor picture is capped at floorMaxPixels, so it is a touch softer when zoomed right in on S4 / S5)
   floorMaxPixels: 7e6, // the cached floor picture is capped at this many device pixels (bigger cost ~20 ms a frame)
 };
 
@@ -134,11 +136,28 @@ export const WINDOWS = [
 // bands of three rooms with a corridor in front of each, an aisle down the right-hand side and the facilities beside
 // it (tests/careworks/m11.test.mjs FULL_LAYOUT places one and passes the access check). The floor only grows forward
 // (the front entrance stays on the right-hand wall), so every save keeps every piece where it was.
+// Milestone 24: S3–S5 (bible §24). The floor grows sideways as well as forward — a new strip beside the home (cols) and
+// one in front (rows) — so the home stays compact on screen (a long strip would make the cached floor picture far
+// bigger for the same tiles). The front entrance stays where it always was, at the corridor's end (now the entrance
+// hall in the middle of the home), so every path, every save and every piece stays exactly where it was.
+//   zones   the new floor (core/FacilitySystem expansions; each needs the stage before)
+//   cost / buildDays   the upgrade's Credits and its building days (the home keeps running; the new floor opens after)
+//   wings   the specialist wings this stage opens (data/wings.js)
+//   look    the new floor's finish (HOME_LOOK.stageFloors): S3 cleaner clinical-residential, S4 softer zoning, S5 campus
+//           with garden courtyards — residential, never hospital
+//   unlock  the real rule (Rank and accreditation come in Milestone 26: shown, ?debug=1 upgrades); check: what the
+//           game can already check of it
+// capacity: resident rooms, one resident each; LOGICAL_CAP: never more than this in any home, whatever the stage.
 export const STAGES = [
   { id: 'S1', n: 1, name: 'Small Residential Home', capacity: 16, cols: 24, rows: 48, unlock: { type: 'start', text: 'Start' } },
   { id: 'S2', n: 2, name: 'Expanded Care Home', capacity: 24, cols: 24, rows: 72, unlock: { type: 'rank', value: 'D', text: 'Needs Rank D' }, zone: { id: 'S2', col: 0, row: 48, w: 24, h: 24 }, art: 'care_event_06' },
+  { id: 'S3', n: 3, name: 'Professional Nursing Facility', capacity: 36, cols: 36, rows: 72, unlock: { type: 'rank', value: 'C', text: 'Needs Rank C and the C03 accreditation' }, zones: [{ id: 'S3', col: 24, row: 0, w: 12, h: 72, requires: ['S2'] }], cost: 40000, buildDays: 5, wings: ['memory', 'rehab'], look: 'clinical', art: 'care_event_06' },
+  { id: 'S4', n: 4, name: 'Specialist Care Centre', capacity: 50, cols: 48, rows: 80, unlock: { type: 'rank', value: 'A', text: 'Needs Rank A and a specialist program running', check: 'program' }, zones: [{ id: 'S4a', col: 36, row: 0, w: 12, h: 72, requires: ['S3'] }, { id: 'S4b', col: 0, row: 72, w: 48, h: 8, requires: ['S3'] }], cost: 75000, buildDays: 7, wings: ['highCare', 'palliative'], look: 'specialist', art: 'care_event_06' },
+  { id: 'S5', n: 5, name: 'Premier Care Campus', capacity: 70, cols: 60, rows: 96, unlock: { type: 'rank', value: 'S', text: 'Needs Rank S and Year 13 or later', check: 'year', year: 13 }, zones: [{ id: 'S5a', col: 48, row: 0, w: 12, h: 80, requires: ['S4a', 'S4b'] }, { id: 'S5b', col: 0, row: 80, w: 60, h: 16, requires: ['S4a', 'S4b'] }], cost: 120000, buildDays: 10, wings: [], look: 'campus', art: 'care_event_08' },
 ];
-export const MAX_FLOOR = { cols: 24, rows: 72 };
+export const zonesOf = (st) => st.zones ?? (st.zone ? [st.zone] : []);
+export const LOGICAL_CAP = 70;
+export const MAX_FLOOR = { cols: 60, rows: 96 };
 // Milestone 6: new residents come in through the front entrance, the open end of the corridor (Reception is not placed
 // yet), and walk to their room.
 export const ENTRANCE = { col: 23, row: 7 };
@@ -240,4 +259,14 @@ export const HOME_LOOK = {
   window: { frame: '#FFFFFF', glass: '#BFE3EE', shine: 'rgba(255,255,255,0.55)' },
   buildTint: 'rgba(30, 156, 196, 0.10)',
   buildLine: 'rgba(30, 156, 196, 0.45)',
+  // Milestone 24: each stage's new floor (a checker of two tones, like the hall) — still a home: warm timber and soft
+  // vinyl, never hospital white. campus: plus garden courtyards (lawn with a few shrubs: decoration on walkable floor,
+  // drawn wherever no piece stands) every `courtyardEvery` tiles.
+  stageFloors: {
+    clinical: { a: '#EEE6D6', b: '#E8DFCC', line: 'rgba(110, 90, 60, 0.10)' }, // S3 pale oak vinyl
+    specialist: { a: '#E9E4D3', b: '#E2DCC8', line: 'rgba(90, 100, 80, 0.10)' }, // S4 soft stone
+    campus: { a: '#F0E4CC', b: '#EADCBF', line: 'rgba(110, 85, 50, 0.10)', lawn: '#B7D59A', lawnB: '#ADCD8F', shrub: '#7DAA5E', courtyard: { w: 4, h: 4, every: 12 } },
+  },
+  // the building site while a stage is built: sandy ground, a dashed boundary, cones
+  site: { ground: 'rgba(214, 190, 150, 0.55)', hatch: 'rgba(160, 120, 70, 0.35)', line: '#A87A3E', cone: '#F08A24', coneBand: '#FFFFFF' },
 };

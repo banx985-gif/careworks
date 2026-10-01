@@ -15,10 +15,15 @@
 //   layout.canSell(uid, { occupied }) → { ok, reason } · layout.findSpot(defId, near, uid?)
 //   layout.upgrade() → { ok, reason } · layout.problems() → [{ piece, text }] · layout.fixUp() → [moved pieces]
 //   layout.effectTotal(key) · layout.serialize()
+// Milestone 24: stages S3–S5 (each opens one or two floor zones), the building site (layout.building: the upgrade under
+// way, the world finishes it), the 70-resident logical cap, and specialist wings: painted floor tiles per wing
+// (layout.wings: paint / tilesOf / wingAt / wingOfPiece / hubOf / active / unlocked). Wing-only rooms (RM04–RM07) and
+// the Rank A hubs (F30–F32) must stand fully inside their wing; a wing works once a hub stands inside it.
 import { FacilitySystem } from '../../../../core/FacilitySystem.js';
 import { ROOMS, ROOM_SHAPE, roomById } from '../../data/rooms.js';
 import { FACILITIES, facilityById } from '../../data/facilities.js';
-import { FIXED_WALLS, DEFAULT_LAYOUT, PROPS, STAGES, MAX_FLOOR, ENTRANCE, SPOTS, pieceTiles } from '../../data/home.js';
+import { FIXED_WALLS, DEFAULT_LAYOUT, PROPS, STAGES, MAX_FLOOR, ENTRANCE, SPOTS, pieceTiles, zonesOf, LOGICAL_CAP } from '../../data/home.js';
+import { WINGS_SPECIAL, wingById, wingForRoom, HUB_ONLY } from '../../data/wings.js';
 
 const key = (c, r) => `${c},${r}`;
 const DIRS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
@@ -43,7 +48,7 @@ const defOf = (defId) => roomById(defId) ?? facilityById(defId);
 export const isRoomDef = (defId) => !!roomById(defId);
 
 export function newLayoutState() {
-  return { placement: DEFAULT_LAYOUT.map((p, i) => ({ uid: i + 1, def: p.def, col: p.col, row: p.row, rot: 0 })), names: Object.fromEntries(DEFAULT_LAYOUT.map((p, i) => [i + 1, p.id])), nextUid: DEFAULT_LAYOUT.length + 1, stage: 1, sold: [], debugUnlock: false };
+  return { placement: DEFAULT_LAYOUT.map((p, i) => ({ uid: i + 1, def: p.def, col: p.col, row: p.row, rot: 0 })), names: Object.fromEntries(DEFAULT_LAYOUT.map((p, i) => [i + 1, p.id])), nextUid: DEFAULT_LAYOUT.length + 1, stage: 1, sold: [], debugUnlock: false, wings: {}, building: null };
 }
 
 export function createLayout({ saved = null, bus = null } = {}) {
@@ -55,16 +60,18 @@ export function createLayout({ saved = null, bus = null } = {}) {
     bus,
     defs,
     area: { cols: S1.cols, rows: S1.rows },
-    zones: STAGES.filter((s) => s.zone).map((s) => ({ ...s.zone })),
+    zones: STAGES.flatMap(zonesOf).map((z) => ({ ...z })), // (Milestone 24: S3–S5's zones too)
     entrance: ENTRANCE,
     keepClear: FIXED_CELLS.filter((c) => c.gap), // the lounge's doorways
     fixed: [...FIXED_CELLS.filter((c) => !c.gap), ...FIXED_PROPS.map((p) => ({ col: p.col, row: p.row }))],
-    reasons: { outside: 'Off the floor', locked: 'Off the floor: that part comes with Stage 2', overlap: 'Overlaps the {name}', door: 'Keep the doorway clear', blocked: 'Blocks the only path to the {name}', fixed: 'That is part of the building (a wall or fixed furniture)' },
+    reasons: { outside: 'Off the floor', locked: 'Off the floor: that part comes with a bigger stage', overlap: 'Overlaps the {name}', door: 'Keep the doorway clear', blocked: 'Blocks the only path to the {name}', fixed: 'That is part of the building (a wall or fixed furniture)' },
   });
   const s = { ...newLayoutState(), ...(saved ?? {}) };
   s.names = { ...s.names };
   s.sold = [...(s.sold ?? [])];
-  fs.load({ placement: s.placement, nextUid: s.nextUid, expansions: STAGES.filter((st) => st.zone && st.n <= s.stage).map((st) => st.zone.id) });
+  s.wings = Object.fromEntries(Object.entries(s.wings ?? {}).filter(([id]) => wingById(id)).map(([id, t]) => [id, [...t]])); // (Milestone 24; an older save: none)
+  s.building = s.building ? { ...s.building } : null;
+  fs.load({ placement: s.placement, nextUid: s.nextUid, expansions: STAGES.filter((st) => st.n <= s.stage).flatMap(zonesOf).map((z) => z.id) });
 
   // --- pieces ---------------------------------------------------------------------------------------------------
   let cache = null;
@@ -172,9 +179,16 @@ export function createLayout({ saved = null, bus = null } = {}) {
     if (!d || d.secret) return { ok: false, reason: 'Unknown' };
     if (d.unlock.type === 'start' || s.debugUnlock) return { ok: true, reason: null };
     if (d.unlock.type === 'research' && d.unlock.node && researched(d.unlock.node)) return { ok: true, reason: null };
+    // (Milestone 24: a wing unlock — the wing's own hub needs the wing painted; its rooms need the wing working)
+    const w = d.unlock.type === 'wing' ? wingById(d.unlock.value) : null;
+    if (w) {
+      if (!wingUnlocked(w.id)) return { ok: false, reason: `Locked: ${d.unlock.text} (it opens at Stage ${w.stage})` };
+      if (wingTiles(w.id).size && (w.hubs.includes(defId) || hubOf(w.id))) return { ok: true, reason: null };
+      return { ok: false, reason: `Locked: ${d.unlock.text} — paint it in Build Mode → Wings${w.hubs.includes(defId) ? '' : ', with its hub inside'}` };
+    }
     return { ok: false, reason: `Locked: ${d.unlock.text}` };
   }
-  const cap = () => stageDef().capacity;
+  const cap = () => Math.min(stageDef().capacity, LOGICAL_CAP); // (Milestone 24: never more than 70, whatever the stage)
   const capacity = () => Math.min(rooms().length, cap());
 
   // Can defId stand at (col, row)? uid: the piece being moved (null for a new one). → { ok, code, reason }
@@ -183,6 +197,15 @@ export function createLayout({ saved = null, bus = null } = {}) {
     if (uid == null && isRoomDef(defId) && rooms().length >= cap()) return { ok: false, code: 'capacity', reason: `Stage ${s.stage} holds ${cap()} residents: every room is built${s.stage < STAGES.length ? ' (upgrade the home for more)' : ''}` };
     const base = fs.check(defId, col, row, 0, uid);
     if (!base.ok && base.code !== 'blocked') return base;
+    // (Milestone 24: a wing-only room or a wing hub stands fully inside its wing — wherever wings can exist, Stage 3 on.
+    // Before that they stay locked; only the ?debug=1 unlock places them, anywhere, as in Milestones 10–23.)
+    const needWing = wingForRoom(defId) ?? HUB_ONLY[defId] ?? null;
+    if (needWing && (s.stage >= 3 || !s.debugUnlock)) {
+      const w = wingById(needWing);
+      const box = { col, row, w: defs[defId].w, h: defs[defId].h };
+      if (!wingUnlocked(needWing)) return { ok: false, code: 'wing', reason: `Needs the ${w.name}: it opens at Stage ${w.stage}` };
+      if (!boxIn(box, needWing)) return { ok: false, code: 'wing', reason: `The ${defs[defId].name} must stand inside the ${w.name} (paint it in Build Mode → Wings)` };
+    }
     const cand = { uid: uid ?? -1, defId, col, row, ...pieceTiles({ id: uid != null ? idOf({ uid, def: defId }) : 'new', def: defId, col, row }) };
     const list = pieces().filter((p) => p.uid !== uid).concat(cand);
     const probs = accessOf(list, reachFrom(blockedFor(pieces()), ENTRANCE));
@@ -318,8 +341,100 @@ export function createLayout({ saved = null, bus = null } = {}) {
     return openCache.get(ref);
   }
 
+  // --- wings (Milestone 24) -------------------------------------------------------------------------------------------
+  let wv = 0; // bumped on every paint (the tile sets are rebuilt)
+  const wingSets = new Map();
+  let wingSetsV = -1;
+  function wingTiles(id) {
+    if (wingSetsV !== wv) {
+      wingSets.clear();
+      wingSetsV = wv;
+    }
+    if (!wingSets.has(id)) wingSets.set(id, new Set(s.wings[id] ?? []));
+    return wingSets.get(id);
+  }
+  const wingUnlocked = (id) => !!wingById(id) && s.stage >= wingById(id).stage;
+  const wingAt = (c, r) => WINGS_SPECIAL.find((w) => wingTiles(w.id).has(key(c, r)))?.id ?? null;
+  function boxIn(b, id) {
+    const t = wingTiles(id);
+    if (!t.size) return false;
+    for (let r = b.row; r < b.row + b.h; r++) for (let c = b.col; c < b.col + b.w; c++) if (!t.has(key(c, r))) return false;
+    return true;
+  }
+  // The hub standing fully inside the wing (null: none — the wing does not work yet).
+  function hubOf(id) {
+    const w = wingById(id);
+    return w ? pieces().find((p) => w.hubs.includes(p.defId) && boxIn(p.box, id)) ?? null : null;
+  }
+  // A piece's wing (null: the Home wing): a room by where its resident stands, a facility by its middle.
+  function wingOfPiece(p) {
+    if (!p) return null;
+    const t = p.kind === 'room' ? p.spots.inside : { col: p.box.col + Math.floor(p.box.w / 2), row: p.box.row + Math.floor(p.box.h / 2) };
+    return wingAt(t.col, t.row);
+  }
+  // Paint (on) or clear (off) a rectangle of floor for a wing. Painting takes only floor no other wing holds; clearing
+  // may not leave one of its wing-only rooms or its hub outside it. → { ok, reason, changed }
+  function paint(id, rect, on = true) {
+    const w = wingById(id);
+    if (!w) return { ok: false, reason: 'No such wing', changed: 0 };
+    if (!wingUnlocked(id)) return { ok: false, reason: `The ${w.name} opens at Stage ${w.stage}`, changed: 0 };
+    const { cols, rows } = floor();
+    const c0 = Math.max(0, rect.col);
+    const r0 = Math.max(0, rect.row);
+    const c1 = Math.min(cols - 1, rect.col + rect.w - 1);
+    const r1 = Math.min(rows - 1, rect.row + rect.h - 1);
+    const cur = new Set(s.wings[id] ?? []);
+    let changed = 0;
+    let taken = 0;
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const k = key(c, r);
+        if (on) {
+          const other = wingAt(c, r);
+          if (other && other !== id) taken++;
+          else if (!cur.has(k)) {
+            cur.add(k);
+            changed++;
+          }
+        } else if (cur.delete(k)) changed++;
+      }
+    }
+    if (!on) {
+      const bad = pieces().find((p) => (wingForRoom(p.defId) ?? HUB_ONLY[p.defId]) === id && !boxInSet(p.box, cur));
+      if (bad) return { ok: false, reason: `The ${bad.name} must stay inside the ${w.name}: move or sell it first`, changed: 0 };
+    }
+    if (!changed) return { ok: false, reason: taken ? 'That floor belongs to another wing' : on ? 'That floor is already in the wing' : 'That floor is not part of the wing', changed: 0 };
+    if (cur.size) s.wings[id] = [...cur];
+    else delete s.wings[id];
+    wv++;
+    return { ok: true, reason: null, changed, taken };
+  }
+  function boxInSet(b, set) {
+    for (let r = b.row; r < b.row + b.h; r++) for (let c = b.col; c < b.col + b.w; c++) if (!set.has(key(c, r))) return false;
+    return true;
+  }
+  const wings = {
+    paint,
+    tilesOf: (id) => [...wingTiles(id)].map((k) => k.split(',').map(Number)).map(([col, row]) => ({ col, row })),
+    count: (id) => wingTiles(id).size,
+    wingAt,
+    wingOfPiece,
+    hubOf,
+    boxIn,
+    unlocked: wingUnlocked,
+    active: (id) => !!hubOf(id),
+    painted: () => WINGS_SPECIAL.filter((w) => wingTiles(w.id).size).map((w) => w.id),
+    get version() {
+      return wv;
+    },
+  };
+  let reachCache = null;
+  let reachV = null;
+
   const layout = {
     fs,
+    wings,
+    LOGICAL_CAP,
     state: s,
     get pieces() {
       return pieces();
@@ -377,7 +492,13 @@ export function createLayout({ saved = null, bus = null } = {}) {
     },
     isOpen(col, row) {
       if (col < 0 || row < 0 || col >= COLS || row >= ROWS) return false;
-      return reachFrom(blockedFor(pieces()), ENTRANCE)[row * COLS + col] === 1;
+      // (Milestone 24: worked out once per layout change — the S5 floor is 5,760 tiles, asked about tile by tile)
+      const v = `${fs.version}:${s.stage}`;
+      if (reachV !== v) {
+        reachCache = reachFrom(blockedFor(pieces()), ENTRANCE);
+        reachV = v;
+      }
+      return reachCache[row * COLS + col] === 1;
     },
     // Wall tiles to draw (the lounge's and each room's), doorway tiles (a doormat each) and where the props stand.
     wallTiles: () => [...FIXED_CELLS, ...pieces().flatMap((p) => p.walls.flatMap(wallCells))].filter((t) => !t.gap),
@@ -420,18 +541,30 @@ export function createLayout({ saved = null, bus = null } = {}) {
       }
       return moved;
     },
-    // Stage 1 → 2: the new floor opens in front; every piece stays where it is.
+    // The next stage's floor opens (S2 in front; S3–S5 beside and in front); every piece stays where it is.
     upgrade() {
       const next = STAGES[s.stage];
-      if (!next) return { ok: false, reason: 'The home is at its largest stage for now' };
-      if (!fs.openZone(next.zone.id)) return { ok: false, reason: 'That floor is already open' };
+      if (!next) return { ok: false, reason: 'The home is at its largest stage' };
+      const zs = zonesOf(next);
+      if (!zs.every((z) => fs.zoneReady(z.id))) return { ok: false, reason: 'That floor is already open' };
+      for (const z of zs) fs.openZone(z.id);
       s.stage = next.n;
+      s.building = null;
       cache = null;
       return { ok: true, reason: null, stage: next };
     },
+    // Milestone 24: the upgrade being built ({ to, startDay, doneDay } or null) — the home world starts and finishes it.
+    get building() {
+      return s.building;
+    },
+    setBuilding(b) {
+      s.building = b ? { ...b } : null;
+    },
+    // The building site (the next stage's zones) while it is under way, for the drawing.
+    siteZones: () => (s.building ? zonesOf(STAGES[s.building.to - 1]) : []),
     serialize() {
       const f = fs.serialize();
-      return { placement: f.placement, nextUid: f.nextUid, names: { ...s.names }, stage: s.stage, sold: s.sold.map((x) => ({ ...x })), debugUnlock: !!s.debugUnlock };
+      return { placement: f.placement, nextUid: f.nextUid, names: { ...s.names }, stage: s.stage, sold: s.sold.map((x) => ({ ...x })), debugUnlock: !!s.debugUnlock, wings: Object.fromEntries(Object.entries(s.wings).map(([id, t]) => [id, [...t]])), building: s.building ? { ...s.building } : null };
     },
   };
   return layout;

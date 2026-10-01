@@ -97,7 +97,7 @@ import { Clock } from '../../../../core/Clock.js';
 import { findPath } from '../../../../core/Pathing.js';
 import { AssignmentSystem } from '../../../../core/AssignmentSystem.js';
 import { StaffModel } from '../../../../core/StaffModel.js';
-import { HOME, RESIDENT, ENTRANCE, MAX_FLOOR } from '../../data/home.js';
+import { HOME, RESIDENT, ENTRANCE, MAX_FLOOR, STAGES, LOGICAL_CAP } from '../../data/home.js';
 import { createLayout } from './homeLayout.js';
 import { roomById } from '../../data/rooms.js';
 import { facilityById } from '../../data/facilities.js';
@@ -141,7 +141,8 @@ import { ensureClinical, dayRecord, roundSafety, issueChance, alertChance, rollS
 import { clinicalPct, familyPct } from './traitEffects.js';
 import { TRUST, VISIT, NOTICE as FAMILY_NOTICE, MEETING, MEETING_ASK, MEETING_KINDS, NOTES, COMPLIMENTS, COMPLIMENT, COMPLAINT, COMPLAINTS, FIXES, REQUESTS, REQUEST, VIEW, FIRSTS, SO_VISITS, PATTERNS } from '../../data/family.js';
 import { ensureFamily, ensureFamilyHome, changeTrust, nextVisitDay, visitParts, visitTotal, visitWords, homeTrust, callOf, whoOf, theirWord, noteSeen, seenOf } from './family.js';
-import { SHIFT_TEMPLATES } from '../../data/shifts.js';
+import { SHIFT_TEMPLATES, WINGS as ALL_WINGS, DEFAULT_WING } from '../../data/shifts.js';
+import { WINGS_SPECIAL, wingById, wingForSupport } from '../../data/wings.js';
 import { PROGRAMS, VISIBLE_PROGRAMS, programById, visibleProgram, EFFECT_TEXT, LEDGER_CATEGORY, PROGRAM_RULES } from '../../data/programs.js';
 import { ensureProgramState, newRun, unlockOf, hoursFor, vetoOf, weeksDue, daysUnpaid, countFor } from './programs.js';
 import { activityPct } from './traitEffects.js';
@@ -166,6 +167,10 @@ export const makeGrid = () => new Grid({ cols: MAX_FLOOR.cols, rows: MAX_FLOOR.r
 export const buildGrid = () => DEFAULT().buildGrid(makeGrid());
 // 'F05.resident' or 'hall.cwPost' → the tile.
 export const spotTile = (ref) => DEFAULT().spotTile(ref);
+
+// Milestone 24: how many more residents the home may take — rooms built, capped by the stage and never above the
+// 70-resident logical cap.
+export const placesFree = ({ here, rooms, stageCap }) => Math.max(0, Math.min(rooms, stageCap, LOGICAL_CAP) - here);
 
 export function makeClock(bus = null) {
   const clock = new Clock({ bus, secondsPerDay: DAY.secondsPerDay, daysPerMonth: DAY.daysPerMonth, monthsPerYear: DAY.monthsPerYear, speeds: DAY.speeds });
@@ -223,7 +228,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const sys = makeStaffSystem(staffState);
   const perks = makeFounderPerks(staffState);
   const absTime = () => clock.totalDays * 24 + hourNow();
-  const roster = createRoster(staffState, { abs: absTime });
+  // (Milestone 24: a room's wing comes from the painted wings; staff may be assigned to a painted wing)
+  const roster = createRoster(staffState, { abs: absTime, wingOfRoom: (roomId) => layout.wings.wingOfPiece(layout.byId(roomId)) ?? DEFAULT_WING, wingExists: (id) => layout.wings.count(id) > 0 });
   // Milestone 7: agency workers hired for a shift still under way come back with the save (their model is kept there)
   for (const a of staffState.roster.agency) if (a.model && !sys.get(a.id)) sys.add(StaffModel.fromJSON(a.model));
   staffState.roster.agency = staffState.roster.agency.filter((a) => sys.get(a.id));
@@ -2828,13 +2834,26 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const freeRooms = () => roomList().filter((r) => !r.residentId);
   // Milestone 10: the free rooms a resident may have, best first — one of the template they need (Memory Support,
   // High-Care), else a general room, the kind they would like first.
+  // Milestone 24: memory / rehab / high-care residents prefer a free room in their wing; everyone else one in the Home wing
+  // (the kind they would like still first within each).
   function roomsFor(def) {
     const need = def.requires?.room;
     const free = freeRooms();
-    if (need) return free.filter((r) => r.defId === need);
+    const mine = wingForSupport(def.support) ?? DEFAULT_WING;
+    const wingFirst = (list) => [...list.filter((r) => roster.wingOfRoom(r.id) === mine), ...list.filter((r) => roster.wingOfRoom(r.id) !== mine)];
+    if (need) return wingFirst(free.filter((r) => r.defId === need));
     const general = free.filter((r) => roomById(r.defId)?.general);
-    return [...general.filter((r) => r.defId === def.room), ...general.filter((r) => r.defId !== def.room)];
+    return wingFirst([...general.filter((r) => r.defId === def.room), ...general.filter((r) => r.defId !== def.room)]);
   }
+  // Milestone 24: the residents' levels by wing (Safe Coverage per wing): the Home wing and every painted wing.
+  function wingLevels() {
+    const by = new Map();
+    for (const w of ALL_WINGS) if (w.id === DEFAULT_WING || layout.wings.count(w.id)) by.set(w.id, { id: w.id, name: w.id === DEFAULT_WING ? 'Home wing' : w.name, levels: [] });
+    for (const p of residents) if (!p.state.leaving && !p.state.guest) by.get(roster.wingOfRoom(p.state.room) ?? DEFAULT_WING)?.levels.push(levelOf(p));
+    return [...by.values()];
+  }
+  // The home's places: rooms built, capped by the stage and never above the 70-resident logical cap.
+  const placesLeft = () => placesFree({ here: seated().length, rooms: roomList().length, stageCap: layout.stageDef.capacity });
   const roomTemplatesHere = () => new Set(roomList().map((r) => r.defId));
   const team = () => crew.people.filter((q) => !q.agency && !q.leftTeam);
   const teamRoles = () => new Set(team().map((q) => q.role));
@@ -3004,6 +3023,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     noteMissed(day - 1); // Milestone 8: the missed-essential streak (plan review)
     tickAdmissions(day);
     staffing.tick(day); // Milestone 11: the free board refresh every 56 days, training days
+    finishBuilding(); // (Milestone 24: a stage being built opens when its days are up)
     if (day % clock.daysPerMonth === 0) {
       const d = clock.dateOf(day - 1);
       const closed = ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll(), home: homeCosts() });
@@ -3052,6 +3072,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     roster,
     team: () => crew.people,
     levels: () => residents.filter((p) => !p.state.leaving && !p.state.guest).map((p) => levelOf(p)), // (Milestone 22: from needs)
+    wings: () => wingLevels(), // (Milestone 24: Safe Coverage per wing)
     // Milestone 10 fix: anyone here whose assessed clinical need is above the line needs a real RN on shift
     clinicalHigh: () => residents.some((p) => !p.state.leaving && !p.state.guest && (p.def.needs?.clinical ?? 0) > ON_CALL.clinicalNeedAbove),
     ledger,
@@ -3540,6 +3561,22 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     levelOf: (residentId) => (byResident(residentId) ? levelOf(byResident(residentId)) : null),
     homeCosts: () => homeCosts(),
+    // --- Milestone 24: stages 3–5 and specialist wings -----------------------------------------------------------------
+    // world.wings: each specialist wing as the sheets show it → [{ def, unlocked, tiles, hub, active, rooms, residents,
+    // staff }]; ofResident(id) / ofStaff(id) → wing id; setStaff(staffId, wingId) → { ok, reason }
+    wings: {
+      list: () => WINGS_SPECIAL.map((w) => ({ def: w, unlocked: layout.wings.unlocked(w.id), tiles: layout.wings.count(w.id), hub: layout.wings.hubOf(w.id), active: layout.wings.active(w.id), rooms: roomList().filter((r) => roster.wingOfRoom(r.id) === w.id).length, residents: seated().filter((p) => roster.wingOfRoom(p.state.room) === w.id).length, staff: team().filter((q) => roster.assignedWing(q.id) === w.id && !roster.isFloat(q.id)).length })),
+      ofResident: (id) => (byResident(id) ? roster.wingOfRoom(byResident(id).state.room) ?? DEFAULT_WING : null),
+      ofStaff: (id) => (roster.isFloat(id) ? null : roster.assignedWing(id)),
+      levels: () => wingLevels(),
+      setStaff(staffId, wingId) {
+        if (wingId !== DEFAULT_WING && !layout.wings.count(wingId)) return { ok: false, reason: `${wingById(wingId)?.name ?? 'That wing'} has no floor yet: paint it in Build Mode → Wings` };
+        if (roster.isFloat(staffId)) roster.setFloat(staffId, false);
+        return roster.setWing(staffId, wingId) ? { ok: true, reason: null } : { ok: false, reason: 'They are not on the team' };
+      },
+    },
+    placesLeft: () => placesLeft(),
+    fillToCapForDebug: (opts) => fillToCap(opts),
     // --- Milestone 23: community partners and grants ----------------------------------------------------------------------
     get partners() {
       return partners;
@@ -3871,6 +3908,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     // Admit an applicant: the first free room, a state from their (varied) assessment, the walk in from the entrance.
     // They join the routine and the task planning from the next band.
     admit(residentId) {
+      // (Milestone 24: never above the stage's cap or the 70-resident logical cap; a full set of rooms keeps its own reason)
+      const capNow = Math.min(layout.stageDef.capacity, LOGICAL_CAP);
+      if (seated().length >= capNow) return { ok: false, reason: `The home is full: Stage ${layout.stage} holds ${capNow} residents` };
       const r = admissions.admit(residentId, admitCtx());
       if (!r.ok) return r;
       const app = r.applicant;
@@ -3977,6 +4017,109 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
     bus?.emit('home:layout', { version: layout.version });
   }
+  // --- stages 3–5 and wings (Milestone 24) -----------------------------------------------------------------------------
+  // What the next stage needs. Rank (and the C03 accreditation) come in Milestone 26, so those parts are never met yet;
+  // the parts the game can already check (a specialist program running, Year 13) show as they are.
+  function upgradeStatus() {
+    const next = STAGES[layout.stage] ?? null;
+    if (!next) return { next: null, parts: [], ok: false, cost: 0, days: 0 };
+    const parts = [{ text: next.unlock.check ? `Rank ${next.unlock.value} (Rank comes in a later update)` : `${next.unlock.text} (Rank comes in a later update)`, ok: false }];
+    if (next.unlock.check === 'program') parts.push({ text: 'A specialist program running', ok: Object.keys(progState.running).length > 0 });
+    if (next.unlock.check === 'year') parts.push({ text: `Year ${next.unlock.year} or later (now Year ${clock.year})`, ok: clock.year >= next.unlock.year });
+    return { next, parts, ok: parts.every((x) => x.ok), cost: next.cost ?? 0, days: next.buildDays ?? 0 };
+  }
+  // After a stage opens: the access check again; anything that fails (it shouldn't — the floor only grows) gets the M10
+  // nudge fix-up, and the move is logged. → the moved pieces
+  function afterUpgrade(stage) {
+    if (!layout.problems().length) return [];
+    const moved = layout.fixUp();
+    relayout();
+    care.layoutLog = [...(care.layoutLog ?? []), { day: clock.totalDays, stage: stage.n, moved }].slice(-10);
+    return moved;
+  }
+  // The building site is done: the new floor opens, with its big moment.
+  function finishBuilding() {
+    const b = layout.building;
+    if (!b || clock.totalDays < b.doneDay) return null;
+    return world.build.upgrade();
+  }
+  // A wing's first hub inside it: its big moment (once per wing, ever, in this home).
+  function wingOpened() {
+    care.wingsOpened ??= [];
+    for (const w of WINGS_SPECIAL) {
+      if (care.wingsOpened.includes(w.id) || !layout.wings.active(w.id)) continue;
+      care.wingsOpened.push(w.id);
+      bus?.emit('home:wing', { wing: w.id, name: w.name, art: w.beat, hub: layout.wings.hubOf(w.id)?.name ?? null, later: w.later ?? null });
+    }
+  }
+  // ?debug=1 "Fill to cap" (and the performance check): Stage 5 at once, a Memory and a High-Care wing with their hubs and
+  // rooms, Standard Rooms up to the 70-room cap, every resident profile admitted (60: the roster has no more people), and
+  // the team grown to about `staff` people across the three shifts. → a short report
+  function fillToCap({ staff: staffTarget = 40 } = {}) {
+    const t0 = Date.now();
+    ledger.economy.add('credits', 2e7, 'Debug: fill to cap', 'debug');
+    layout.setDebugUnlock(true);
+    while (layout.stage < STAGES.length) {
+      layout.setBuilding(null);
+      if (!world.build.upgrade().ok) break;
+    }
+    const F = layout.floor;
+    // the wings along the front: Memory on the left, High-Care on the right
+    const front = { row: F.rows - 16, h: 16 };
+    world.build.paintWing('memory', { col: 0, row: front.row, w: 30, h: front.h });
+    world.build.paintWing('highCare', { col: 30, row: front.row, w: F.cols - 30, h: front.h });
+    const tryAt = (defId, area, n) => {
+      let placed = 0;
+      for (let r = area.row; r + 6 <= area.row + area.h && placed < n; r += 8) {
+        for (let c = area.col; c + 6 <= area.col + area.w && placed < n; c += 6) if (world.build.place(defId, c, r).ok) placed++;
+      }
+      return placed;
+    };
+    const place3 = (defId, area) => {
+      for (let r = area.row; r < area.row + area.h - 3; r++) for (let c = area.col; c < area.col + area.w - 3; c++) if (world.build.place(defId, c, r).ok) return true;
+      return false;
+    };
+    place3('F22', { col: 24, row: front.row + 8, w: 6, h: 8 });
+    place3('F30', { col: F.cols - 6, row: front.row + 8, w: 6, h: 8 });
+    tryAt('RM05', { col: 0, row: front.row, w: 30, h: front.h }, 8);
+    tryAt('RM04', { col: 30, row: front.row, w: F.cols - 30, h: front.h }, 7);
+    // Standard Rooms everywhere else that fits, up to the cap
+    const cap = layout.cap;
+    for (let r = 0; r < F.rows && roomList().length < cap; r += 2) {
+      for (let c = 0; c + 6 <= F.cols && roomList().length < cap; c += 6) {
+        if (!layout.fs.check('RM01', c, r, 0, null).ok) continue;
+        if (layout.wings.wingAt(c, r)) continue;
+        world.build.place('RM01', c, r);
+      }
+    }
+    // the team, then everyone the home can take
+    rankNow = 'S';
+    staffing.setCapForDebug(Math.max(staffTarget, team().length));
+    staffing.setEliteUnlock(true);
+    staffing.setDebug(true); // (every channel open)
+    const shifts = ['morning', 'afternoon', 'night'];
+    let i = 0;
+    for (const d of staffing.eligibleNow()) {
+      if (team().length >= staffTarget) break;
+      if (world.hireDirectForTests(d.id, shifts[i % 3]).ok) i++;
+    }
+    // staff the wings as a player would: about one in eight to each specialist wing, one in eight a float
+    team().forEach((q, k) => {
+      if (k % 8 === 1) world.wings.setStaff(q.id, 'memory');
+      else if (k % 8 === 2) world.wings.setStaff(q.id, 'highCare');
+      else if (k % 8 === 3) roster.setFloat(q.id, true);
+    });
+    let admitted = 0;
+    for (const def of RESIDENTS) {
+      if (byResident(def.id) || !placesLeft()) continue;
+      const s = admissions.state;
+      s.applicants = s.applicants.filter((a) => a.id !== def.id);
+      s.applicants.push({ id: def.id, status: 'board', arrived: clock.totalDays, leaveDay: clock.totalDays + 8, ...varied(def, seed, 900), assessed: false, assessReady: null, rolls: [900], stayDays: null, returning: false });
+      if (world.admit(def.id).ok) admitted++;
+    }
+    layout.setDebugUnlock(false);
+    return { stage: layout.stage, rooms: roomList().length, cap, residents: seated().length, admitted, staff: team().length, ms: Date.now() - t0, problems: layout.problems().length };
+  }
   const pay = (amount, reason, category) => ledger.economy.add('credits', amount, reason, category);
   const occupant = (pieceId) => {
     const p = residents.find((x) => x.state.room === pieceId && !x.state.guest && !x.state.leaving);
@@ -4004,6 +4147,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (roomById(defId)) partners?.noteSaving('roomBuildPct', cost, 'now');
       else partners?.record('facilityBuilt', { facility: defId });
       relayout();
+      wingOpened(); // (Milestone 24: a wing's first hub — its big moment)
       bus?.emit('home:built', { id: r.piece.id, def: defId, cost });
       return { ...r, cost };
     },
@@ -4024,12 +4168,43 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       bus?.emit('home:sold', { id: r.piece.id, refund: r.refund });
       return r;
     },
-    // Stage 1 → 2 (Rank D; no Rank yet, so only the debug path calls it). The floor grows forward; nothing moves.
+    // The next stage at once (the tests, and Stage 1 → 2 as since Milestone 10). The floor grows; nothing moves; the
+    // access check runs again (and the M10 nudge fix-up, logged, if anything ever failed).
     upgrade() {
       const r = layout.upgrade();
       if (!r.ok) return r;
       relayout();
-      bus?.emit('home:stage', { stage: r.stage.n, name: r.stage.name });
+      const fixed = afterUpgrade(r.stage);
+      bus?.emit('home:stage', { stage: r.stage.n, name: r.stage.name, art: r.stage.art, fixed });
+      return { ...r, fixed };
+    },
+    // Milestone 24: what the next stage needs → { next, parts: [{ text, ok }], ok (every part met), cost, days }
+    upgradeStatus: () => upgradeStatus(),
+    // Start building the next stage: its Credits now, its floor opens after its building days (none: at once). The
+    // real unlock (Rank, accreditation) comes in Milestone 26: debug = ?debug=1 lets it through. → { ok, reason }
+    startUpgrade({ debug = false } = {}) {
+      const u = upgradeStatus();
+      if (!u.next) return { ok: false, reason: 'The home is at its largest stage' };
+      if (layout.building) return { ok: false, reason: `Stage ${layout.building.to} is being built: ready on day ${layout.building.doneDay + 1}` };
+      if (!u.ok && !debug) return { ok: false, reason: u.parts.filter((x) => !x.ok).map((x) => x.text).join(' · ') };
+      if (ledger.balance < u.cost) return { ok: false, reason: `Not enough Credits: it costs ${u.cost.toLocaleString('en-GB')}` };
+      if (u.cost) pay(-u.cost, `Build: Stage ${u.next.n}, ${u.next.name}`, 'build');
+      if (!u.days) return world.build.upgrade();
+      layout.setBuilding({ to: u.next.n, startDay: clock.totalDays, doneDay: clock.totalDays + u.days });
+      bus?.emit('home:building', { stage: u.next.n, name: u.next.name, doneDay: clock.totalDays + u.days });
+      bus?.emit('home:layout', { version: layout.version }); // (the site appears)
+      return { ok: true, reason: null, building: layout.building };
+    },
+    get building() {
+      return layout.building;
+    },
+    // Wings (Milestone 24): paint (on) or clear (off) a rectangle of floor → { ok, reason, changed }
+    paintWing(id, rect, on = true) {
+      const r = layout.wings.paint(id, rect, on);
+      if (r.ok) {
+        relayout();
+        wingOpened();
+      }
       return r;
     },
     findSpot: (defId, near, uid) => layout.findSpot(defId, near, uid),

@@ -11,6 +11,8 @@
 //   peaks      its demand profile: the task types (data/tasks.js) that peak on it (shown on the roster sheet)
 //   clinical   rn: a Registered Nurse must be on it · onCall: …or an RN on call (the roster's on-call switch for that
 //              shift, with an RN on the team) will do while the home is small (data/balance.js ON_CALL)
+import { WINGS_SPECIAL } from './wings.js';
+
 export const SHIFT_TEMPLATES = {
   morning: {
     name: 'Morning',
@@ -46,7 +48,9 @@ export const OFF = 'off'; // the roster's Off column: on the team, on no shift (
 // Wings (bible §14 "staff to wings/zones"). One for now; Milestone 24 adds more. rooms: the room ids in it (data/home.js
 // ROOM_IDS). A staff member assigned to a wing (and not a float) counts as "assigned to" every resident living in it
 // for the task AI's second rule (bible §15).
-export const WINGS = [{ id: 'home', name: 'Home', rooms: 'all' }]; // (Milestone 10: every room, wherever it is built)
+// Milestone 24: the four specialist wings join it (data/wings.js). Which rooms are in a wing is the layout's (the painted
+// tiles): the home world gives the roster that rule; every room not in a specialist wing is in the Home wing.
+export const WINGS = [{ id: 'home', name: 'Home', short: 'Home', rooms: 'all' }, ...WINGS_SPECIAL.map((w) => ({ id: w.id, name: w.name, short: w.short, rooms: [] }))]; // (Milestone 10: every room, wherever it is built)
 export const DEFAULT_WING = 'home';
 
 // Safe Coverage Points (bible §14).
