@@ -77,6 +77,9 @@ import { createTopBar } from '../../../core/ui/TopBar.js';
 import { createBottomBar } from '../../../core/ui/BottomBar.js';
 import { VfxSystem } from '../../../core/VfxSystem.js';
 import { BOTTOM_SLOTS, bottomRoute, TOP_ICONS, RANK_NONE, CARE_ICONS, TOP_SHEETS, SPEED_LOCKED, PORTRAIT_CROP } from '../data/bars.js';
+import { SCORES, RANK_OPENS, RANK_BEAT, SPEED_UNLOCKS, QUALITY_ART, INSPECTION } from '../data/quality.js';
+import { accreditationById } from '../data/accreditations.js';
+import { PEERS } from '../data/peers.js';
 import { ECONOMY_START } from '../data/balance.js';
 import { createCarePops, createDayBeat } from './ui/carePops.js';
 import { ASSETS } from '../data/assets.js';
@@ -515,14 +518,14 @@ const topBar = createTopBar({
     return [
       { icon: TOP_ICONS.credits, text: credits(b), color: b < 0 ? COL.bad : COL.text, gap: 18 },
       { icon: TOP_ICONS.careTokens, text: String(open?.world?.economy?.tokens ?? e.careTokens ?? 0), gap: 18 }, // (Milestone 22: Care Tokens, shown only)
-      { text: `Rank ${RANK_NONE}` },
+      { text: `Rank ${open?.world?.quality?.rank ?? RANK_NONE}` }, // (Milestone 26: the real Rank)
     ];
   },
   onStats: () => openLedger(),
   onInbox: () => openInbox(),
   inboxCount: () => inboxCountNow(), // (Milestone 25c: + new care equipment; inboxBase() below)
   onHelp: () => openTopSheet('help'),
-  onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_LOCKED, accent: COL.progress, sections: [] })),
+  onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_UNLOCKS[speed]?.text ?? SPEED_LOCKED, accent: COL.progress, sections: [] })), // (Milestone 26: bible §3)
 });
 // Care's badge (Milestone 6: a count): the call bells ringing now plus the missed tasks today the player hasn't looked
 // at yet (opening the resident list or a resident's card counts as looking).
@@ -698,7 +701,7 @@ function openBottom(id) {
   else if (r.sheet === 'roster') openRoster();
   else if (r.slot.id === 'business') openBusiness();
   else if (r.slot.id === 'develop') openDevelop();
-  else if (r.slot.id === 'quality') openQuality(); // (Milestone 19: Compliments & complaints)
+  else if (r.slot.id === 'quality') openQuality(); // (Milestone 26: scores, Rank, accreditation, benchmark, inspections)
   else openPlaceholder(r.slot);
   lastRoute = r.sheet;
 }
@@ -1026,6 +1029,8 @@ function openInbox() {
   // (Milestone 25c: care equipment that arrived since the Inbox was last opened — shown while it stays open)
   const fresh = open?.world?.items ? [...open.world.items.unseen()] : [];
   open?.world?.items?.markSeen();
+  const freshQuality = open?.world?.quality ? [...open.world.quality.unseen()] : []; // (Milestone 26: inspection results)
+  open?.world?.quality?.markSeen();
   sheet.open(() => {
     const w = open?.world;
     if (!w) return { title: 'Inbox', subtitle: TOP_SHEETS.inbox.text, accent: COL.progress, sections: [] };
@@ -1036,6 +1041,7 @@ function openInbox() {
     // Milestone 22: Emergency Credit / a Rescue Investor
     for (const o of w.economy.offers()) sections.push(offerSection(w, o, (m) => (message = m)));
     sections.push(...incidentInbox(w)); // (Milestone 25: an event waiting for a choice; after-reports)
+    sections.push(...qualityInbox(w, freshQuality)); // (Milestone 26: inspection results)
     sections.push(...partnerInbox(w)); // (Milestone 23: partnership offers)
     // Milestone 18: alerts — the six high-level choices
     for (const a of w.clinical.alerts()) sections.push(alertSection(w, a, 'inbox'));
@@ -1337,7 +1343,7 @@ function clinicalLedger(w, range) {
   return { title: 'Clinical Safety', lines: [
     { text: `Clinical Safety: ${s.score} / 100 (round safety ${s.round}, health checks ${s.obs}%, alerts resolved well ${s.well}%)`, color: scoreColour(s.score) },
     { text: `Visiting clinician and hospital service this month: ${fees.length} · ${sum ? '−' : ''}${credits(-sum)} Credits`, color: fees.length ? COL.bad : COL.textMuted },
-    { text: 'The home\'s quality scores arrive in a later update; this one is shown for now.', color: COL.textMuted },
+    { text: `The headline Clinical Safety score (the month's average, Quality tab): ${Math.round(w.quality.scores().clinicalSafety)}`, color: COL.textMuted }, // (Milestone 26)
   ] };
 }
 // --- Milestone 19: family trust, visits, meetings, compliments and complaints ----------------------------------------------
@@ -1418,9 +1424,164 @@ function complaintSection(w, c, from) {
   if (nextOwner && team.length > 1) buttons.push({ id: `complaint:${from}:owner:${c.id}`, label: 'Change owner', sub: `Hand it to ${first(nextOwner.name)}`, accent: COL.progress, onTap: () => w.family.setOwner(c.id, nextOwner.id) });
   return { title: `${first(c.name)}: ${COMPLAINTS[c.kind]?.title ?? 'Complaint'}`, titleDot: imp.ok ? COL.good : COL.warn, lines, columns: 2, buttons };
 }
+// --- Milestone 26: Quality — the five headline scores, Rank, accreditations, inspections and the peer homes ---------------
+// Everything shown here is worked out from what the home really did (src/systems/quality.js): the player's only action is
+// "Apply", which books an inspection; the inspection judges the home as it is on the day.
+const STATUS_WORDS = { won: 'Awarded', applied: 'Inspection booked', ready: 'Ready to apply', records: 'A month of records first', cooldown: 'Re-apply after the cooldown', locked: 'Locked' };
+const dateWord = (w, d) => {
+  const x = w.clock.dateOf(d);
+  return `Year ${x.year}, Month ${x.month}, day ${x.day}`;
+};
+function accreditationSub(w, a) {
+  const Q = w.quality;
+  if (a.status === 'won') return `Awarded ${dateWord(w, a.day)}`;
+  if (a.status === 'applied') return `Inspection ${aheadWord(w, a.inspectionDay)}`;
+  if (a.status === 'locked') return `Needs Rank ${a.def.rank}`;
+  if (a.status === 'cooldown') return `Fell short · apply again ${aheadWord(w, a.until)}`;
+  if (a.status === 'records') return 'The inspectors want a month of records first';
+  return a.check.pass ? 'Ready: today the home would pass' : `Not yet: ${a.check.lines.filter((l) => !l.ok).length} thing${a.check.lines.filter((l) => !l.ok).length === 1 ? '' : 's'} short${Q.applied() ? '' : ''}`;
+}
+function qualityTabs(w) {
+  const Q = w.quality;
+  const s = Q.scores();
+  const nx = Q.nextRank();
+  const pct = nx ? Math.max(0, Math.min(100, (100 * Q.reputation) / nx.need)) : 100;
+  const scoreSections = [
+    { title: `Rank ${Q.rank}`, lines: [
+      { text: `Reputation ${Q.reputation.toLocaleString('en-GB')}${nx ? ` · Rank ${nx.rank} at ${nx.need.toLocaleString('en-GB')}${nx.accreditations ? ` and ${nx.accreditations} accreditation${nx.accreditations === 1 ? '' : 's'} (${nx.have} won)` : ''}` : ' · the highest rank'}`, color: COL.actionDark },
+      ...(nx ? [{ text: `Rank ${nx.rank} opens: ${RANK_OPENS[nx.rank]}`, color: COL.textMuted }] : []),
+      { text: 'Reputation grows from good scores held month after month, routine reviews and accreditations. It never drops below your rank.', color: COL.textMuted },
+    ], bars: nx ? [{ label: `To Rank ${nx.rank}`, value: pct, color: COL.progress, text: `${Math.round(pct)}%` }] : [] },
+    ...SCORES.map((sc) => ({ lines: [{ text: `What moves this: ${sc.moves}`, color: COL.textMuted }], bars: [{ label: sc.name, value: s[sc.id], color: scoreColour(s[sc.id]), text: `${Math.round(s[sc.id])}` }] })),
+    { lines: [{ text: 'Each score is the average of the last month, so one good or bad day never swings it.', color: COL.textMuted }], columns: 1, buttons: [{ id: 'quality:parts', label: 'What makes up each score', sub: 'Every part and its weight, from the home’s own records', icon: QUALITY_ART.icon, accent: COL.progress, onTap: () => openScoreParts() }, { id: 'quality:complaints', label: 'Compliments & complaints', sub: `${w.family.open().length} open · ${w.family.compliments().length} compliments`, icon: FAMILY_ICONS.complaint, accent: COL.action, onTap: () => openComplaints() }] },
+    ...(debug.enabled ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'quality:debugRank', label: `Rank up (debug): now ${Q.rank}`, sub: 'Its reputation floor at once; ranks never go down', disabled: !nx, accent: COL.progress, onTap: () => {
+      Q.stepRankForDebug();
+      autosave.request('debug');
+    } }] }] : []),
+  ];
+  const accSections = [
+    { lines: [{ text: 'Apply once you reach an accreditation’s Rank. An inspection comes a few days later and looks at what really happened: the last month’s scores, essential care, unsafe shifts and complaints. Nothing to fill in.', color: COL.textMuted }], columns: 1, buttons: Q.accreditations().map((a) => ({ id: `acc:${a.def.id}`, label: `${a.def.id} ${a.def.name}`, sub: `${STATUS_WORDS[a.status]} · ${accreditationSub(w, a)}`, icon: a.def.art, accent: a.status === 'won' ? COL.good : a.status === 'ready' && a.check.pass ? COL.action : COL.progress, badge: a.status === 'ready' && a.check.pass ? '!' : null, onTap: () => openAccreditation(a.def.id) })) },
+  ];
+  const bench = Q.benchmark();
+  const peers = Q.peers();
+  const rec = Q.recognition();
+  const lastYear = rec.years.at(-1);
+  const nameOfPeer = (id) => (id === 'home' ? open.data.facility.name : PEERS.find((p) => p.id === id)?.name ?? id);
+  const benchSections = [
+    { lines: [{ text: peers.length ? `Your home against the ${peers.length} peer home${peers.length === 1 ? '' : 's'} in the network. They are a yardstick only: they never take residents, staff or funding.` : 'No peer homes yet.', color: COL.textMuted }], bars: bench.map((b) => ({ label: b.name, value: b.home, color: scoreColour(b.home), text: `${Math.round(b.home)}`, tick: b.peerAvg ?? undefined })) },
+    { title: 'Score by score', lines: bench.map((b) => ({ text: b.of ? `${b.name}: you ${Math.round(b.home)} · peers ${Math.round(b.peerAvg)} on average · best ${b.best.name} ${Math.round(b.best.v)}${b.ahead ? ` (${b.ahead} of ${b.of} ahead)` : ' (you lead)'}` : `${b.name}: you ${Math.round(b.home)}`, color: b.ahead ? COL.actionDark : COL.good })) },
+    { title: 'Peer homes', columns: 1, buttons: peers.map((p) => ({ id: `peer:${p.def.id}`, label: p.def.name, sub: `${p.def.identity} · strong in ${p.def.strength} · average ${Math.round(p.avg)}`, icon: p.def.logo, accent: COL.progress, onTap: () => openPeer(p.def.id) })) },
+    { title: 'Recognition table', lines: lastYear ? [{ text: `Year ${lastYear.year}: ${lastYear.table.map((r) => `${r.place}. ${nameOfPeer(r.id)} ${Math.round(r.avg)}`).join(' · ')}`, color: COL.actionDark }, { text: `All years (points): ${rec.table.map((r) => `${nameOfPeer(r.id)} ${r.points}`).join(' · ')}`, color: COL.textMuted }] : [{ text: 'The first table comes at the end of Year 1: every home placed by the average of its five scores.', color: COL.textMuted }] },
+  ];
+  const insp = [...Q.inspections()].reverse();
+  const inspSections = [
+    { lines: [{ text: `A routine review comes at the end of each year and grades the home (A–D, or S). Incidents handled never count against the home.${Q.applied() ? ` Booked: ${accreditationById(Q.applied().id).name}, ${aheadWord(w, Q.applied().day)}.` : ''}`, color: COL.textMuted }] },
+    ...(insp.length ? insp.slice(0, 8).map((x) => inspectionSection(w, x)) : [{ lines: [{ text: 'No inspections yet.', color: COL.textMuted }] }]),
+  ];
+  return [
+    { id: 'scores', label: 'Scores', sections: scoreSections },
+    { id: 'accreditation', label: 'Accreditation', badge: Q.accreditations().filter((a) => a.status === 'ready' && a.check.pass).length || null, sections: accSections },
+    { id: 'benchmark', label: 'Benchmark', sections: benchSections },
+    { id: 'inspections', label: 'Inspections', badge: Q.unseen().length || null, sections: inspSections },
+  ];
+}
+function inspectionSection(w, x) {
+  const a = x.id ? accreditationById(x.id) : null;
+  const title = x.kind === 'routine' ? `Routine review: grade ${x.grade} (${x.total} / 100)` : `${a.name}: ${x.pass ? 'awarded' : 'fell short'}`;
+  const lines = [{ text: `${dateWord(w, x.day)}${x.kind === 'routine' && x.reputation ? ` · Reputation +${x.reputation}` : ''}${x.pass && a ? ` · ${a.reward.text}` : ''}`, color: COL.textMuted }];
+  const shown = x.kind === 'accreditation' && !x.pass ? x.lines.filter((l) => !l.ok) : x.lines;
+  if (x.kind === 'accreditation' && !x.pass) lines.push({ text: 'What fell short:', color: COL.bad });
+  for (const l of shown) lines.push({ text: `${l.info ? '·' : l.ok ? '✓' : '✗'} ${l.text}`, color: l.info ? COL.textMuted : l.ok ? COL.good : COL.bad });
+  return { title, titleDot: x.pass ? COL.good : COL.warn, lines };
+}
+function openQuality(tab = null) {
+  open?.world?.quality.markSeen();
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const s = w.quality.scores();
+    const low = SCORES.reduce((m, sc) => (s[sc.id] < s[m.id] ? sc : m), SCORES[0]);
+    return { title: 'Quality', subtitle: `Rank ${w.quality.rank} · ${w.quality.wonIds().length} accreditation${w.quality.wonIds().length === 1 ? '' : 's'} · lowest: ${low.name} ${Math.round(s[low.id])}`, art: QUALITY_ART.icon, accent: accentNow(), tabs: qualityTabs(w) };
+  });
+  if (tab) sheet.setTab(tab);
+}
+function openScoreParts() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const s = w.quality.scores();
+    return { title: 'What makes up each score', subtitle: 'Yesterday’s readings, each from the home’s own records', art: QUALITY_ART.icon, accent: accentNow(), sections: SCORES.map((sc) => ({ title: `${sc.name}: ${Math.round(s[sc.id])} (the month)`, bars: w.quality.parts(sc.id).map((p) => ({ label: `${p.label} ×${p.weight}`, value: p.value, color: scoreColour(p.value), text: `${Math.round(p.value)}` })) })) };
+  });
+}
+let accMessage = null;
+function openAccreditation(id) {
+  accMessage = null;
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: '', sections: [] };
+    const a = w.quality.accreditations().find((x) => x.def.id === id);
+    const past = w.quality.inspections().filter((x) => x.id === id).slice(-1);
+    const can = a.status === 'ready';
+    return {
+      title: a.def.name,
+      subtitle: `${a.def.id} · Rank ${a.def.rank} · ${STATUS_WORDS[a.status]}`,
+      art: a.def.art,
+      accent: a.status === 'won' ? COL.good : accentNow(),
+      sections: [
+        { lines: [{ text: a.def.text, color: COL.actionDark }, { text: `Reward: ${a.def.reward.text}`, color: COL.good }, ...(accMessage ? [{ text: accMessage, color: COL.bad }] : [])] },
+        { title: a.status === 'won' ? 'What the inspection found then' : 'What an inspection would find today', lines: (a.status === 'won' && past.length ? past[0].lines : a.check.lines).map((l) => ({ text: `${l.info ? '·' : l.ok ? '✓' : '✗'} ${l.text}`, color: l.info ? COL.textMuted : l.ok ? COL.good : COL.bad })) },
+        ...(past.length && a.status !== 'won' ? [inspectionSection(w, past[0])] : []),
+        ...(a.status === 'won' ? [] : [{ columns: 1, buttons: [{ id: `acc:apply:${id}`, label: a.status === 'applied' ? `Inspection ${aheadWord(w, a.inspectionDay)}` : 'Apply for an inspection', sub: can ? `The inspectors come in ${INSPECTION.daysOut} days and look at the home as it is then` : accreditationSub(w, a), disabled: !can, accent: COL.action, onTap: () => {
+          const r = w.quality.apply(id);
+          accMessage = r.ok ? null : r.reason;
+          if (r.ok) {
+            dayBeat.showText(`Inspection booked: ${a.def.name}, ${aheadWord(w, r.day)}`, true);
+            autosave.request('quality');
+          }
+        } }] }]),
+      ],
+    };
+  });
+}
+function openPeer(id) {
+  sheet.open(() => {
+    const w = open?.world;
+    const p = w?.quality.peers().find((x) => x.def.id === id);
+    if (!p) return { title: '', sections: [] };
+    const s = w.quality.scores();
+    return { title: p.def.name, subtitle: `${p.def.identity} · strong in ${p.def.strength} · in the network since Year ${p.def.year}`, art: p.def.logo, accent: COL.progress, sections: [
+      { lines: [{ text: 'A peer home in the benchmark network: a yardstick, never a rival for your residents, staff or funding.', color: COL.textMuted }], bars: SCORES.map((sc) => ({ label: sc.name, value: p.scores[sc.id], color: COL.progress, text: `${Math.round(p.scores[sc.id])}`, tick: s[sc.id] })) },
+      { lines: [{ text: 'The mark on each bar is your home.', color: COL.textMuted }] },
+    ] };
+  });
+}
+// The Inbox's quality items: inspection results not yet seen (they stay until Quality or the Inbox is opened).
+function qualityInbox(w, fresh) {
+  return fresh.map((x) => ({ ...inspectionSection(w, x), columns: 1, buttons: [{ id: `inbox:quality:${x.uid}`, label: 'Open Quality', sub: x.kind === 'routine' ? 'Scores, Rank and inspections' : 'Accreditation', icon: QUALITY_ART.icon, accent: COL.progress, onTap: () => openQuality(x.kind === 'routine' ? 'inspections' : 'accreditation') }] }));
+}
+// Milestone 26: rank-ups and awards are big moments; a peer joining, a booked inspection, a shortfall are quiet lines.
+bus.on('quality:rankUp', ({ rank }) => {
+  if (!open) return;
+  bigBeat = { title: `Rank ${rank}`, text: `Opens ${RANK_BEAT[rank]}`, art: QUALITY_ART.rankUp, age: 0 }; // (the full list: Quality → Scores)
+  autosave.request('rank');
+});
+bus.on('quality:award', ({ id, name, art, finale }) => {
+  if (!open) return;
+  const rw = accreditationById(id).reward; // (a short line: the beat does not wrap; the full reward is on its card)
+  bigBeat = { title: name, text: `Awarded · Reputation +${rw.reputation} · ${rw.credits.toLocaleString('en-GB')} Credits`, art: finale ? QUALITY_ART.finale : art, age: 0 };
+  autosave.request('award');
+});
+bus.on('quality:inspection', ({ id, kind, pass, grade }) => {
+  if (!open || router.currentName !== 'home') return;
+  if (kind === 'routine') dayBeat.showText(`The routine review: grade ${grade} (Inbox)`, grade !== 'D');
+  else if (!pass) dayBeat.showText(`${accreditationById(id).name}: the inspection fell short — see what to work on (Inbox)`, false);
+});
+bus.on('quality:peer', ({ name }) => {
+  if (open && router.currentName === 'home' && !dayBeat.current && !bigBeat) dayBeat.showText(`${name} joins the benchmark network (Quality → Benchmark)`, true);
+});
 // Quality → Compliments & complaints: the home's Family Trust, open improvement tasks with their trails, the resolved ones,
 // and the compliments list.
-function openQuality() {
+function openComplaints() {
   sheet.open(() => {
     const w = open?.world;
     if (!w) return { title: '', sections: [] };
@@ -1477,7 +1638,7 @@ function familyInbox(w) {
       } },
     ] });
   }
-  for (const c of w.family.unseen()) out.push({ title: `A complaint from ${c.from}`, titleDot: COL.warn, lines: [{ text: c.text, color: COL.actionDark }, { text: `Improvement task: ${c.fixText} · no Credits lost`, color: COL.textMuted }], columns: 1, buttons: [{ id: `complaint:inbox:${c.id}`, label: 'Open the improvement task', sub: 'Quality → Compliments & complaints', accent: COL.action, onTap: () => openQuality() }] });
+  for (const c of w.family.unseen()) out.push({ title: `A complaint from ${c.from}`, titleDot: COL.warn, lines: [{ text: c.text, color: COL.actionDark }, { text: `Improvement task: ${c.fixText} · no Credits lost`, color: COL.textMuted }], columns: 1, buttons: [{ id: `complaint:inbox:${c.id}`, label: 'Open the improvement task', sub: 'Quality → Compliments & complaints', accent: COL.action, onTap: () => openComplaints() }] });
   return out;
 }
 const familyWaiting = () => (open?.world?.family ? open.world.family.asks().length + open.world.family.requests().length + open.world.family.unseen().length : 0);
@@ -1497,7 +1658,7 @@ function familyDeskSections(w) {
     ...(low.length ? [{ text: `Lowest trust: ${low.map((x) => `${first(x.p.name)} ${Math.round(x.t)}`).join(' · ')}`, color: COL.textMuted }] : []),
   ];
   const waiting = familyWaiting();
-  return [{ title: 'Families', lines, bars: t == null ? [] : [{ label: 'Family Trust', value: t, color: trustColour(t), text: `${Math.round(t)}` }], columns: 1, buttons: [{ id: 'desk:quality', label: 'Compliments & complaints', sub: `${w.family.open().length} open · ${w.family.compliments().length} compliments${waiting ? ` · ${waiting} in the Inbox` : ''}`, icon: FAMILY_ICONS.complaint, accent: COL.action, onTap: () => openQuality() }] }];
+  return [{ title: 'Families', lines, bars: t == null ? [] : [{ label: 'Family Trust', value: t, color: trustColour(t), text: `${Math.round(t)}` }], columns: 1, buttons: [{ id: 'desk:quality', label: 'Compliments & complaints', sub: `${w.family.open().length} open · ${w.family.compliments().length} compliments${waiting ? ` · ${waiting} in the Inbox` : ''}`, icon: FAMILY_ICONS.complaint, accent: COL.action, onTap: () => openComplaints() }] }];
 }
 // --- Milestone 16: mobility, rehab goals, falls risk, discharge ----------------------------------------------------------
 const REHAB_COLOUR = { 'Ready to go home': COL.good, 'On track': COL.good, Slow: COL.warn, 'Just started': COL.actionDark };
@@ -1974,7 +2135,7 @@ function confirmSell(it) {
     },
   });
 }
-// The next stage (debug for now: Rank comes in Milestone 26). Stage 2 opens at once; Stages 3–5 cost Credits and take a
+// The next stage (Milestone 26: its real unlock; ?debug=1 lets it through). Stage 2 opens at once; Stages 3–5 cost Credits and take a
 // few days of building while the home keeps running. The big moment comes when the floor opens ('home:stage').
 function upgradeStage() {
   const w = open?.world;
@@ -3283,6 +3444,7 @@ const MENU_OPEN = {
   develop: () => openDevelop(),
   research: () => openResearch(),
   quality: () => openQuality(),
+  complaints: () => openComplaints(), // (Milestone 26: Quality is the hub now)
   family: () => placedOf('F09') && openHomeSheet(placedOf('F09').id),
   business: () => openBusiness(),
   partners: () => openPartners(),
@@ -3341,7 +3503,7 @@ function inboxBase() {
   return (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting() + (open?.world?.economy?.offers().length ?? 0) + (open?.world?.partners?.offers().length ?? 0) + emergencyWaiting();
 }
 function inboxCountNow() {
-  return inboxBase() + (open?.world?.items?.unseen().length ?? 0);
+  return inboxBase() + (open?.world?.items?.unseen().length ?? 0) + (open?.world?.quality?.unseen().length ?? 0); // (Milestone 26: inspection results)
 }
 
 // The next-step hint line (data/menu.js NEXT_HINTS): the first that holds is shown; tapping it opens the right sheet.
@@ -3360,6 +3522,7 @@ function hintRules() {
     { id: 'dining', text: NEXT_HINTS.dining, when: () => !placedOf('F03'), open: () => openBuildList() },
     { id: 'kitchen', text: NEXT_HINTS.kitchen, when: () => !placedOf('F04') && !placedOf('F16'), open: () => openBuildList() },
     { id: 'plan', text: () => NEXT_HINTS.plan(first(W().residentById(stale()[0]?.resident)?.name ?? 'A resident')), when: () => stale().length > 0, open: () => openHomeSheet(stale()[0].resident) },
+    { id: 'accredit', text: () => NEXT_HINTS.accredit(W().quality.accreditations().find((a) => a.status === 'ready' && a.check.pass).def.name), when: () => !W().quality.applied() && W().quality.accreditations().some((a) => a.status === 'ready' && a.check.pass), open: () => openQuality('accreditation') }, // (Milestone 26)
     { id: 'item', text: () => NEXT_HINTS.item(W().items.count), when: () => W().items.count > 0, open: () => openItemStore() },
     { id: 'partner', text: NEXT_HINTS.partner, when: () => W().partners.offers().length > 0, open: () => openPartners() },
     { id: 'inbox', text: () => NEXT_HINTS.inbox(inboxCountNow()), when: () => inboxCountNow() > 0, open: () => openInbox() },
@@ -3574,7 +3737,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

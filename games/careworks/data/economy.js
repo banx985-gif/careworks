@@ -43,7 +43,7 @@ export const ROOM_FEES = { RM01: 1000, RM02: 1100, RM03: 1250, RM04: 1000, RM05:
 export const RESPITE_FUNDING = { perMonth: 550 };
 // Not built yet: shown on the Ledger as "comes later" and never paid.
 export const STUB_INCOME = {
-  recognition: { name: 'Recognition bonuses', milestone: 'M26' },
+  // (Milestone 26: recognition bonuses are paid — each accreditation won, data/accreditations.js)
 };
 
 // --- costs --------------------------------------------------------------------------------------------------------------
@@ -99,7 +99,7 @@ export const LEDGER_ROWS = [
   { cat: 'grants', name: 'Grants and service contracts', icon: 'care_ui_05', kind: 'income' }, // (Milestone 23)
   { cat: 'partnerSupport', name: 'Partner support', icon: 'care_ui_05', kind: 'income' }, // (Milestone 23: on signing)
   { cat: 'partnerPerk', name: 'Partner perks (savings)', icon: 'care_ui_03', kind: 'income' }, // (Milestone 23)
-  { cat: 'recognition', name: 'Recognition bonuses (later)', icon: 'care_reward_02', kind: 'income' },
+  { cat: 'recognition', name: 'Recognition bonuses', icon: 'care_reward_02', kind: 'income' }, // (Milestone 26: accreditations won)
   { cat: 'loan', name: 'Emergency Credit', icon: 'care_ui_05', kind: 'income' },
   { cat: 'investor', name: 'Rescue Investor', icon: 'care_ui_05', kind: 'income' },
   { cat: 'sell', name: 'Sold (50% back)', icon: 'care_ui_03', kind: 'income' },

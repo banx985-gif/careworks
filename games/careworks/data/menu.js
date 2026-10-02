@@ -24,7 +24,8 @@ export const MENU_GROUPS = [
     row('research', 'Research', 'Spend Research Points on new care, places and programs', 'care_ui_03'),
   ] },
   { title: 'Quality and family', rows: [
-    row('quality', 'Compliments and complaints', 'Family feedback and the improvement tasks it sets', 'care_ui_04'),
+    row('quality', 'Quality', 'Headline scores, Rank, accreditation, benchmarks and inspections', 'care_ui_28'),
+    row('complaints', 'Compliments and complaints', 'Family feedback and the improvement tasks it sets', 'care_ui_04'),
     row('family', 'Family', 'The Reception / Family Desk: visits, meetings and Family Trust', 'care_ui_10'),
   ] },
   { title: 'Business', rows: [
@@ -55,6 +56,7 @@ export const NEXT_HINTS = {
   kitchen: 'Place a Kitchen so meals are cooked here: tap for Build Mode',
   plan: (name) => `${name}’s care plan is due for review: tap to open it`,
   activities: 'Plan the week’s activities: tap for the timetable',
+  accredit: (name) => `The home would pass the ${name} inspection today: tap to apply`, // (Milestone 26)
   item: (n) => `${n} piece${n === 1 ? '' : 's'} of care equipment in the store: tap to give one`,
   partner: 'A community partner has made an offer: tap to see it',
   upgrade: 'A facility can be upgraded: tap it, then Upgrade',

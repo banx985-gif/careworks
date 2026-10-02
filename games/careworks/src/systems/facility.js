@@ -88,6 +88,7 @@ export function slotSummary(data) {
     month: when.month,
     ngPlus: data.ngPlus ?? 0,
     residents: Array.isArray(data.residents) ? data.residents.length : 1, // Milestone 6
+    rank: ['E', 'D', 'C', 'B', 'A', 'S'][data.care?.quality?.rep?.highestRankIndex ?? 0] ?? 'E', // (Milestone 26)
     playSec: data.playSec ?? 0,
   };
 }
@@ -248,6 +249,7 @@ export const SAVE_MIGRATIONS = {
   23: (record) => record, // (Milestone 24: no wings painted = the one Home wing; nothing being built; the stage as it was)
   24: (record) => record, // (Milestone 25: no incident state = nothing under way, supplies at their starting stock, no past events or falls)
   25: (record) => record, // (Milestone 25c: no levels = every piece at Level I; no item state = an empty store, likes from each person's role)
+  26: (record) => record, // (Milestone 26: no quality state = the scores worked out from the home as it is; Rank E, or the rank its stage / Level II–III pieces / debug partner rank already need)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

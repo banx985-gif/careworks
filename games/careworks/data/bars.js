@@ -13,7 +13,7 @@ export const BOTTOM_SLOTS = [
   },
   {
     id: 'quality', label: 'Quality', icon: 'care_ui_04', opens: 'placeholder',
-    title: 'Quality', text: 'Compliments & complaints (Milestone 19: src/main.js opens it); accreditation, benchmarks against peer homes and your records will live here too.',
+    title: 'Quality', text: 'The five headline scores, Rank, accreditation, the peer-home benchmark and inspections (Milestone 26: src/main.js openQuality), with compliments & complaints. Your records (the Memory Book) will live here too.',
   },
   {
     id: 'business', label: 'Business', icon: 'care_ui_05', opens: 'placeholder',
@@ -27,7 +27,7 @@ export function bottomRoute(id) {
   return s ? { sheet: s.opens, slot: s } : null;
 }
 
-// Top bar: the stats chip's icons (numbers only until the economy, Milestone 22). Rank shows "—" until ranks exist.
+// Top bar: the stats chip's icons (numbers only until the economy, Milestone 22). Rank (Milestone 26) shows "—" only with no home open.
 export const TOP_ICONS = { credits: 'care_reward_01', careTokens: 'care_reward_02' };
 export const RANK_NONE = '—';
 

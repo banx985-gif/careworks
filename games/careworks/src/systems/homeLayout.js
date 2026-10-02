@@ -179,11 +179,13 @@ export function createLayout({ saved = null, bus = null } = {}) {
 
   // --- unlocks, capacity ---------------------------------------------------------------------------------------------
   let researched = () => false; // (Milestone 21: the home world says which research nodes are done)
+  let rankOk = () => false; // (Milestone 26: the home world says whether the home has reached a Rank)
   function unlock(defId) {
     const d = defOf(defId);
     if (!d || d.secret) return { ok: false, reason: 'Unknown' };
     if (d.unlock.type === 'start' || s.debugUnlock) return { ok: true, reason: null };
     if (d.unlock.type === 'research' && d.unlock.node && researched(d.unlock.node)) return { ok: true, reason: null };
+    if (d.unlock.type === 'rank' && rankOk(d.unlock.value)) return { ok: true, reason: null }; // (Milestone 26)
     // (Milestone 24: a wing unlock — the wing's own hub needs the wing painted; its rooms need the wing working)
     const w = d.unlock.type === 'wing' ? wingById(d.unlock.value) : null;
     if (w) {
@@ -478,6 +480,9 @@ export function createLayout({ saved = null, bus = null } = {}) {
     unlock,
     setResearchCheck(fn) {
       researched = fn ?? (() => false);
+    },
+    setRankCheck(fn) {
+      rankOk = fn ?? (() => false);
     },
     check,
     place,

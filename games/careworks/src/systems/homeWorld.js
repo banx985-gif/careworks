@@ -66,6 +66,11 @@
 // tasks, an urgent transfer through the M18 alert path; every event ends on its own with an after-report. Falls switch
 // on the M16 falls risk (help → the nurse's check → a few days' rest → family told → the plan flagged). Emergency
 // supplies (a stock level and a standing order). world.incidents is the API.
+// Milestone 26: quality, Rank, accreditations and the peer homes (src/systems/quality.js, data/quality.js,
+// data/accreditations.js, data/peers.js): each midnight qualityInputs() hands the quality system one snapshot of what
+// really happened (care done, outcomes, Trust, Morale, Preparedness …); the five headline scores are its rolling
+// one-month averages; Rank comes from reputation (sustained scores, inspections, accreditations) and opens the gates the
+// earlier milestones kept shut until now. world.quality is the API.
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
@@ -132,7 +137,7 @@ import { createItems, newItemsState } from './items.js';
 import { ITEM_SOURCES, ITEM_RULES } from '../../data/items.js';
 const ITEM_RULES_SEASON = ITEM_RULES.seasonMonths;
 import { staffById } from '../../data/staff.js';
-import { RANK_NOW, rankAtLeast } from '../../data/recruitment.js';
+import { rankAtLeast } from '../../data/recruitment.js';
 import { taskPct, matchesTask, familiarPct } from './traitEffects.js';
 import { compatibility, addFriendship, areFriends, topFriends, groupMembers, favouriteOf, familiarEffects, friendshipOf } from './relationships.js';
 import { FRIENDSHIP, CONTINUITY, ACTIVITY_GROUPS, SEATING } from '../../data/relationships.js';
@@ -165,6 +170,8 @@ import { createPartners, environmentScore } from './partners.js';
 import { PILOT } from '../../data/partners.js';
 import { incidentById, FALLS_INCIDENT, INCIDENT_TASKS, PREPAREDNESS } from '../../data/incidents.js';
 import { createIncidents, ensureIncidents, fallChance } from './incidents.js';
+import { createQuality, ensureQualityState } from './quality.js';
+import { READINGS } from '../../data/quality.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
 // own live layout; these are for older saves' upgrades and the tests.
@@ -260,6 +267,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   let economy = null; // (Milestone 22: made with the ledger, below)
   let partners = null; // (Milestone 23: made with the ledger, below)
   let incidents = null; // (Milestone 25: made with the partners, below)
+  let quality = null; // (Milestone 26: made with the economy, below)
   let ic = null; // (Milestone 25: care.incidents)
   const pp = (key) => partners?.perk(key) ?? 0; // (Milestone 23: an active partner's perk)
   // Milestone 22: a resident's Support Level, from their assessed needs (at admission; an older or test resident: their
@@ -269,7 +277,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // (the nursing supplement: their assessed Clinical/Nursing need asks for a nurse on every shift)
   const nursingOf = (p) => (p.state.assessed ?? p.def.needs).clinical > ON_CALL.clinicalNeedAbove;
   const moodAvgOf = (p) => (p.state.moodMonth?.n ? p.state.moodMonth.sum / p.state.moodMonth.n : null);
-  const rb = (key) => research?.bonus(key) ?? 0;
+  const rb = (key) => (research?.bonus(key) ?? 0) + (quality?.bonus(key) ?? 0); // (Milestone 26: + accreditation rewards)
 
   // --- the residents ---------------------------------------------------------------------------------------------
   // A resident's person: { kind: 'resident', id, name, art, line, def, state (their saved state), agent }.
@@ -2794,6 +2802,14 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   layout.setResearchCheck((id) => research.has(id)); // (Build Mode: a facility research opens)
   // --- the economy (Milestone 22) ---------------------------------------------------------------------------------------
   economy = createEconomy({ ledger, care, bus, today: () => clock.totalDays });
+  // --- quality, Rank, accreditations, inspections and peer homes (Milestone 26) ---------------------------------------
+  care.quality = ensureQualityState(care.quality);
+  const qualityFresh = !care.quality.samples.length; // (a new home, or an M25c save: worked out from the home as it is, below)
+  quality = createQuality({ state: care.quality, seed, bus, today: () => clock.totalDays, year: () => clock.year, onAward: (a) => {
+    if (a.reward.credits) ledger.economy.add('credits', a.reward.credits, `Recognition bonus: ${a.name}`, 'recognition'); // (bible §27)
+    staffState.founder.history.recognitions = (staffState.founder.history.recognitions ?? 0) + 1; // (bible §3.5.5)
+  } });
+  layout.setRankCheck((r) => rankAtLeast(rankNow(), r)); // (Build Mode: a rank-locked room or facility opens)
   // --- community partners and grants (Milestone 23) ----------------------------------------------------------------------
   // The home's Nutrition outcome (the residents' average dining satisfaction; null before anyone has eaten here) and its
   // Environment score (room quality and cleanliness — src/systems/partners.js environmentScore).
@@ -2814,7 +2830,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     today: () => clock.totalDays,
     hooks: {
       reward: (kind, info) => items.rollSource(kind, { why: info.name }), // (Milestone 25c)
-      rank: () => rankNow,
+      rank: () => rankNow(),
       score: (name) => (name === 'nutrition' ? nutritionOutcome() : name === 'environment' ? environmentNow().score : null),
       buildable: (id) => hasPiece(id) || layout.unlock(id).ok,
       emergency: () => !!(economy.state.debt.loan || economy.state.debt.investor) || !!ic?.active || (ic?.lastEnd != null && clock.totalDays - ic.lastEnd < 28), // (Milestone 25: recovery grants after an event too)
@@ -3218,13 +3234,75 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (clin < M.clinical || mood < M.mood) return 0;
     return research.addRp(M.rp, `A good month of care (${label})`, 'month');
   }
+  // --- quality inputs (Milestone 26) ------------------------------------------------------------------------------------
+  // One day's snapshot of what really happened, for the five headline scores, inspections and accreditations
+  // (src/systems/quality.js turns the counts into readings). Every number is read from game state the earlier milestones
+  // already keep; none can be set by the player except by running the home.
+  function qualityInputs(day) {
+    const here = seated();
+    const n = here.length;
+    const mean = (f) => (n ? here.reduce((t, p) => t + f(p), 0) / n : null);
+    const tasks = care.tasks.filter((t) => t.day === day && t.essential);
+    const crewNow = team();
+    const crewMean = (f) => (crewNow.length ? crewNow.reduce((t, q) => t + f(q), 0) / crewNow.length : null);
+    const recs = staffState.coverage.history.filter((h) => h.day === day);
+    const prep = incidents.prep();
+    const training = prep.parts.find((x) => x.key === 'training');
+    const env = environmentNow();
+    const trainedOn = care.quality.trainedOn;
+    const recently = (q) => (trainedOn[q.id] != null && day - trainedOn[q.id] <= READINGS.trainedDays) || (staffing.specialtiesOf(q.id) ?? []).length > 0;
+    const programDays = {};
+    for (const [id, run] of Object.entries(progState.running ?? {})) programDays[id] = Math.max(0, day + 1 - (run.since ?? day + 1));
+    return {
+      residents: n,
+      clinical: clinicalScore(cl, day).score,
+      essential: { done: tasks.filter((t) => t.status === 'done').length, missed: tasks.filter((t) => t.status === 'missed').length },
+      falls28: (ic?.falls ?? []).filter((f) => f.day > day - 28 && f.day <= day).length,
+      infection: training ? (100 * training.value) / training.max : 0,
+      mood: mean((p) => p.state.outcomes.mood),
+      comfort: mean((p) => p.state.outcomes.comfort),
+      independence: mean((p) => p.state.outcomes.independence),
+      connection: mean((p) => p.state.outcomes.connection),
+      choice: n ? here.filter((p) => day - (p.state.lastLikedDay ?? day) < OUTCOME.noLikedDays).length / n : null,
+      trust: homeTrust(care.families, here.map((p) => p.id)),
+      overdue: fh.complaints.filter((c) => c.status === 'open' && day > c.due).length,
+      compliments: fh.compliments.filter((k) => k.day > day - READINGS.complimentDays && k.day <= day).length,
+      morale: crewMean((q) => q.model.morale),
+      energy: crewMean((q) => q.model.energy),
+      shifts: { safe: recs.filter((h) => h.safe).length, total: recs.length },
+      trained: crewNow.length ? crewNow.filter(recently).length / crewNow.length : 0,
+      continuity: n ? here.filter((p) => crewNow.some((q) => inGroup(q.id, p.id))).length / n : 0,
+      rooms: env.room,
+      clean: env.clean,
+      preparedness: prep.score,
+      plansCurrent: n ? here.filter((p) => !staleReasons(p.state, day).length).length / n : 1,
+      nutrition: nutritionOutcome(),
+      unsafe: recs.filter((h) => h.steps.includes('unsafe')).length,
+      community: !!acts.state.bookings[day] && !!acts.session(day, 'afternoon'),
+      rehabDischarges: care.rewards?.discharges?.length ?? 0,
+      programDays,
+      incidentsEnded: (ic?.history ?? []).filter((h) => Math.floor(h.end / 24) === day).length,
+    };
+  }
+  // A new home, or an older (M25c) save: the window filled from the home as it is now, and a rank floor that keeps what
+  // the save already has — the rank its stage needs, Level II / III pieces (Rank D / C), the M23 debug partner rank.
+  function startQuality() {
+    const floors = [care.partners?.debugRank ?? null];
+    if (layout.stage > 1) floors.push(STAGES[layout.stage - 1].unlock.value);
+    const top = Math.max(1, ...layout.pieces.map((pc) => layout.levelOf(pc.uid) ?? 1));
+    if (top >= 2) floors.push(LEVELS.rank[top - 1]);
+    for (const r of floors.filter(Boolean)) quality.setRankForTests(r);
+    quality.prime(qualityInputs(clock.totalDays - 1));
+  }
   // --- recruitment and training (Milestone 11) -------------------------------------------------------------------------
-  // The home's Rank for the eligibility rules (Milestone 12). Rank is Milestone 26's: always E until then; the Node
-  // tests set it with world.setRankForTests.
-  let rankNow = RANK_NOW;
-  staffing = createStaffing({ state: staffState, sys, ledger, seed, bus, today: () => clock.totalDays, year: () => clock.year, teamSize: () => crew.people.filter((q) => !q.agency && !q.leftTeam).length, trainingPlaces: () => layout.ofDef('F11').length * TRAINING.placesPerRoom, rank: () => rankNow, hasFacility: (defId) => layout.ofDef(defId).length > 0, trainingPct: () => pp('trainingDaysPct') }); // (Milestone 23)
+  // The home's Rank (Milestone 26: the real one, from world.quality; the Node tests set it with world.setRankForTests).
+  function rankNow() {
+    return quality.rank;
+  }
+  staffing = createStaffing({ state: staffState, sys, ledger, seed, bus, today: () => clock.totalDays, year: () => clock.year, teamSize: () => crew.people.filter((q) => !q.agency && !q.leftTeam).length, trainingPlaces: () => layout.ofDef('F11').length * TRAINING.placesPerRoom, rank: () => rankNow(), hasFacility: (defId) => layout.ofDef(defId).length > 0, trainingPct: () => pp('trainingDaysPct'), score: (id) => quality.scores()[id] ?? null, clue: () => quality.has('eliteClue') }); // (Milestone 23; Milestone 26: the real Rank and §5 scores)
   staffing.onTrained((s, c, gains, specialty) => {
     roster.setTraining(s.id, false);
+    care.quality.trainedOn[s.id] = clock.totalDays; // (Milestone 26: Staff Wellbeing reads who trained lately)
     partners?.record('staffTrained', { staff: s.id, course: c.id }); // (Milestone 23)
     // (Milestone 25c: a great training effort — gains at least 80% of the most the course could give — may bring an item)
     const most = Object.values(COURSES.find((x) => x.id === c.id)?.gains ?? {}).reduce((t, [, mx]) => t + mx, 0);
@@ -3431,6 +3509,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     partners.daily(day); // (Milestone 23: deals end, new offers, grants met or past their deadline)
     incidents.daily(day); // (Milestone 25: emergency supplies; perhaps an event later today)
     fallsDay(day); // (Milestone 25: rest after a fall over — handled well gives the family's Trust back)
+    quality.daily(day, qualityInputs(day - 1)); // (Milestone 26: yesterday into the rolling scores; inspections; peers)
     for (const p of inSession()) p.state.diet = dietOf(p.state);
     bus?.emit('care:dayEnd', world.daySummary(day - 1));
     if (shortStaffing) coverage.dayEnd(day - 1); // care recovery for yesterday's missed essential tasks (Milestone 7)
@@ -3453,6 +3532,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const closeSum = (cats) => (closed ?? []).filter((l) => cats.includes(l.category)).reduce((t, l) => t + l.amount, 0);
       partners.noteSaving('equipmentPct', closeSum(['equipment']));
       partners.noteSaving('adminPct', closeSum(['upkeep', 'utilities']));
+      // (Milestone 26: an accreditation's Care Support Funding bonus, as its own line)
+      const fundPct = quality.bonus('fundingPct');
+      const funded = closeSum(['funding']);
+      if (fundPct && funded > 0) ledger.economy.add('credits', Math.round((funded * fundPct) / 100), `Safe Care Accreditation: Care Support Funding +${fundPct}%`, 'funding');
       partners.monthClosed(day);
       if (monthRp(`Month ${d.month}, Year ${d.year}`) > 0) economy.award('goodMonth'); // (Milestone 21; Milestone 22: a Care Token)
       economy.monthClosed({ month: `Month ${d.month}, Year ${d.year}` }); // (Milestone 22: loan, investor, history, offers)
@@ -3517,9 +3600,14 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     return q;
   }
 
+  clock.speedAllowed = (sp) => quality.speedAllowed(sp); // (Milestone 26: bible §3)
   let lastDay = clock.totalDays;
   const world = {
     items, // (Milestone 25c: care equipment)
+    get quality() {
+      return quality; // (Milestone 26: headline scores, Rank, accreditations, inspections, peers)
+    },
+    qualityInputsForTests: (day = clock.totalDays - 1) => qualityInputs(day),
     grid,
     placed,
     props,
@@ -3572,7 +3660,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return { ok: true, reason: null, person: q };
     },
     setRankForTests(r) {
-      rankNow = r;
+      return quality.setRankForTests(r);
     },
     // (Milestone 25c, tests: the Staff Room's rest bonus as it is now — × its level)
     restBonusForTests: () => restBonusNow(),
@@ -4395,6 +4483,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       acts.serialize(); // (Milestone 14: the timetable, sessions, bookings, community notices, birthdays)
       research.serialize(); // (Milestone 21: the tree, its slots and progress, into care.research)
       partners.serialize(); // (Milestone 23: deals, tiers, history, the grant board and active grants, into care.partners)
+      quality.serialize(); // (Milestone 26: the rolling scores, rank, accreditations, inspections, peers, into care.quality)
       staffState.pos = crew.positions();
       staffState.modes = crew.modes();
       staffState.bandDone = Object.fromEntries(crew.people.map((q) => [q.id, q.bandDone ?? 0]));
@@ -4454,12 +4543,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     bus?.emit('home:layout', { version: layout.version });
   }
   // --- stages 3–5 and wings (Milestone 24) -----------------------------------------------------------------------------
-  // What the next stage needs. Rank (and the C03 accreditation) come in Milestone 26, so those parts are never met yet;
-  // the parts the game can already check (a specialist program running, Year 13) show as they are.
+  // What the next stage needs (Milestone 26: the real Rank, and C03 for Stage 3), plus a specialist program running
+  // (Stage 4) or Year 13 (Stage 5).
   function upgradeStatus() {
     const next = STAGES[layout.stage] ?? null;
     if (!next) return { next: null, parts: [], ok: false, cost: 0, days: 0 };
-    const parts = [{ text: next.unlock.check ? `Rank ${next.unlock.value} (Rank comes in a later update)` : `${next.unlock.text} (Rank comes in a later update)`, ok: false }];
+    const parts = [{ text: `Rank ${next.unlock.value} (now Rank ${rankNow()})`, ok: rankAtLeast(rankNow(), next.unlock.value) }];
+    if (next.unlock.accreditation) parts.push({ text: `The ${next.unlock.accreditationName} (${next.unlock.accreditation})`, ok: quality.won(next.unlock.accreditation) });
     if (next.unlock.check === 'program') parts.push({ text: 'A specialist program running', ok: Object.keys(progState.running).length > 0 });
     if (next.unlock.check === 'year') parts.push({ text: `Year ${next.unlock.year} or later (now Year ${clock.year})`, ok: clock.year >= next.unlock.year });
     return { next, parts, ok: parts.every((x) => x.ok), cost: next.cost ?? 0, days: next.buildDays ?? 0 };
@@ -4529,7 +4619,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       }
     }
     // the team, then everyone the home can take
-    rankNow = 'S';
+    quality.setRankForTests('S');
     staffing.setCapForDebug(Math.max(staffTarget, team().length));
     staffing.setEliteUnlock(true);
     staffing.setDebug(true); // (every channel open)
@@ -4616,8 +4706,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     // Milestone 24: what the next stage needs → { next, parts: [{ text, ok }], ok (every part met), cost, days }
     upgradeStatus: () => upgradeStatus(),
-    // Start building the next stage: its Credits now, its floor opens after its building days (none: at once). The
-    // real unlock (Rank, accreditation) comes in Milestone 26: debug = ?debug=1 lets it through. → { ok, reason }
+    // Start building the next stage: its Credits now, its floor opens after its building days (none: at once). Its
+    // unlock (Rank, accreditation, …) must be met; debug = ?debug=1 lets it through. → { ok, reason }
     startUpgrade({ debug = false } = {}) {
       const u = upgradeStatus();
       if (!u.next) return { ok: false, reason: 'The home is at its largest stage' };
@@ -4657,7 +4747,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       let block = null;
       if (pending) block = `Upgrading to Level ${LEVELS.names[pending.to - 1]}: ready on day ${pending.doneDay + 1}`;
       else if (!next) block = 'Already at the top level (III)';
-      else if (next.rank && !rankAtLeast(rankNow, next.rank) && !layout.debugUnlock) block = `Level ${LEVELS.names[next.level - 1]} needs Rank ${next.rank} (ranks arrive in a later update)`;
+      else if (next.rank && !rankAtLeast(rankNow(), next.rank) && !layout.debugUnlock) block = `Level ${LEVELS.names[next.level - 1]} needs Rank ${next.rank} (now Rank ${rankNow()})`;
       else if (ledger.balance < next.cost) block = `Not enough Credits: it costs ${next.cost.toLocaleString('en-GB')}`;
       return { level, max: LEVELS.max, mult: levelMultOf(p.defId, level), pending, next, nextMult: next ? levelMultOf(p.defId, next.level) : null, block, invested: layout.invested(uid), scaled: !LEVELS.unscaled.includes(p.defId) };
     },
@@ -4677,5 +4767,6 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     upgradePending: (uid) => layout.upgradePending(uid),
   };
   if (fixedUp.length) relayout();
+  if (qualityFresh) startQuality(); // (Milestone 26)
   return world;
 }

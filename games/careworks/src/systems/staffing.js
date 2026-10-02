@@ -45,7 +45,7 @@ export function ensureStaffingState(saved) {
 const toCoreCourse = (c) => ({ id: c.id, name: c.name, cost: c.cost, days: c.days, requires: null, effect: c.gains ? { kind: 'stats', stats: c.gains } : { kind: 'lowest', count: c.lowest.count, min: c.lowest.min, max: c.lowest.max } });
 const cardOf = (d) => ({ personId: d.id, name: d.name, role: d.role, tier: d.tier, level: d.level, stats: { ...d.stats }, salary: d.salary, trait: namedTrait(d), traits: [...d.traits], shiftPref: d.shiftPref, art: d.art });
 
-export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = null, today = () => 0, year = () => 1, teamSize = () => sys.staff.length, trainingPlaces = () => 0, rank = () => RANK_NOW, hasFacility = () => false, score = () => null, trainingPct = () => 0 }) {
+export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = null, today = () => 0, year = () => 1, teamSize = () => sys.staff.length, trainingPlaces = () => 0, rank = () => RANK_NOW, hasFacility = () => false, score = () => null, trainingPct = () => 0, clue = () => false }) {
   state.staffing = ensureStaffingState(state.staffing);
   const st = state.staffing;
 
@@ -64,8 +64,14 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
       case 'candidate':
         return { ok: true, reason: null };
       case 'rank':
-      case 'milestone':
         return rankOk(r.rank) ? { ok: true, reason: null } : { ok: false, reason: `Needs Rank ${r.rank}` };
+      case 'milestone': {
+        // (Milestone 26: Rank D and the role's own headline score held at its line)
+        if (!rankOk(r.rank)) return { ok: false, reason: `Needs Rank ${r.rank}` };
+        if (st.debug || r.score == null) return { ok: true, reason: null };
+        const v = score(r.score);
+        return v != null && v >= r.min ? { ok: true, reason: null } : { ok: false, reason: `Needs ${r.text.replace(/^Rank \w \+ /, '').replace(/ \(.*\)$/, '')} (now ${v == null ? '—' : Math.round(v)})` };
+      }
       case 'facility':
         if (st.eliteUnlock) return { ok: true, reason: null };
         if (!rankOk(r.rank)) return { ok: false, reason: `Needs Rank ${r.rank}` };
@@ -74,7 +80,8 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
         if (st.eliteUnlock) return { ok: true, reason: null };
         if (!rankOk(r.rank)) return { ok: false, reason: `Needs Rank ${r.rank}` };
         const v = score(r.score);
-        return v != null && v >= r.min ? { ok: true, reason: null } : { ok: false, reason: `Needs ${r.text.replace(/^Rank \w \+ /, '')}` };
+        // (Milestone 26: the Workforce Excellence clue shows how close the score is)
+        return v != null && v >= r.min ? { ok: true, reason: null } : { ok: false, reason: `Needs ${r.text.replace(/^Rank \w \+ /, '')}${clue() ? ` (now ${v == null ? '—' : Math.round(v)})` : ''}` };
       }
       default:
         return { ok: false, reason: 'Unknown rule' };
@@ -121,10 +128,11 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
   const channelState = (c) => {
     if (c.unlock.type === 'start') return { ok: true, reason: null };
     if (st.debug && c.unlock.type !== 'condition') return { ok: true, reason: null };
+    if (c.unlock.type === 'rank' && rankAtLeast(rank(), c.unlock.value)) return { ok: true, reason: null }; // (Milestone 26)
     return { ok: false, reason: c.unlock.text };
   };
-  let capDebug = null; // (Milestone 24: ?debug=1 "Fill to cap" grows the team past Rank E's cap; never saved)
-  const cap = () => capDebug ?? EMPLOYEE_CAP[RANK_NOW];
+  let capDebug = null; // (Milestone 24: ?debug=1 "Fill to cap" grows the team past the Rank's cap; never saved)
+  const cap = () => capDebug ?? EMPLOYEE_CAP[rank()] ?? EMPLOYEE_CAP[RANK_NOW]; // (Milestone 26: the real Rank's cap)
 
   // --- training ------------------------------------------------------------------------------------------------------
   let onDone = null;
@@ -213,7 +221,7 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
     takeDirect(defId) {
       const d = staffById(defId);
       if (!d || !eligible(d).ok) return { ok: false, reason: 'Not eligible', card: null };
-      if (teamSize() >= cap()) return { ok: false, reason: `The team is at its cap (${cap()} at Rank ${RANK_NOW})`, card: null };
+      if (teamSize() >= cap()) return { ok: false, reason: `The team is at its cap (${cap()} at Rank ${rank()})`, card: null };
       if (employed().has(d.id) || never().has(d.id)) return { ok: false, reason: 'Not available', card: null };
       rs.board = rs.board.filter((c) => c.personId !== d.id);
       st.hires.push({ id: d.id, day: today(), channel: 'debug' });
@@ -235,7 +243,7 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
     canHire(cardId) {
       const c = rs.get(cardId);
       if (!c) return { ok: false, reason: 'They are no longer on the board' };
-      if (teamSize() >= cap()) return { ok: false, reason: `The team is at its cap (${cap()} at Rank ${RANK_NOW})` };
+      if (teamSize() >= cap()) return { ok: false, reason: `The team is at its cap (${cap()} at Rank ${rank()})` };
       if (employed().has(c.personId)) return { ok: false, reason: 'Already on the team' };
       return { ok: true, reason: null };
     },

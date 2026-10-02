@@ -14,6 +14,7 @@
 //     (Legendary) or two (Secret) ordinary ones from their role's Elite traits, so their tier's trait slots are used.
 import { ROLES, STAT_IDS, TIERS } from './roles.js';
 import { ROLE_LIKES } from './items.js';
+import { ROLE_MILESTONES, scoreById } from './quality.js'; // (Milestone 26: a role milestone reads its headline score)
 
 const stats = (s) => Object.fromEntries(s.split('/').map((v, i) => [STAT_IDS[i], Number(v)]));
 
@@ -26,9 +27,10 @@ export const RULES = {
   start: () => ({ type: 'start', text: 'Start staff' }),
   candidate: () => ({ type: 'candidate', text: 'Start candidate' }),
   rank: (rank) => ({ type: 'rank', rank, text: `Rank ${rank}` }),
-  milestone: (role) => ({ type: 'milestone', role, rank: 'D', pendingSystem: 'M26', text: `A ${ROLES[role].short.toLowerCase()} role milestone (Rank D until Milestone 26)` }),
+  // (Milestone 26: Rank D and the role's own headline score held at the line — data/quality.js ROLE_MILESTONES)
+  milestone: (role) => ({ type: 'milestone', role, rank: 'D', score: ROLE_MILESTONES[role].score, min: ROLE_MILESTONES[role].min, text: `Rank D + ${scoreById(ROLE_MILESTONES[role].score).name} ${ROLE_MILESTONES[role].min}+ (a ${ROLES[role].short.toLowerCase()} role milestone)` }),
   facility: (rank, facility, name) => ({ type: 'facility', rank, facility, text: `Rank ${rank} + a ${name}` }),
-  excellence: (rank, score, min, name) => ({ type: 'excellence', rank, score, min, pendingSystem: 'M26', text: `Rank ${rank} + ${name} ${min}+` }),
+  excellence: (rank, score, min, name) => ({ type: 'excellence', rank, score, min, text: `Rank ${rank} + ${name} ${min}+` }),
   secret: (secret) => ({ type: 'secret', secret, text: 'Arrives by itself when the home earns it' }),
 };
 export const RULE_TYPES = ['start', 'candidate', 'rank', 'milestone', 'facility', 'excellence', 'secret'];

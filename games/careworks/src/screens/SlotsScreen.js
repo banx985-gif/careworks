@@ -1,6 +1,6 @@
 // Campaign Slots (Milestone 0, bible §3.5.1): the four slot cards. An occupied card shows the palette accent strip,
 // the Founder portrait (code-drawn placeholder) with name and role, the facility name, "Facility Director <name>" and
-// Year / Month (Rank, NG+, grade and resident count stay hidden until those systems exist). An empty card says NEW
+// Year / Month and Rank (Milestone 26; NG+, grade and resident count stay hidden until those systems exist). An empty card says NEW
 // FACILITY and opens Facility Setup for that slot. A slot that will not read can only be deleted.
 // Two modes: 'browse' (Play / Delete — Delete asks first) and 'new' (pick where the new facility goes: an empty slot,
 // or Replace on an occupied one; START FACILITY asks again before anything is overwritten).
@@ -107,7 +107,7 @@ export function createSlotsScreen({ layout, cards, last, onBack, onPlay, onDelet
       ty += 52 * k;
       text(ctx, `Founder: ${m.founderRole}`, tx, ty, { size: S.small, color: C.textMuted, maxWidth: tw });
       ty += 46 * k;
-      text(ctx, `Year ${m.year} · Month ${m.month}`, tx, ty, { size: S.body, bold: true, color: C.actionDark, maxWidth: tw });
+      text(ctx, `Year ${m.year} · Month ${m.month} · Rank ${m.rank ?? 'E'}`, tx, ty, { size: S.body, bold: true, color: C.actionDark, maxWidth: tw }); // (Milestone 26: Rank)
     }
   }
 

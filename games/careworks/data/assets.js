@@ -19,6 +19,9 @@ import { PARTNERS } from './partners.js';
 import { WINGS_SPECIAL } from './wings.js';
 import { INCIDENTS } from './incidents.js';
 import { ITEM_TYPES } from './items.js';
+import { ACCREDITATIONS } from './accreditations.js';
+import { PEERS } from './peers.js';
+import { QUALITY_ART } from './quality.js';
 
 const art = (folder, key) => [key, `assets/images/${folder}/${key}.png`];
 
@@ -67,6 +70,11 @@ export const ASSETS = {
   // reuse (care equipment, rewards, UI icons). The rest of the items are code placeholders until their files exist.
   ...Object.fromEntries(Array.from({ length: 30 }, (_, i) => art('ui', `care_ui_${String(i + 1).padStart(2, '0')}`))),
   ...Object.fromEntries(ITEM_TYPES.filter((t) => !t.art.startsWith('care_item_')).map((t) => art({ care_equipment: 'equipment', care_reward: 'rewards', care_ui: 'ui' }[t.art.replace(/_[0-9]+$/, '')], t.art))),
+  // Milestone 26: the ten visible award icons (C11 / C12 are secret: not loaded), the seven peer logos (R08 secret), the
+  // national finale picture
+  ...Object.fromEntries(ACCREDITATIONS.map((x) => art('awards', x.art))),
+  ...Object.fromEntries(PEERS.map((p) => art('logos', p.logo))),
+  ...Object.fromEntries([art('events', QUALITY_ART.finale), art('vfx', QUALITY_ART.confetti)]),
   // Milestone 0 loader test (?screen=test): the placeholder PWA icon as a real image, and one deliberately missing file.
   m0Real: 'assets/branding/pwa/icon-192.png',
   m0Missing: 'assets/m0-missing-test.png',
