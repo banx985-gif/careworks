@@ -61,7 +61,7 @@ export function roundSafety({ cln = 100, queued = 0, nurses = 1, stops = 1, medR
   out.training = trained ? S.trained : 0;
   out.alerts = Math.max(S.alertCap, alerts * S.alertEach);
   const sum = S.base + out.nurse + out.workload + out.medRoom + out.complexity + out.training + out.alerts;
-  const mult = (1 + (medRoom ? S.medRoomPct : 0) / 100) * (1 + (governance ? S.governancePct : 0) / 100);
+  const mult = (1 + (medRoom ? S.medRoomPct * +medRoom : 0) / 100) * (1 + (governance ? S.governancePct * +governance : 0) / 100); // (Milestone 25c: medRoom / governance = their level × — true counts as ×1)
   return { safety: Math.round(clamp(sum * mult)), parts: out, mult: r1(mult * 100) / 100 };
 }
 export const issueChance = (safety) => Math.max(0, (ISSUES.below - safety) * ISSUES.perPoint);
@@ -98,7 +98,7 @@ export function resolveChance(action, severity, { cln = null, complexPct = 0, tr
   const a = ACTIONS[action];
   let p = a.resolve[severity];
   const nurse = action === 'assess' || action === 'escalate';
-  if (nurse && treatmentRoom && severity === 'moderate') p = (p + TREATMENT_ROOM.inHouse) * (1 + TREATMENT_ROOM.pct / 100);
+  if (nurse && treatmentRoom && severity === 'moderate') p = (p + TREATMENT_ROOM.inHouse) * (1 + (TREATMENT_ROOM.pct * +treatmentRoom) / 100); // (Milestone 25c: its level ×)
   if (nurse && cln != null) p += (cln - NURSE_SKILL.pivot) * NURSE_SKILL.perCln;
   if (nurse && complexPct) p *= 1 + complexPct / 100;
   if (action === 'carePlan' && otherOption) p *= a.otherOption;

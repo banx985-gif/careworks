@@ -17,6 +17,7 @@
 //   inc.supplies: { stock, plan, setPlan(id), topUp() } · inc.history() · inc.noteFall(rec) · inc.falls()
 import { INCIDENTS, incidentById, LIMITS, PREPAREDNESS as P, SEVERITY, SUPPLIES, FALLS_INCIDENT, seasonOf, RESPONSE_NEEDS, LEDGER_CATEGORY } from '../../data/incidents.js';
 import { Rng } from '../../../../core/Rng.js';
+import { scaleBonus } from '../../data/facilities.js';
 
 const clamp = (x, lo = 0, hi = 100) => Math.max(lo, Math.min(hi, x));
 const r1 = (x) => Math.round(x * 10) / 10;
@@ -26,7 +27,7 @@ export function preparedness({ infection = 0, leads = 0, hub = false, supplies =
   const parts = [];
   const training = Math.min(P.training.infectionMax, infection * P.training.perInfection) + Math.min(P.training.leadMax, leads * P.training.perLead);
   parts.push({ key: 'training', name: P.training.name, value: Math.min(P.training.max, training), max: P.training.max, raise: P.training.raise, detail: `${infection} with Infection Control, ${leads} with Leadership` });
-  parts.push({ key: 'hub', name: P.hub.name, value: hub ? P.hub.max : 0, max: P.hub.max, raise: P.hub.raise, detail: hub ? 'placed: every event’s impact −15%' : 'not built' });
+  parts.push({ key: 'hub', name: P.hub.name, value: hub ? P.hub.max : 0, max: P.hub.max, raise: P.hub.raise, level: hub ? +hub : 0, detail: hub ? `placed: every event’s impact −${Math.round((1 - scaleBonus(SEVERITY.hubMult, +hub)) * 100)}%` : 'not built' }); // (Milestone 25c: hub = its level ×)
   parts.push({ key: 'supplies', name: P.supplies.name, value: r1((clamp(supplies) / 100) * P.supplies.max), max: P.supplies.max, raise: P.supplies.raise, detail: `stock ${Math.round(supplies)} / 100` });
   const reserve = Math.min(P.reserve.floatsMax, floats * P.reserve.perFloat) + (shifts ? (P.reserve.shiftsMax * Math.min(shiftsOver, shifts)) / shifts : 0);
   parts.push({ key: 'reserve', name: P.reserve.name, value: r1(Math.min(P.reserve.max, reserve)), max: P.reserve.max, raise: P.reserve.raise, detail: `${floats} float${floats === 1 ? '' : 's'}, ${shiftsOver} of ${shifts} shifts above ${P.reserve.overPct}%` });
@@ -74,9 +75,10 @@ export function createIncidents({ state, ledger, bus = null, seed = 'careworks',
     const pr = prep();
     const b = band ?? bandFor(pr.score, tpl);
     const params = { ...tpl.bands[b] };
-    const hub = pr.parts.find((x) => x.key === 'hub').value > 0;
+    const hubPart = pr.parts.find((x) => x.key === 'hub');
+    const hub = hubPart.value > 0;
     const day = Math.floor(at / 24);
-    const ev = { id: `inc${S.nextId++}`, kind: tpl.id, name: tpl.name, band: b, prep: { score: pr.score, parts: pr.parts.map((x) => ({ key: x.key, name: x.name, value: x.value, max: x.max })) }, start: at, day, end: at + params.days * 24, params, mult: hub ? SEVERITY.hubMult : 1, hub, response: null, by: null, respondedAt: null, autoAt: at + LIMITS.autoHours, restored: false, targets: { residents: [], staff: [], facilities: [], resident: null, alert: null }, spent: 0, stats: {}, log: [], forced };
+    const ev = { id: `inc${S.nextId++}`, kind: tpl.id, name: tpl.name, band: b, prep: { score: pr.score, parts: pr.parts.map((x) => ({ key: x.key, name: x.name, value: x.value, max: x.max })) }, start: at, day, end: at + params.days * 24, params, mult: hub ? scaleBonus(SEVERITY.hubMult, hubPart.level || 1) : 1, hub, response: null, by: null, respondedAt: null, autoAt: at + LIMITS.autoHours, restored: false, targets: { residents: [], staff: [], facilities: [], resident: null, alert: null }, spent: 0, stats: {}, log: [], forced };
     const ok = hooks.begin?.(ev) ?? true;
     if (!ok) {
       S.nextId--;

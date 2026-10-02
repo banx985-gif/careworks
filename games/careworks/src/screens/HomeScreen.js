@@ -54,7 +54,7 @@ const DETAIL_STEPS = [0.5, 0.7, 1.0, 1.4];
 const detailFor = (zoom) => DETAIL_STEPS.find((d) => d >= zoom - 1e-3) ?? DETAIL_STEPS[DETAIL_STEPS.length - 1];
 const isPerson = (it) => it.kind === 'resident' || it.kind === 'staff';
 
-export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaign, world: getWorld, openSheet, onMenu, topBar, bottomBar, vfx = null, dayBeat = null, debug = null, onStaffWarning = null, onShop = null, onSell = null, onWings = null }) {
+export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaign, world: getWorld, openSheet, onMenu, topBar, bottomBar, vfx = null, dayBeat = null, debug = null, onStaffWarning = null, onShop = null, onSell = null, onWings = null, hint = null, prefs = {} }) {
   const W = renderer.width;
   const { cellSize: CELL, wallH, innerWallH, margin } = HOME;
   const { halfW: HW, halfH: HH } = HOME.view;
@@ -195,11 +195,21 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   };
   // Milestone 7: the short-staffing banner under the time line (a shift short now, or about to start short); tap → roster.
   const staffWarnings = () => world?.coverage?.warnings?.() ?? [];
+  // Milestone 25c: the next-step hint line (core/ui/HintLine, made in main) sits under the time line; the staff warning
+  // and the day's beat move down below it while it shows.
+  const hintRect = () => {
+    const r = infoRect();
+    return { x: r.x + 24, y: r.y + r.h + 10, w: r.w - 48, h: 64 };
+  };
+  const hintShown = () => !buildMode && !!hint?.current;
+  const underInfo = () => (hintShown() ? hintRect().y + hintRect().h : infoRect().y + infoRect().h);
   const warnRect = () => {
     const r = infoRect();
-    return { x: r.x + 40, y: r.y + r.h + 10, w: r.w - 80, h: 110 };
+    return { x: r.x + 40, y: underInfo() + 10, w: r.w - 80, h: 110 };
   };
-  const onUi = (p) => (buildMode ? hitRect(p, bannerRect()) : topBar.contains(p) || bottomBar.contains(p) || (staffWarnings().length > 0 && hitRect(p, warnRect())));
+  const pref = (k) => (prefs[k] ? prefs[k]() : true); // (Milestone 25c: Settings → name tags, task markers; Low graphics)
+  const lowFx = () => !!prefs.lowFx?.();
+  const onUi = (p) => (buildMode ? hitRect(p, bannerRect()) : topBar.contains(p) || bottomBar.contains(p) || (hintShown() && hint.contains(p)) || (staffWarnings().length > 0 && hitRect(p, warnRect())));
   const overSheet = (p) => sheet.active && p.y >= sheet.rect().y;
 
   // The camera sees the space between the time line and the bottom bar: the bars never cover the home's edges.
@@ -329,7 +339,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       if (slot) return slot;
       const bb = buildMode ? bannerButtons().find((x) => x.id === id) : null;
       if (bb) return bb.rect;
-      return { done: doneRect(), banner: bannerRect(), info: infoRect(), staffWarning: warnRect() }[id] ?? null;
+      return { done: doneRect(), banner: bannerRect(), info: infoRect(), staffWarning: warnRect(), hint: hintRect() }[id] ?? null;
     },
     // Screen point on a person's body or a place's art (tests): the visible middle of what a finger would tap.
     screenPointOf(id) {
@@ -484,6 +494,10 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
         taps.push({ x: p.x, y: p.y, picked: 'bottomBar' });
         return;
       }
+      if (hintShown() && hint.handleTap(p)) {
+        taps.push({ x: p.x, y: p.y, picked: 'hint' });
+        return;
+      }
       if (onStaffWarning && staffWarnings().length && hitRect(p, warnRect())) {
         onStaffWarning();
         taps.push({ x: p.x, y: p.y, picked: 'staffWarning' });
@@ -531,6 +545,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
           const r = artRect(it);
           assets.draw(ctx, it.def.art, ...rectArgs(r));
           pictures.push(r);
+          drawLevelMark(ctx, it); // (Milestone 25c: its level badge, a scaffold while it is being upgraded)
         } else if (it.kind === 'prop') drawProp(ctx, it);
         else {
           if (it.kind === 'visitor') drawVisitor(ctx, it);
@@ -544,10 +559,12 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       camera.restore(ctx);
       drawNight(ctx);
       // Name tags in screen space: always the small text size (28), whatever the zoom.
-      layoutTags(ctx);
-      for (const p of [...shownPeople(), ...shownVisitors()]) drawTag(ctx, p);
+      if (pref('nameTags')) {
+        layoutTags(ctx);
+        for (const p of [...shownPeople(), ...shownVisitors()]) drawTag(ctx, p);
+      }
       drawSiteSign(ctx); // (Milestone 24: a stage being built)
-      drawMarkers(ctx); // a status icon over each staff member (their task, resting, tired); the call bell over Arthur
+      if (pref('taskMarkers')) drawMarkers(ctx); // a status icon over each staff member (their task, resting, tired); the call bell over Arthur
       // The care pops, in the world but over the tags for their second or two (so a name never hides one).
       if (vfx) {
         camera.apply(ctx);
@@ -558,7 +575,8 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       else {
         drawInfo(ctx);
         const warned = drawStaffWarning(ctx);
-        const beatY = warned ? warnRect().y + warnRect().h + 14 : infoRect().y + infoRect().h + 14;
+        if (hintShown()) hint.render(ctx);
+        const beatY = warned ? warnRect().y + warnRect().h + 14 : underInfo() + 14;
         dayBeat?.render(ctx, infoRect().x + 20, beatY, infoRect().w - 40);
         topBar.render(ctx);
         bottomBar.render(ctx);
@@ -846,6 +864,11 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     poseAgent.facing = m.flip;
     const t = poseAgent.state === 'walking' ? m.stride / (MOTION.stride * WALK.speedMultiplier) : animT; // (Milestone 14: longer hops at 5× speed)
     characterPose(poseAgent, t, m.seed, pose, p.kind === 'resident' ? MOTION.resident : MOTION.staff);
+    if (lowFx()) {
+      // (Milestone 25c: Low graphics — simpler figures: no sway or breathing, just a small hop while walking)
+      pose.tilt = 0;
+      if (poseAgent.state !== 'walking') pose.bob = 0;
+    }
     const f = feetOf(p);
     const r = personRect(p);
     // Milestone 15: pushing the Hydration Cart on a drinks round, the dining trolley to a tray (beside them, the way they
@@ -937,6 +960,64 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       if (!hidden) continue;
       if (it.kind === 'visitor') drawVisitor(ctx, it);
       else drawPerson(ctx, it);
+    }
+    ctx.restore();
+  }
+  // Milestone 25c: a piece's level — a small code-drawn badge (II / III) at the front corner of its floor, and while an
+  // upgrade is under way a little scaffold (two poles, two boards) beside it. Level I shows nothing.
+  const ROMAN = ['I', 'II', 'III'];
+  function drawLevelMark(ctx, it) {
+    const lv = world.build?.levelOf?.(it.uid) ?? 1;
+    const pending = world.build?.upgradePending?.(it.uid) ?? null;
+    if (lv <= 1 && !pending) return;
+    const fp = it.fp;
+    const tip = iso.corner(fp.col + fp.w, fp.row + fp.h);
+    ctx.save();
+    if (pending) {
+      const l = iso.corner(fp.col, fp.row + fp.h);
+      const x0 = l.x + (tip.x - l.x) * 0.25;
+      const y0 = l.y + (tip.y - l.y) * 0.25;
+      const H = 150;
+      ctx.lineWidth = 7;
+      ctx.lineCap = 'round';
+      ctx.strokeStyle = '#B8875A';
+      for (const dx of [0, 70]) {
+        ctx.beginPath();
+        ctx.moveTo(x0 + dx, y0 + dx * 0.55);
+        ctx.lineTo(x0 + dx, y0 + dx * 0.55 - H);
+        ctx.stroke();
+      }
+      ctx.strokeStyle = '#E2B04A';
+      ctx.lineWidth = 9;
+      for (const h of [0.45, 0.85]) {
+        ctx.beginPath();
+        ctx.moveTo(x0 - 6, y0 - H * h);
+        ctx.lineTo(x0 + 76, y0 + 38 - H * h);
+        ctx.stroke();
+      }
+    }
+    if (lv > 1) {
+      const R = 30;
+      const cx = tip.x;
+      const cy = tip.y - 26;
+      ctx.fillStyle = lv >= 3 ? '#F2B233' : '#1597BF';
+      ctx.strokeStyle = C.outline;
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - R);
+      ctx.lineTo(cx + R * 0.9, cy - R * 0.45);
+      ctx.lineTo(cx + R * 0.75, cy + R * 0.6);
+      ctx.lineTo(cx, cy + R);
+      ctx.lineTo(cx - R * 0.75, cy + R * 0.6);
+      ctx.lineTo(cx - R * 0.9, cy - R * 0.45);
+      ctx.closePath();
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = '#FFFFFF';
+      ctx.font = font(26, true);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(ROMAN[lv - 1], cx, cy + 2);
     }
     ctx.restore();
   }

@@ -104,7 +104,7 @@ export function warnLead(shiftId) {
 const ACTIVITY_AT = ROUTINE.find((s) => s.activity)?.at ?? 13.5;
 
 // Milestone 24: wings() → [{ id, name, levels }] the residents' levels by wing (none: one Home wing — the shift's number)
-export function createCoverage({ state, roster, team, levels, wings = null, clinicalHigh = () => false, ledger, abs, hire, log: logLine = null, bus = null }) {
+export function createCoverage({ state, roster, team, levels, restBonus = null, wings = null, clinicalHigh = () => false, ledger, abs, hire, log: logLine = null, bus = null }) {
   const cs = state.coverage;
   const B = STAFF_BALANCE.energy;
   const dayOf = (t) => Math.floor(t / 24);
@@ -120,7 +120,7 @@ export function createCoverage({ state, roster, team, levels, wings = null, clin
   function energyAt(p, inst, projected) {
     const e = p.model.energy;
     if (!projected || roster.onShift(p.id)) return e;
-    return clamp(e + B.restPerHour * B.restSpotBonus * Math.max(0, inst.start - abs()));
+    return clamp(e + B.restPerHour * (restBonus ? restBonus() : B.restSpotBonus) * Math.max(0, inst.start - abs())); // (Milestone 25c: the Staff Room's level)
   }
   function assessInstance(inst, { projected = false, without = null } = {}) {
     const staff = roster

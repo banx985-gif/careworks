@@ -52,6 +52,7 @@ export const QUALITY = { base: 50, noKitchen: -15, prep: { onTime: 10, late: 3, 
 // before (the drop never shrinks, so a home without a Kitchen still feeds everyone).
 // avgPull: each resident's running average moves this share of the way to each new meal's score.
 export const SATISFACTION = {
+  officePct: 10, // (Milestone 25c: the Nutrition Office's +10% on a meal's Nutrition, was a literal 1.1 in src/systems/dining.js; × its level)
   mismatch: -25, favourite: 10, favouriteBoost: 2, late: -15, onTimeHours: 0.75, friend: 5, friendsMax: 10, atmosphere: 6, crowded: -10, tray: -5, host: 4, baking: 5,
   moodFrom: 50, moodPer: 25, nutritionFrom: 50, nutritionPer: 0.006, avgPull: 0.25, lowestShown: 3,
 };

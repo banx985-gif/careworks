@@ -93,6 +93,12 @@ export const COMMUNITY_EVENTS = [
   { id: 'choir', name: 'A volunteer choir visits', text: 'The village choir would like to sing for the residents one afternoon.', activity: 'music', liftMult: 1.6, hosts: ['LC', 'CW', 'RN'] },
   { id: 'schoolLetters', name: 'Letters from the school', text: 'A class at the local school has written letters and drawings for the residents; a teacher would bring them in.', activity: 'communityVisit', liftMult: 1.5, hosts: ['LC', 'CW'] },
   { id: 'petTeam', name: 'The pet-therapy team drops in', text: 'A local pet-therapy team can bring two calm dogs for an afternoon.', activity: 'petTherapy', liftMult: 1.6, hosts: ['LC', 'CW'] },
+  // Milestone 25c: partner-hosted events (series §5 sponsor events) — offered only while that community partner has a
+  // deal with the home (data/partners.js), the same notice, Accept / Decline and consent rules as every community event
+  // (no one is ever put in a session they refused). Held, each brings a piece of care equipment (ITEM_SOURCES.partnerEvent).
+  { id: 'greenleafGarden', partner: 'SPN04', name: 'GreenLeaf garden afternoon', text: 'GreenLeaf Community would like to bring seedlings and helpers for an afternoon of planting with the residents.', activity: 'gardening', liftMult: 1.6, hosts: ['LC', 'CW', 'AH'] },
+  { id: 'hearthTasting', partner: 'SPN02', name: 'Hearth Nutrition tasting', text: 'Hearth Nutrition’s chef offers an afternoon tasting of new soft and hearty dishes, with the residents choosing favourites.', activity: 'cooking', liftMult: 1.5, hosts: ['HN', 'LC'] },
+  { id: 'goldenstepBalance', partner: 'SPN01', name: 'GoldenStep balance class', text: 'GoldenStep Mobility offers a gentle seated balance and movement class, with a physio to help.', activity: 'exercise', liftMult: 1.5, hosts: ['AH', 'CW'] },
 ];
 export const COMMUNITY = { noticeDays: 3, gapDays: 8, dailyChance: 0.35 };
 

@@ -70,9 +70,9 @@ export const dietWords = (diet) => DIETS[diet]?.menu ?? DIETS.standard.menu;
 // hospitalityOn: a Hospitality worker is on shift (else care staff serve).
 // (Milestone 20: program — Nutrition Plus's quality points when it runs, 0 otherwise)
 // (Milestone 21: research — the home's research quality points, 0 otherwise)
-export function mealQuality({ kitchen = null, prep = 'none', cook = null, hospitalityOn = true, program = 0, research = 0, incident = 0 }) {
+export function mealQuality({ kitchen = null, prep = 'none', cook = null, hospitalityOn = true, program = 0, research = 0, incident = 0, kitchenMult = 1 }) {
   const parts = { base: QUALITY.base };
-  parts.kitchen = kitchen ? KITCHENS[kitchen].quality : QUALITY.noKitchen;
+  parts.kitchen = kitchen ? KITCHENS[kitchen].quality * kitchenMult : QUALITY.noKitchen; // (Milestone 25c: × the kitchen's level)
   parts.prep = kitchen ? QUALITY.prep[prep] ?? 0 : 0;
   parts.cook = cook ? Math.min(QUALITY.nutMax, Math.max(0, (cook.nut - QUALITY.nutFrom) / QUALITY.nutPer)) + taskPct(cook.traits, 'meal') : 0;
   parts.serve = hospitalityOn ? 0 : QUALITY.careStaffServe;
@@ -97,7 +97,7 @@ export function satisfaction({ quality, mismatch = false, dietPct = 0, favourite
   if (late) parts[tray ? 'lateTray' : 'late'] = S.late;
   if (tray) parts.tray = S.tray;
   else {
-    if (atmosphere) parts.atmosphere = S.atmosphere;
+    if (atmosphere) parts.atmosphere = S.atmosphere * (atmosphere === true ? 1 : atmosphere); // (Milestone 25c: × the Dining Room's level)
     if (friends) parts.friends = Math.min(S.friendsMax, friends * S.friend);
     if (crowded) parts.crowded = S.crowded;
   }
@@ -109,7 +109,7 @@ export function satisfaction({ quality, mismatch = false, dietPct = 0, favourite
   return { sat, parts, reason };
 }
 // A happy diner eats well: × on the meal's Nutrition drop (never below the drop as before; the Nutrition Office: +10%).
-export const nutritionMult = (sat, office = false) => (1 + SATISFACTION.nutritionPer * Math.max(0, sat - SATISFACTION.nutritionFrom)) * (office ? 1.1 : 1);
+export const nutritionMult = (sat, office = false) => (1 + SATISFACTION.nutritionPer * Math.max(0, sat - SATISFACTION.nutritionFrom)) * (office ? 1 + SATISFACTION.officePct * +office / 100 : 1); // (Milestone 25c: office = its level ×; true = ×1)
 export const moodFrom = (sat) => (sat - SATISFACTION.moodFrom) / SATISFACTION.moodPer;
 // Their running dining satisfaction after a meal.
 export function noteMeal(st, rec) {

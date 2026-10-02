@@ -154,6 +154,7 @@ export function createPartners({ care, ledger, bus = null, today = () => 0, seed
     const before = tierOf(id);
     if (rec.result === 'met') {
       st.tiers[id] = Math.min(TIERS.length - 1, before + 1);
+      hooks.reward?.('partner', { id, name: partnerById(id)?.name ?? id, tier: TIERS[st.tiers[id]].name }); // (Milestone 25c: the deal met — a new tier brings care equipment)
       st.misses[id] = 0;
     } else {
       st.misses[id] = (st.misses[id] ?? 0) + 1;
@@ -239,6 +240,7 @@ export function createPartners({ care, ledger, bus = null, today = () => 0, seed
         add(c.payOnComplete, `${LEDGER_CATS.grants}: ${c.name} (goal met)`, 'grants');
         stopPilot(`grant:${c.id}`);
         bus?.emit('partners:grant', { id: c.id, name: c.name, status: 'done' });
+        hooks.reward?.('grant', { id: c.id, name: c.name }); // (Milestone 25c: a grant goal met brings a piece of care equipment)
       },
       onFail(c, reason) {
         add(-c.payOnAccept, `${LEDGER_CATS.grants}: ${c.name} (the advance handed back unused — the goal wasn't met)`, 'grants');

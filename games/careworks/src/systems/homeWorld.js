@@ -106,12 +106,12 @@ import { StaffModel } from '../../../../core/StaffModel.js';
 import { HOME, RESIDENT, ENTRANCE, MAX_FLOOR, STAGES, LOGICAL_CAP } from '../../data/home.js';
 import { createLayout } from './homeLayout.js';
 import { roomById } from '../../data/rooms.js';
-import { facilityById } from '../../data/facilities.js';
+import { facilityById, scaleBonus, LEVELS, levelMultOf } from '../../data/facilities.js';
 import { residentById, NEEDS, supportLevel, RESIDENTS, STAY_LEAVE_HOUR } from '../../data/residents.js';
 import { Rng } from '../../../../core/Rng.js';
 import { DAY, ROUTINE, WAKE, ALL_STEPS, TIMER_SCALE } from '../../data/routine.js';
 import { createActivities, feelingOf, outcomeMult, birthdayOf } from './activities.js';
-import { activityById, TIMETABLE, OUTCOME, BIRTHDAY, SCHEDULABLE } from '../../data/activities.js';
+import { activityById, TIMETABLE, OUTCOME, BIRTHDAY, SCHEDULABLE, COMMUNITY_EVENTS } from '../../data/activities.js';
 import { BELL, FAMILIARITY, BACKUP_HELP } from '../../data/tasks.js';
 import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK } from '../../data/balance.js';
 import { AGENCY } from '../../data/shifts.js';
@@ -127,9 +127,12 @@ import { createCrew } from './staffCrew.js';
 import { createAdmissions, stayLengthFor, varied, prereqOf } from './admissions.js';
 import { createLedger } from './ledger.js';
 import { createStaffing } from './staffing.js';
-import { SPECIALTIES, TRAINING } from '../../data/training.js';
+import { SPECIALTIES, TRAINING, COURSES } from '../../data/training.js';
+import { createItems, newItemsState } from './items.js';
+import { ITEM_SOURCES, ITEM_RULES } from '../../data/items.js';
+const ITEM_RULES_SEASON = ITEM_RULES.seasonMonths;
 import { staffById } from '../../data/staff.js';
-import { RANK_NOW } from '../../data/recruitment.js';
+import { RANK_NOW, rankAtLeast } from '../../data/recruitment.js';
 import { taskPct, matchesTask, familiarPct } from './traitEffects.js';
 import { compatibility, addFriendship, areFriends, topFriends, groupMembers, favouriteOf, familiarEffects, friendshipOf } from './relationships.js';
 import { FRIENDSHIP, CONTINUITY, ACTIVITY_GROUPS, SEATING } from '../../data/relationships.js';
@@ -249,7 +252,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const room = rooms[Math.floor(Math.max(0, i) / 2) % rooms.length];
     return `${room.id}.trainee${(Math.max(0, i) % 2) + 1}`;
   };
-  const crew = createCrew({ grid, state: staffState, sys, perks, roster, spotTile: spot, hourNow, bandNow: () => bandAt(hourNow()), bus, trainingSpot, trainingLabel: (id) => staffing?.trainingOf(id) ? staffing.training.course(staffing.trainingOf(id).courseId)?.name ?? 'a course' : 'a course', energyMult: () => 1 + rb('energyPct') / 100 }); // (Milestone 21: Shift Planning)
+  // Milestone 25c: the Staff Room's rest bonus × its level (the bonus part: ×1.2 → ×1.3 at Level II)
+  const restBonusNow = () => scaleBonus(STAFF_BALANCE.energy.restSpotBonus, lvOf('F08') || 1);
+  const crew = createCrew({ restBonus: () => restBonusNow(), grid, state: staffState, sys, perks, roster, spotTile: spot, hourNow, bandNow: () => bandAt(hourNow()), bus, trainingSpot, trainingLabel: (id) => staffing?.trainingOf(id) ? staffing.training.course(staffing.trainingOf(id).courseId)?.name ?? 'a course' : 'a course', energyMult: () => 1 + rb('energyPct') / 100 }); // (Milestone 21: Shift Planning)
   let staffing = null; // (Milestone 11: made with the ledger, below)
   let research = null; // (Milestone 21: made with the ledger, below)
   let economy = null; // (Milestone 22: made with the ledger, below)
@@ -289,8 +294,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     for (const tp of THERAPY_PLACES) {
       if (tp.kind === 'facility') {
         const pc = offline(tp.id) ? null : layout.ofDef(tp.id)[0]; // (Milestone 25: not one out of action)
-        if (pc) return { ...tp, piece: pc };
-      } else if (roomList().find((r) => r.id === p.state.room)?.defId === tp.id) return { ...tp, piece: null };
+        if (pc) return { ...tp, piece: pc, mult: scaleBonus(tp.mult, layout.levelMultOf(pc.uid)) }; // (Milestone 25c: its level)
+      } else {
+        const own = roomList().find((r) => r.id === p.state.room);
+        if (own?.defId === tp.id) return { ...tp, piece: null, mult: scaleBonus(tp.mult, layout.levelMultOf(own.uid)) };
+      }
     }
     return { ...THERAPY_NO_SPACE, piece: null };
   };
@@ -431,7 +439,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // The day's activity sessions (the timetable, a booked community event or a birthday) shape each resident's steps:
   // the Afternoon slot is the M2 'cards' step (its name, place, leaders and drops from the day's activity; no activity =
   // free time: no step), the Morning slot adds the morningActivity step between breakfast and the rest.
-  const acts = createActivities({ care, seed, bus, today: () => clock.totalDays, hostFor: (roles) => crew.people.find((q) => !q.agency && !q.leftTeam && roles.includes(q.role) && roster.shiftOf(q.id)?.id === 'afternoon')?.id ?? null });
+  const acts = createActivities({ care, seed, bus, today: () => clock.totalDays, partnerActive: (id) => !!partners?.active().some((a) => a.def.id === id), hostFor: (roles) => crew.people.find((q) => !q.agency && !q.leftTeam && roles.includes(q.role) && roster.shiftOf(q.id)?.id === 'afternoon')?.id ?? null });
   const dayOfYear = (day) => (((day % BIRTHDAY.daysPerYear) + BIRTHDAY.daysPerYear) % BIRTHDAY.daysPerYear) + 1;
   const birthdaysOn = (day) => residents.filter((p) => !p.state.leaving && !p.state.guest && birthdayOf(p.id) === dayOfYear(day)).map((p) => p.id);
   acts.setBirthdayCheck((day) => birthdaysOn(day).length > 0);
@@ -756,7 +764,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const prepDoneNow = prepStatus === 'done' || prepStatus === 'late';
     const cookQ = prepDoneNow && rec.prep.by ? crew.byId(rec.prep.by) : null;
     const hosp = hospitalityOn();
-    const q = mealQuality({ kitchen: kitchen?.defId ?? null, prep: prepStatus === 'done' ? 'onTime' : prepStatus === 'late' ? 'late' : 'none', cook: cookQ ? { nut: cookQ.model.stats?.NUT ?? 0, traits: cookQ.model.traits } : null, hospitalityOn: hosp, program: programOn('PRG07', p) ? programById('PRG07').effects.quality : 0, research: rb('mealQuality') + pp('mealQuality'), incident: incidentMeal() }); // (Milestone 25: a storm or water issue keeps meals simple) // (Milestone 21; Milestone 23: Hearth Nutrition) // (Milestone 20: Nutrition Plus)
+    const q = mealQuality({ kitchenMult: kitchen ? layout.levelMultOf(kitchen.uid) : 1, kitchen: kitchen?.defId ?? null, prep: prepStatus === 'done' ? 'onTime' : prepStatus === 'late' ? 'late' : 'none', cook: cookQ ? { nut: cookQ.model.stats?.NUT ?? 0, traits: cookQ.model.traits } : null, hospitalityOn: hosp, program: programOn('PRG07', p) ? programById('PRG07').effects.quality : 0, research: rb('mealQuality') + pp('mealQuality'), incident: incidentMeal() }); // (Milestone 25: a storm or water issue keeps meals simple) // (Milestone 21; Milestone 23: Hearth Nutrition) // (Milestone 20: Nutrition Plus)
     // their menu: made if someone on shift can (or the Nutrition Office plans it)
     const diet = dietOf(st);
     st.diet = diet;
@@ -779,9 +787,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const hostPct = server ? diningPct(server.model.traits) : 0;
     const club = acts.session(day, 'afternoon');
     const baking = meal.id === 'dinner' && !!club && club.activity === 'cooking' && club.joined.includes(p.id);
-    const s = satisfaction({ quality: q.quality, mismatch: !matched, dietPct: dietBonus, favourite: fav, boost, late, tray, friends, crowded, host: hostPct > 0, baking });
+    const s = satisfaction({ quality: q.quality, mismatch: !matched, dietPct: dietBonus, favourite: fav, boost, late, tray, friends, crowded, host: hostPct > 0, baking, atmosphere: lvOf(PLACE_DEF.dining) || true }); // (Milestone 25c: the Dining Room's level)
     const drops = { ...(step.drops ?? {}) };
-    if (drops.nutrition) drops.nutrition *= nutritionMult(s.sat, hasOffice());
+    if (drops.nutrition) drops.nutrition *= nutritionMult(s.sat, hasOffice() ? layout.levelMultOfDef(DIET_OFFICE) : 0);
     if (hostPct && drops.social) drops.social *= 1 + hostPct / 100;
     rec.kitchen = kitchen?.defId ?? null;
     rec.served++;
@@ -875,7 +883,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function updateFalls(p) {
     const st = p.state;
     if (!st.mobility) return null;
-    st.falls = fallsRisk({ level: st.mobility.level, aid: st.mobility.aid, plan: st.plan ?? {}, fallsStaff: fallsStaffOn(), lab: layout.ofDef('F19').length > 0, program: programOn('PRG04', p) ? { value: programById('PRG04').effects.falls, text: programById('PRG04').name } : null, research: rb('falls') ? { value: rb('falls'), text: 'Falls research' } : null }); // (Milestones 20 / 21)
+    st.falls = fallsRisk({ level: st.mobility.level, aid: st.mobility.aid, plan: st.plan ?? {}, fallsStaff: fallsStaffOn(), lab: lvOf('F19'), program: programOn('PRG04', p) ? { value: programById('PRG04').effects.falls, text: programById('PRG04').name } : null, research: rb('falls') ? { value: rb('falls'), text: 'Falls research' } : null }); // (Milestones 20 / 21)
     return st.falls;
   }
   function setSpeed(p) {
@@ -927,7 +935,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const music = t.optionId === 'SO04';
     if (!ms || (t.source !== 'lifeStory' && !music)) return null;
     const theme = music ? 'favourite music from the past' : themeOf(p.def, p.state);
-    const mult = (famBefore >= LIFE_STORY.familiarAt ? LIFE_STORY.familiarBonus : 1) * (layout.ofDef('F20').length ? LIFE_STORY.roomMult : 1) * (1 + memoryPct(q.model.traits) / 100) * (1 + rb('memoryPct') / 100); // (Milestone 21: research)
+    const mult = (famBefore >= LIFE_STORY.familiarAt ? LIFE_STORY.familiarBonus : 1) * (lvOf('F20') ? scaleBonus(LIFE_STORY.roomMult, lvOf('F20')) : 1) * (1 + memoryPct(q.model.traits) / 100) * (1 + rb('memoryPct') / 100); // (Milestone 21: research)
     t.outcomes = Object.fromEntries(Object.entries(t.outcomes ?? {}).map(([k, v]) => [k, v * mult]));
     if (!q.agency) addFamiliarity(care, p.id, q.id, LIFE_STORY.familiarityBonus, clock.totalDays);
     ms.sessions = (ms.sessions ?? 0) + 1;
@@ -972,9 +980,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const highHours = level === 'high' ? (ms.stim?.highHours ?? 0) + hours : 0;
     let mult = 1;
     if (residentPlace(p) === 'room' && !ms.walk) {
-      mult *= STIMULATION.roomBonus[roomList().find((r) => r.id === p.state.room)?.defId] ?? 1;
+      const own = roomList().find((r) => r.id === p.state.room);
+      mult *= scaleBonus(STIMULATION.roomBonus[own?.defId] ?? 1, own ? layout.levelMultOf(own.uid) : 1); // (Milestone 25c: the room's level)
       mult *= STIMULATION.plan[p.state.plan?.EN] ?? 1;
     }
+    if (residentPlace(p) === 'calm' && calmPiece()) mult *= layout.levelMultOf(calmPiece().uid); // (Milestone 25c: the calm place's level)
     ms.stim = { level, highHours: Math.round(highHours * 1000) / 1000 };
     const lift = stimulationLift(level, highHours, mult) * hours;
     if (lift) p.state.outcomes.comfort = clamp(p.state.outcomes.comfort + lift);
@@ -1091,6 +1101,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const roundKey = (t) => `${t.day}:${t.at}`;
   const nursesOn = () => onShiftNow().filter((q) => q.role === 'RN');
   const hasPiece = (id) => layout.ofDef(id).length > 0;
+  // Milestone 25c: a facility's level × (×1 / ×1.5 / ×2, its best copy) — 0 when none stands, so it doubles as "has one"
+  const lvOf = (id) => (hasPiece(id) ? layout.levelMultOfDef(id) : 0);
   const themOf = (p) => (p.def.pronoun === 'she' ? 'her' : 'him');
   // A free floor tile in front of (else beside, else behind) a piece; n = which one (0 the nurse's, 1 the cart's).
   function besidePiece(pc, n = 0) {
@@ -1120,7 +1132,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const stops = care.tasks.filter((x) => isMeds(x) && x.day === t.day && x.at === t.at && !x.optionRefused && x.status !== 'refused' && byResident(x.resident)).map((x) => byResident(x.resident));
     const inst = bandInstance(hourNow(), clock.totalDays);
     const queued = care.tasks.filter((x) => isOpen(x) && x.day === inst.day && x.band === inst.band.id && x.roles.length === 1 && x.roles[0] === 'RN' && byResident(x.resident)).length;
-    const s = roundSafety({ cln: q.model.stats?.CLN ?? 100, queued, nurses: Math.max(1, nursesOn().length), stops: stops.length, medRoom: !!medRoom(), governance: hasPiece(GOVERNANCE.id), levels: stops.map((p) => supportLevel(p.def)), plans: stops.map((p) => p.state.plan?.CL), complexPct: clinicalPct(q.model.traits), trained: specialtiesOf(q.id).includes('medication'), alerts: openAlerts().length });
+    const s = roundSafety({ cln: q.model.stats?.CLN ?? 100, queued, nurses: Math.max(1, nursesOn().length), stops: stops.length, medRoom: medRoom() ? layout.levelMultOf(medRoom().uid) : 0, governance: lvOf(GOVERNANCE.id), levels: stops.map((p) => supportLevel(p.def)), plans: stops.map((p) => p.state.plan?.CL), complexPct: clinicalPct(q.model.traits), trained: specialtiesOf(q.id).includes('medication'), alerts: openAlerts().length });
     const extra = rb('roundSafety'); // (Milestone 21: research)
     if (extra) {
       s.parts = { ...s.parts, research: extra };
@@ -1297,7 +1309,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // An action's result: resolved (well, or overdone when bigger than needed) or still lingering (act again).
   function settle(a, action, { cln = null, complexPct = 0, otherOption = false, frac = 1, resolved = null } = {}) {
     const p = byResident(a.resident);
-    const mods = { cln, complexPct, otherOption, treatmentRoom: hasPiece(TREATMENT_ROOM.id) };
+    const mods = { cln, complexPct, otherOption, treatmentRoom: lvOf(TREATMENT_ROOM.id) };
     const ok = resolved ?? new Rng(`${seed}:resolve:${a.id}:${a.actions.length}`).next() < resolveChance(action, a.severity, mods) * frac * (1 + rb('resolvePct') / 100); // (Milestone 21: research)
     const result = resultOf(action, a.severity, ok, mods);
     const rec = a.actions[a.actions.length - 1];
@@ -1388,7 +1400,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     for (const t of care.tasks) if (t.resident === p.id && isOpen(t)) finish(t, 'away');
     st.step = null;
     cl.transfers = (cl.transfers ?? 0) + 1;
-    const mods = { treatmentRoom: hasPiece(TREATMENT_ROOM.id) };
+    const mods = { treatmentRoom: lvOf(TREATMENT_ROOM.id) };
     const rec = a.actions[a.actions.length - 1];
     if (rec) rec.result = resultOf('hospital', a.severity, true, mods);
     closeAlert(a, resultOf('hospital', a.severity, true, mods));
@@ -1431,7 +1443,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       }
       const due = absHour(inst.day, meal.at + PREP.dueAfter);
       if (due <= at) continue;
-      const t = addTask(care, { resident: null, day: inst.day, band: inst.band.id, type: 'prep', name: `${meal.name} prep`, source: 'kitchen', meal: meal.id, place: 'kitchen', roles: [...PREP.roles], rolePenalty: { CW: PREP.careWorkerPenalty }, minutes: Math.round(PREP.minutes / KITCHENS[kitchen.defId].prepRate), opens: Math.max(absHour(inst.day, meal.prepAt), at), due, at: meal.prepAt });
+      const t = addTask(care, { resident: null, day: inst.day, band: inst.band.id, type: 'prep', name: `${meal.name} prep`, source: 'kitchen', meal: meal.id, place: 'kitchen', roles: [...PREP.roles], rolePenalty: { CW: PREP.careWorkerPenalty }, minutes: Math.round(PREP.minutes / scaleBonus(KITCHENS[kitchen.defId].prepRate, layout.levelMultOf(kitchen.uid))), opens: Math.max(absHour(inst.day, meal.prepAt), at), due, at: meal.prepAt });
       rec.prep = { status: 'waiting', by: null, doneAt: null, task: t.id };
     }
   }
@@ -1477,6 +1489,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (s.program === 'PRG04') partners?.record('fallsSession', { kind: 'balanceClass' });
       if (act.id === 'communityVisit' || s.event) partners?.record('communityActivity', { activity: act.id, event: s.event ?? null }); // (a visitor or community session — gardening is its own counter)
       if (act.id === 'gardening') partners?.record('gardenSession', {});
+      // (Milestone 25c: a partner-hosted event held — the partner leaves a piece of care equipment)
+      const pev = s.event ? COMMUNITY_EVENTS.find((e) => e.id === s.event && e.partner) : null;
+      if (pev) items.rollSource('partnerEvent', { why: pev.name });
     }
     if (!s.joined.includes(p.id)) s.joined.push(p.id);
     if (feeling === 'love' || feeling === 'like' || s.birthday) p.state.lastLikedDay = day;
@@ -1485,7 +1500,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     // Activity Room
     if (act.id === 'lifeStory' && memoryOf(p)) {
       const ms = memoryOf(p);
-      const f20 = layout.ofDef('F20').length ? LIFE_STORY.roomMult : 1;
+      const f20 = lvOf('F20') ? scaleBonus(LIFE_STORY.roomMult, lvOf('F20')) : 1;
       for (const [o, v] of Object.entries(LIFE_STORY.lifts)) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v * 0.5 * f20); // (half a one-to-one session's lift, in a small group)
       ms.sessions = (ms.sessions ?? 0) + 1;
       ms.lastSession = { day, theme: themeOf(p.def, p.state), with: null, kind: 'group' };
@@ -1858,7 +1873,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (!rec || (!amount && kind !== 'visit')) return 0; // (a visit is always logged, even when its parts add to nothing)
     if (amount > 0 && rb('trustPct')) amount *= 1 + rb('trustPct') / 100; // (Milestone 21: research)
     if (amount > 0 && (kind === 'meeting' || kind === 'call') && pp('familyPct')) amount *= 1 + pp('familyPct') / 100; // (Milestone 23: Kindred Connect)
-    const change = changeTrust(rec, amount, { day: clock.totalDays, t: now(), reason, kind, partnership: hasPiece(TRUST.partnership), parts });
+    const change = changeTrust(rec, amount, { day: clock.totalDays, t: now(), reason, kind, partnership: lvOf(TRUST.partnership), parts });
     bus?.emit('care:trust', { resident: p.id, change, reason, kind, trust: rec.trust });
     return change;
   }
@@ -1992,6 +2007,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     tryFamilyRoom(v, p);
     if (v.meeting) openMeeting(v, p);
     bus?.emit('care:visit', { resident: p.id, name: p.name, visitor: x.name, from: fromWord(p), first, art: first ? FIRSTS.visitArt : null });
+    if ((familyOf(p)?.trust ?? 0) >= ITEM_SOURCES.family.minTrust) items.rollSource('family', { why: `${x.name}, visiting ${p.name}` }); // (Milestone 25c)
   }
   // The visit ends: what they noticed moves Trust (each part a fixed amount), a line in the log, perhaps a compliment or
   // a complaint, then the visitor walks out.
@@ -2004,7 +2020,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       bell: !!openBell(care, p.id), alert: !!world.clinical.wordOf(p.id),
       tidy: care.tasks.some((t) => t.resident === p.id && t.type === 'roomCheck' && t.day === clock.totalDays && t.status === 'done'),
       greeter: v.greeter ? helperName(v.greeter) : null, favourite: v.favourite && v.favourite !== v.greeter ? helperName(v.favourite) : null,
-      so: soOf(p), party: v.party, call, suite: roomOf(p)?.defId === FAMILY_NOTICE.suite.room, // (Milestone 20: RM03's Family Trust +)
+      so: soOf(p), party: v.party, call, suite: roomOf(p)?.defId === FAMILY_NOTICE.suite.room ? layout.levelMultOf(roomOf(p).uid) : false, // (Milestone 25c: × the suite's level) // (Milestone 20: RM03's Family Trust +)
     });
     const total = visitTotal(parts, { communicatorPct: v.communicatorPct });
     const change = trust(p, total, `Visit: ${parts.map((x2) => x2.text).join(', ')}`, 'visit', parts);
@@ -2149,7 +2165,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function meetingDone(p, t, q) {
     const rec = familyOf(p);
     const m = rec.meeting ?? { kind: 'meeting', review: false };
-    const pct = (hasPiece(VISIT.familyRoom) ? MEETING.familyRoomPct : 0);
+    const pct = MEETING.familyRoomPct * lvOf(VISIT.familyRoom); // (Milestone 25c: × its level)
     const lift = (1 + rb('meetingPct') / 100) * MEETING.lift * (1 + pct / 100) * (1 + familyPct(q.model.traits) / 100) * (specialtiesOf(q.id).includes('family') ? 1 + MEETING.liaisonPct / 100 : 1);
     const note = familyNote(p);
     rec.notes = [...(rec.notes ?? []), { day: clock.totalDays, text: note, with: q.id }].slice(-MEETING.noteKept);
@@ -2237,6 +2253,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     rec.lastCompliment = clock.totalDays;
     log(p, `A compliment from ${fromWord(p)}${named.length ? ` for ${named.map(helperName).join(' and ')} (Morale +${K.morale})` : ''} · Family Trust ${signedN(change)}`);
     bus?.emit('care:compliment', { id: c.id, resident: p.id, name: p.name, text, first, art: first ? COMPLIMENT.firstArt : null });
+    items.rollSource('compliment', { why: `${p.name}'s family` }); // (Milestone 25c)
     return c;
   }
   const trail = (c, text) => c.trail.push({ day: clock.totalDays, t: now(), text });
@@ -2796,6 +2813,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     seed,
     today: () => clock.totalDays,
     hooks: {
+      reward: (kind, info) => items.rollSource(kind, { why: info.name }), // (Milestone 25c)
       rank: () => rankNow,
       score: (name) => (name === 'nutrition' ? nutritionOutcome() : name === 'environment' ? environmentNow().score : null),
       buildable: (id) => hasPiece(id) || layout.unlock(id).ok,
@@ -2866,7 +2884,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const t = team();
     const has = (q, sp) => specialtiesOf(q.id).includes(sp);
     const rows = coverage.status();
-    return { infection: t.filter((q) => has(q, 'infection')).length, leads: t.filter((q) => has(q, 'shiftLead')).length, hub: hasPiece(PREPAREDNESS.hub.facility), supplies: ic.supplies.stock, floats: t.filter((q) => roster.isFloat(q.id) && roster.shiftOf(q.id)).length, shiftsOver: rows.filter((r) => r.required > 0 && r.pct >= PREPAREDNESS.reserve.overPct).length, shifts: rows.length, environment: environmentNow().score, research: new Set(research.doneIds()) };
+    return { infection: t.filter((q) => has(q, 'infection')).length, leads: t.filter((q) => has(q, 'shiftLead')).length, hub: lvOf(PREPAREDNESS.hub.facility), supplies: ic.supplies.stock, floats: t.filter((q) => roster.isFloat(q.id) && roster.shiftOf(q.id)).length, shiftsOver: rows.filter((r) => r.required > 0 && r.pct >= PREPAREDNESS.reserve.overPct).length, shifts: rows.length, environment: environmentNow().score, research: new Set(research.doneIds()) };
   }
   // An event begins: who is unwell, which facilities are out, who is off sick, who needs the hospital service.
   function incidentBegin(ev) {
@@ -3208,9 +3226,17 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   staffing.onTrained((s, c, gains, specialty) => {
     roster.setTraining(s.id, false);
     partners?.record('staffTrained', { staff: s.id, course: c.id }); // (Milestone 23)
+    // (Milestone 25c: a great training effort — gains at least 80% of the most the course could give — may bring an item)
+    const most = Object.values(COURSES.find((x) => x.id === c.id)?.gains ?? {}).reduce((t, [, mx]) => t + mx, 0);
+    const got = Object.values(gains ?? {}).reduce((t, v) => t + v, 0);
+    if (most && got / most >= ITEM_SOURCES.training.minShare) items.rollSource('training', { why: `${s.name} on ${c.name}` });
     bus?.emit('staff:trained', { id: s.id, name: s.name, course: c.name, gains, specialty });
   });
   const inHome = () => new Set(residents.map((p) => p.id));
+  // Milestone 25c: care equipment (src/systems/items.js) — kept with the staff state
+  staffState.items ??= newItemsState();
+  const seasonKey = () => `Y${clock.year}S${Math.floor((clock.month - 1) / ITEM_RULES_SEASON)}`;
+  const items = createItems({ state: staffState.items, seed, bus, person: (id) => { const q = crew.byId(id); return q && !q.agency && !q.leftTeam ? q : null; }, pay: (amount, reason, category) => ledger.economy.add('credits', amount, reason, category), today: () => clock.totalDays, season: seasonKey });
   const freeRooms = () => roomList().filter((r) => !r.residentId);
   // Milestone 10: the free rooms a resident may have, best first — one of the template they need (Memory Support,
   // High-Care), else a general room, the kind they would like first.
@@ -3351,6 +3377,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
   }
   function newDay(day) {
+    // Milestone 25c: upgrades finished today
+    for (const d of layout.tickUpgrades(day)) {
+      const p = layout.byUid(d.uid);
+      if (p) bus?.emit('home:levelUp', { id: p.id, uid: d.uid, name: p.name, level: d.level });
+    }
     // Milestone 9: the opening resident's countdown pauses for each day he spent as the only resident
     for (const p of residents) {
       if (!aloneOpening(p) || p.state.leaving) continue;
@@ -3373,6 +3404,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (first) b.first = day;
       for (const id of bdays) b.held[id] = clock.dateOf(day).year;
       bus?.emit('care:birthday', { residents: bdays, names: bdays.map((id) => byResident(id)?.name), first, art: first ? BIRTHDAY.firstArt : null });
+      items.rollSource('birthday', { why: bdays.map((id) => byResident(id)?.name ?? id).join(' and ') }); // (Milestone 25c)
     }
     for (const p of inSession()) {
       const st = p.state;
@@ -3406,7 +3438,14 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     tickAdmissions(day);
     staffing.tick(day); // Milestone 11: the free board refresh every 56 days, training days
     finishBuilding(); // (Milestone 24: a stage being built opens when its days are up)
+    items.tick(); // (Milestone 25c: a new season starts everyone's item points again)
     if (day % clock.daysPerMonth === 0) {
+      // (Milestone 25c: a calm month — no essential care missed, with residents in the home — and a well-wisher now and then)
+      const it = staffState.items;
+      const missedThisMonth = (care.counts?.essentialMissed ?? 0) - (it.essentialAtClose ?? 0);
+      it.essentialAtClose = care.counts?.essentialMissed ?? 0;
+      if (missedThisMonth === 0 && seated().length > 0) items.rollSource('calmMonth');
+      if (items.chance(ITEM_SOURCES.wellWisher.monthlyChance)) items.grant('wellWisher');
       const d = clock.dateOf(day - 1);
       const closed = ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll(), home: homeCosts() });
       // (Milestone 23: the partners' savings on this close — GoldenStep on equipment, BOTWORKS on upkeep and utilities —
@@ -3451,6 +3490,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
   }
   const coverage = createCoverage({
+    restBonus: () => restBonusNow(),
     state: staffState,
     roster,
     team: () => crew.people,
@@ -3479,6 +3519,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
 
   let lastDay = clock.totalDays;
   const world = {
+    items, // (Milestone 25c: care equipment)
     grid,
     placed,
     props,
@@ -3533,6 +3574,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     setRankForTests(r) {
       rankNow = r;
     },
+    // (Milestone 25c, tests: the Staff Room's rest bonus as it is now — × its level)
+    restBonusForTests: () => restBonusNow(),
     // Let someone go (the page asks first; the Founder twice). Their Familiar Care stays on record in the care state.
     letGo(staffId) {
       const q = crew.byId(staffId);
@@ -4118,6 +4161,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       p.state.rehab.dischargedDay = clock.totalDays;
       startLeaving(p, { discharge: true });
       bus?.emit('care:discharge', { resident: p.id, name: p.name, first, auto, art: first ? DISCHARGE.firstArt : null });
+      items.rollSource('discharge', { why: p.name }); // (Milestone 25c)
       return { ok: true, reason: null, first };
     },
     // Milestone 16 (fix first): meal cover on the roster — for each shift with a meal, who is rostered to serve it.
@@ -4347,6 +4391,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const gone = new Set(crew.people.filter((q) => q.leftTeam).map((q) => q.id)); // (Milestone 11: let go, on their way out)
       staffState.staff = sys.serialize().filter((m) => !agencyIds.has(m.id) && !gone.has(m.id));
       staffing.serialize();
+      items.serialize(); // (Milestone 25c: the equipment store, likes, season points, arrivals — into staffState.items)
       acts.serialize(); // (Milestone 14: the timetable, sessions, bookings, community notices, birthdays)
       research.serialize(); // (Milestone 21: the tree, its slots and progress, into care.research)
       partners.serialize(); // (Milestone 23: deals, tiers, history, the grant board and active grants, into care.partners)
@@ -4600,6 +4645,36 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     findSpot: (defId, near, uid) => layout.findSpot(defId, near, uid),
     setDebugUnlock: (on) => layout.setDebugUnlock(on),
+    // --- Milestone 25c: levels 1–3 (data/facilities.js LEVELS) -------------------------------------------------------
+    // What a piece's level is and what its next one needs → { level, max, mult, pending, next, nextMult, block, invested,
+    // scaled } · block: why Upgrade can't be pressed now (null: it can)
+    levelInfo(uid) {
+      const p = layout.byUid(uid);
+      if (!p) return null;
+      const level = layout.levelOf(uid);
+      const pending = layout.upgradePending(uid);
+      const next = layout.nextUpgrade(uid);
+      let block = null;
+      if (pending) block = `Upgrading to Level ${LEVELS.names[pending.to - 1]}: ready on day ${pending.doneDay + 1}`;
+      else if (!next) block = 'Already at the top level (III)';
+      else if (next.rank && !rankAtLeast(rankNow, next.rank) && !layout.debugUnlock) block = `Level ${LEVELS.names[next.level - 1]} needs Rank ${next.rank} (ranks arrive in a later update)`;
+      else if (ledger.balance < next.cost) block = `Not enough Credits: it costs ${next.cost.toLocaleString('en-GB')}`;
+      return { level, max: LEVELS.max, mult: levelMultOf(p.defId, level), pending, next, nextMult: next ? levelMultOf(p.defId, next.level) : null, block, invested: layout.invested(uid), scaled: !LEVELS.unscaled.includes(p.defId) };
+    },
+    // Start the next level: its Credits now, done after its days (it works at its old level meanwhile). → { ok, reason }
+    startLevel(uid) {
+      const info = world.build.levelInfo(uid);
+      if (!info) return { ok: false, reason: 'Nothing there' };
+      if (info.block) return { ok: false, reason: info.block };
+      const p = layout.byUid(uid);
+      const r = layout.startUpgrade(uid, { today: clock.totalDays });
+      if (!r.ok) return r;
+      pay(-r.cost, `Upgrade: ${p.name} to Level ${LEVELS.names[r.level - 1]}`, 'build');
+      bus?.emit('home:upgrading', { id: p.id, uid, name: p.name, level: r.level, doneDay: r.doneDay, cost: r.cost });
+      return { ok: true, reason: null, ...r };
+    },
+    levelOf: (uid) => layout.levelOf(uid),
+    upgradePending: (uid) => layout.upgradePending(uid),
   };
   if (fixedUp.length) relayout();
   return world;

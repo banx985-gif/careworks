@@ -75,7 +75,7 @@ export function ensureFamily(rec, def, day, seed) {
 // Every Trust change goes through here: a fixed amount for a named reason, clamped 0–100, logged. Positive changes are
 // × (1 + F29's %) when the Family Partnership Centre is placed. → the change actually applied (after the clamp)
 export function changeTrust(rec, amount, { day, t = null, reason, kind = 'other', partnership = false, parts = null }) {
-  const amt = amount > 0 && partnership ? amount * (1 + TRUST.partnershipPct / 100) : amount;
+  const amt = amount > 0 && partnership ? amount * (1 + (TRUST.partnershipPct * +partnership) / 100) : amount; // (Milestone 25c: partnership = its level ×; true = ×1)
   const before = rec.trust;
   rec.trust = r1(clamp(before + amt));
   const change = r1(rec.trust - before);
@@ -106,7 +106,7 @@ export function visitParts({ mood = 60, comfort = 60, missed = [], bell = false,
   if (favourite) out.push({ key: 'favourite', text: `${favourite} (the favourite) was on`, value: N.favourite.trust });
   if (so) out.push({ key: 'so', text: 'visit support (Family Connection Plan)', value: SO_VISITS.visitSupport });
   if (party) out.push({ key: 'party', text: 'a family birthday party', value: REQUESTS.birthdayParty.partyTrust });
-  if (suite) out.push({ key: 'suite', text: N.suite.text, value: N.suite.trust });
+  if (suite) out.push({ key: 'suite', text: N.suite.text, value: N.suite.trust * (suite === true ? 1 : suite) });
   return out;
 }
 // The visit's Trust change before F29: the parts added, the positive ones × (1 + communicatorPct / 100) — a Family

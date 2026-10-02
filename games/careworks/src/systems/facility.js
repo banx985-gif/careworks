@@ -247,6 +247,7 @@ export const SAVE_MIGRATIONS = {
   22: (record) => record, // (Milestone 23: no partner state = no deals, every partner at Partner tier, a first grant board, nothing active)
   23: (record) => record, // (Milestone 24: no wings painted = the one Home wing; nothing being built; the stage as it was)
   24: (record) => record, // (Milestone 25: no incident state = nothing under way, supplies at their starting stock, no past events or falls)
+  25: (record) => record, // (Milestone 25c: no levels = every piece at Level I; no item state = an empty store, likes from each person's role)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

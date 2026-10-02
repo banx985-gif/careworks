@@ -103,3 +103,29 @@ export function validateFacilities(v, list = FACILITIES) {
   }
   return v;
 }
+
+// Milestone 25c — facility levels 1–3 (series common feature §3) on core/FacilitySystem's levels (one level per placed
+// piece: a move keeps it, a sale takes it away; the sale pays 50% of the build price AND of what its upgrades cost).
+// Every visible facility and every room type can go to Level II and III with Credits. A level multiplies the piece's
+// bonus (the part it adds, never the base): ×1.0 / ×1.5 / ×2.0 by default, or the facility's own levelMult below.
+//   rank: the Rank each level needs (ranks arrive in Milestone 26; ?debug=1's "Unlock all rooms and facilities" lets
+//     them through) · costPct: of the build price · days: game days to finish (the home keeps running and the piece
+//     works at its old level meanwhile; a small scaffold shows on it)
+// unscaled: pieces whose effect is an unlock or not yet a number in the game — their level is kept and shown, and
+// multiplies the effect once its system exists (the sheet says so).
+export const LEVELS = {
+  max: 3,
+  mult: [1, 1.5, 2],
+  rank: [null, 'D', 'C'],
+  costPct: [0, 0.6, 1],
+  days: [0, 3, 5],
+  names: ['I', 'II', 'III'],
+  levelMult: {}, // (per-facility override, e.g. F08: [1, 1.25, 1.5]; none yet)
+  unscaled: ['F01', 'F05', 'F06', 'F09', 'F10', 'F11', 'F12', 'F13', 'F14', 'F24', 'F25', 'F26', 'F27', 'F30', 'F31', 'F32', 'RM01', 'RM02', 'RM04', 'RM07'],
+};
+// What Level n costs for a piece (50-Credit steps), and its multiplier.
+export const upgradeCost = (buildCost, level) => Math.round((buildCost * (LEVELS.costPct[level - 1] ?? 0)) / 50) * 50;
+export const levelMultOf = (defId, level) => (LEVELS.levelMult[defId] ?? LEVELS.mult)[Math.max(1, level) - 1] ?? 1;
+// The bonus part scaled: 1 + (base − 1) × m for a multiplier (1.15 → 1.225 at ×1.5), and the same for a reduction
+// (0.85 → 0.775).
+export const scaleBonus = (base, m) => 1 + (base - 1) * m;

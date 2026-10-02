@@ -40,8 +40,23 @@
 // small 6-month balance line, Emergency Credit / Rescue Investor status. Offers arrive in the Inbox (Accept / Not now).
 // Care Tokens on the top bar (shown only). Resident and applicant cards show the Support Level (from needs), its
 // funding and its required care cost.
+// Milestone 25c (series common features): a Menu button at the end of the bottom row opens the Menu sheet (every screen,
+// each row opening the same sheet the art opens; core/ui/MenuSheet); a next-step hint line under the time line
+// (core/ui/HintLine); the full series Settings list on core/Settings (this device, every home) with Low / Auto / High
+// graphics (core/FrameGovernor), text size and vibration; facility and room levels (an Upgrade section on each sheet,
+// a level badge and a scaffold in the home); the care-equipment store (items given from a staff card).
 // Add ?debug=1 for the FPS/state overlay, ?screen=test for the scaling / tap / asset-loader test screen.
-import { THEME, font } from '../../../core/Theme.js';
+import { THEME, font, setTextScale } from '../../../core/Theme.js';
+import { Settings } from '../../../core/Settings.js';
+import { FrameGovernor } from '../../../core/FrameGovernor.js';
+import { Haptics } from '../../../core/Haptics.js';
+import { menuSheet } from '../../../core/ui/MenuSheet.js';
+import { HintLine } from '../../../core/ui/HintLine.js';
+import { registerItemArt, itemIcon } from '../../../core/ui/ItemArt.js';
+import { MENU_GROUPS, MENU_TEXT, NEXT_HINTS } from '../data/menu.js';
+import { SETTINGS, SETTINGS_DEFAULTS, SETTINGS_KEY, TEXT_SCALE, SETTINGS_TEXT } from '../data/settings.js';
+import { ITEM_TYPES, ITEM_GROUPS, ITEM_RARITIES, ITEM_RULES, itemGroupById } from '../data/items.js';
+import { LEVELS } from '../data/facilities.js';
 import { EventBus } from '../../../core/EventBus.js';
 import { Rng } from '../../../core/Rng.js';
 import { Renderer } from '../../../core/Renderer.js';
@@ -160,6 +175,7 @@ const loop = new FixedStepLoop({
     dayBeat.update(dt);
     if (bigBeat && (bigBeat.age += dt) >= BIG_BEAT_LIFE) bigBeat = null;
     autosave.tick(dt);
+    hintLine.update(dt); // (Milestone 25c)
     dialog.update(dt);
     sheet.update(dt);
   },
@@ -178,6 +194,25 @@ const loop = new FixedStepLoop({
 const debugTop = () => layout.safeRect.h - 600;
 const debug = new DebugOverlay({ loop, renderer, layout, input, bus, top: debugTop(), maxLines: 3 });
 bus.on('loop:pause', () => input.reset());
+// Milestone 25c: the player's settings (core/Settings: this device, every home — never part of a slot). Graphics:
+// core/FrameGovernor (Low = a steady 30 FPS; Auto drops to 30 when the phone struggles) — at 30, fewer effects (no care
+// pops) and simpler figures (no sway or breathing). Text size → every font (core/Theme setTextScale). Vibration →
+// core/Haptics. CAREWORKS has no sound yet (Milestone 38): the sound settings are kept and read all the same.
+const settings = new Settings({ key: SETTINGS_KEY, defaults: SETTINGS_DEFAULTS });
+const govMode = () => settings.get('fpsMode') ?? 'auto';
+const governor = new FrameGovernor({ mode: govMode(), bus, capFps: true });
+loop.governor = governor;
+const lowFx = () => governor.state === 'half' && settings.get('fpsMode') !== 'high';
+const haptics = new Haptics({ enabled: () => settings.get('haptics') !== false });
+function applySettings() {
+  setTextScale(TEXT_SCALE[settings.get('textSize')] ?? 1);
+  if (governor.mode !== govMode()) governor.setMode(govMode());
+}
+applySettings();
+settings.onChange((k) => {
+  applySettings();
+  if (k === 'showMenu') syncMenuSlot();
+});
 debug.log(`seeded rng check: ${rng.int(0, 9999)} (same every reload)`);
 
 // ---------------------------------------------------------------------------
@@ -301,6 +336,7 @@ bus.on('care:band', ({ band }) => debug.log(`band: ${band}`));
 
 async function prepareSaves() {
   const adapter = await createStorageAdapter({ dbName: SAVE.dbName, prefix: SAVE.localPrefix });
+  settings.attachStore(adapter, 'settings'); // (Milestone 25c: the settings slot in the account store too)
   campaigns = createCampaigns({ adapter, save: SAVE, bus });
   if (debug.enabled && PARAMS.get('reset') === '1') for (const n of campaigns.slots.numbers()) await campaigns.slots.remove(n);
   await campaigns.refresh();
@@ -422,13 +458,7 @@ const menuScreen = createMenuScreen({
   onContinue: (n) => playSlot(n),
   onSlots: () => router.go('slots', { mode: 'browse' }),
   onNewGame: () => newGame(),
-  onSettings: () =>
-    sheet.open(() => ({
-      title: 'Settings',
-      subtitle: 'Sound, text size and other options will live here.',
-      accent: COL.progress,
-      sections: [{ buttons: [{ id: 'test', label: 'Display test', accent: COL.progress, onTap: () => router.go('test') }] }],
-    })),
+  onSettings: () => openSettings(), // (Milestone 25c: the full series list)
 });
 const slotsScreen = createSlotsScreen({
   layout,
@@ -490,7 +520,7 @@ const topBar = createTopBar({
   },
   onStats: () => openLedger(),
   onInbox: () => openInbox(),
-  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting() + (open?.world?.economy?.offers().length ?? 0) + (open?.world?.partners?.offers().length ?? 0) + emergencyWaiting(), // (Milestone 25: an event waiting for a choice, after-reports) // (Milestone 23: partnership offers) // (Milestone 22: debt offers) // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home; Milestone 18: alerts waiting for a choice; Milestone 19: family asks, requests, new complaints)
+  inboxCount: () => inboxCountNow(), // (Milestone 25c: + new care equipment; inboxBase() below)
   onHelp: () => openTopSheet('help'),
   onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_LOCKED, accent: COL.progress, sections: [] })),
 });
@@ -509,16 +539,29 @@ const staffBadge = () => (open ? open.world.coverage.warnings().length || null :
 const markMissedSeen = (residentId = null) => {
   for (const t of missedToday()) if (!residentId || t.resident === residentId) open?.seenMissed.add(t.id);
 };
+const bottomItems = BOTTOM_SLOTS.map((s) => ({ id: s.id, label: s.label, icon: s.icon, badge: s.id === 'care' ? careBadge : s.id === 'staff' ? staffBadge : s.id === 'quality' ? () => qualityBadge() : null })); // (Milestone 19: Quality — new complaints, and ones ready to mark done)
+// Milestone 25c: the Menu button at the end of the bottom row (as in RACEWORKS and DEVWORKS): six thumb-sized buttons;
+// Settings → "Show Menu button" Off takes it away (Settings stays on the main menu and in Help).
+const MENU_SLOT = { id: 'menu', label: MENU_TEXT.button, icon: MENU_TEXT.icon, badge: null };
+function syncMenuSlot() {
+  const on = settings.get('showMenu') !== false;
+  const i = bottomItems.indexOf(MENU_SLOT);
+  if (on && i < 0) bottomItems.push(MENU_SLOT);
+  if (!on && i >= 0) bottomItems.splice(i, 1);
+}
+syncMenuSlot();
 const bottomBar = createBottomBar({
   layout,
   assets,
-  items: BOTTOM_SLOTS.map((s) => ({ id: s.id, label: s.label, icon: s.icon, badge: s.id === 'care' ? careBadge : s.id === 'staff' ? staffBadge : s.id === 'quality' ? () => qualityBadge() : null })), // (Milestone 19: Quality — new complaints, and ones ready to mark done)
+  items: bottomItems,
   open: (id) => openBottom(id),
 });
 const vfx = new VfxSystem({ assets, width: W, height: renderer.height, font: THEME.family, maxTexts: 4, maxEffects: 16 });
 const dayBeat = createDayBeat();
-const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it), onWings: () => openWings() });
-const carePops = createCarePops({ bus, world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused });
+// Milestone 25c: the next-step hint line (core/ui/HintLine; the rules are hintRules() below, first match wins)
+const hintLine = new HintLine({ rect: () => homeScreen.rectOf('hint'), rules: hintRules(), quiet: () => !open || !!spawn || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || settings.get('showHints') === false || !!bigBeat });
+const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it), onWings: () => openWings(), hint: hintLine, prefs: { nameTags: () => settings.get('nameTags') !== false, taskMarkers: () => settings.get('taskMarkers') !== false, lowFx } });
+const carePops = createCarePops({ bus, world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused && !lowFx() }); // (Milestone 25c: Low graphics — no pops)
 // The end of each day: the medium beat ("Day 3 — all routine care done" / "2 tasks missed").
 bus.on('care:dayEnd', (summary) => {
   if (!open || router.currentName !== 'home') return;
@@ -619,6 +662,20 @@ bus.on('care:complaint', ({ name }) => {
 bus.on('care:meeting', ({ name, change, review, first: isFirst }) => {
   if (open && router.currentName === 'home') dayBeat.showText(isFirst ? `A first family review: ${first(name)}'s plan` : `Family meeting for ${first(name)}: Family Trust ${signed1(change)}`, true);
 });
+// Milestone 25c: an upgrade starts / finishes (medium beats), care equipment arrives (a quiet line; the Inbox has it)
+bus.on('home:upgrading', ({ name, level }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`${name}: upgrading to Level ${LEVELS.names[level - 1]} — it carries on as usual`, true);
+  autosave.request('upgrade');
+});
+bus.on('home:levelUp', ({ name, level }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`${name} is now Level ${LEVELS.names[level - 1]}`, true);
+  haptics.medium();
+  autosave.request('levelUp');
+});
+bus.on('items:arrived', ({ item }) => {
+  if (open && router.currentName === 'home' && !dayBeat.current && !bigBeat) dayBeat.showText(item ? 'New care equipment in the store (Inbox)' : 'The equipment store is full (Inbox)', !!item);
+  autosave.request('item');
+});
 bus.on('care:notice', () => {
   if (open && router.currentName === 'home' && !dayBeat.current && !bigBeat) dayBeat.showText('A notice in the Inbox', false);
 });
@@ -634,6 +691,7 @@ bus.on('staff:trained', ({ name, course, specialty }) => {
 
 // Where each bottom-bar slot goes (data/bars.js).
 function openBottom(id) {
+  if (id === 'menu') return void (open && openNavMenu()); // (Milestone 25c)
   const r = bottomRoute(id);
   if (!r || !open) return;
   if (r.sheet === 'residents') openResidents();
@@ -965,12 +1023,16 @@ function openSlotPicker(dow, slot) {
 // lets it go. One notice at a time: they never stack.
 function openInbox() {
   let message = null;
+  // (Milestone 25c: care equipment that arrived since the Inbox was last opened — shown while it stays open)
+  const fresh = open?.world?.items ? [...open.world.items.unseen()] : [];
+  open?.world?.items?.markSeen();
   sheet.open(() => {
     const w = open?.world;
     if (!w) return { title: 'Inbox', subtitle: TOP_SHEETS.inbox.text, accent: COL.progress, sections: [] };
     const notices = w.activities.notices();
     const sections = [];
     if (message) sections.push({ lines: [{ text: message, color: COL.bad }] });
+    if (fresh.length) sections.push({ title: 'Care equipment', lines: fresh.slice(0, 6).map((a) => a.text), columns: 1, buttons: [{ id: 'inbox:items', label: `Open the ${ITEM_RULES.storeName.toLowerCase()}`, sub: `${w.items.count} of ${w.items.max}: give one from here or from a staff card`, icon: ITEM_RULES.storeIcon, accent: COL.progress, onTap: () => openItemStore() }] });
     // Milestone 22: Emergency Credit / a Rescue Investor
     for (const o of w.economy.offers()) sections.push(offerSection(w, o, (m) => (message = m)));
     sections.push(...incidentInbox(w)); // (Milestone 25: an event waiting for a choice; after-reports)
@@ -2443,7 +2505,12 @@ function openLedger() {
 }
 function openTopSheet(id) {
   const t = TOP_SHEETS[id];
-  sheet.open(() => ({ title: t.title, subtitle: t.text, accent: COL.progress, sections: [] }));
+  // (Milestone 25c: Help always reaches Settings and the Menu, even with the Menu button turned off)
+  const more = id === 'help' ? [{ columns: 2, buttons: [
+    { id: 'help:settings', label: SETTINGS_TEXT.title, sub: 'Sound, graphics, text, the Menu button and hints', icon: MENU_TEXT.icon, accent: COL.progress, onTap: () => openSettings() },
+    { id: 'help:menu', label: MENU_TEXT.title, sub: 'Every screen in the home', icon: MENU_TEXT.icon, accent: COL.progress, onTap: () => openNavMenu() },
+  ] }] : [];
+  sheet.open(() => ({ title: t.title, subtitle: t.text, accent: COL.progress, sections: open ? more : more.map((x) => ({ ...x, columns: 1, buttons: x.buttons.slice(0, 1) })) }));
 }
 // A card opened from a list gets a way back to that list, and the person's ring in the home.
 function openFrom(id, list) {
@@ -3092,6 +3159,21 @@ function staffMenu(w, p, accent) {
       ],
     });
   }
+  if (!agency) {
+    // Milestone 25c: care equipment — what they love (×1.5 and a little Morale) or aren't keen on (×0.5), their season's
+    // item points, and Give
+    const lk = w.items.likesOf(p.id);
+    const got = w.items.received(p.id);
+    sections.push({
+      title: 'Care equipment',
+      lines: [
+        { text: `Loves ${lk.loves.map((g) => itemGroupById(g)?.name).join(' and ')}${lk.dislike ? ` · not keen on ${itemGroupById(lk.dislike)?.name}` : ''}`, color: COL.actionDark },
+        { text: `Item points left this season: ${w.items.pointsLeft(p.id)} of ${ITEM_RULES.periodCap}${got.length ? ` · ${got.length} given so far (${got.map((g) => `${g.stat} +${g.gain}`).join(', ')})` : ''}`, color: COL.textMuted },
+      ],
+      columns: 1,
+      buttons: [{ id: 'staff:give', label: 'Give equipment', sub: w.items.count ? `${w.items.count} in the store: raises a stat for good` : 'The store is empty: equipment comes from play', disabled: !w.items.count, icon: ITEM_RULES.storeIcon, accent: COL.progress, onTap: () => openGiveTo(p.id) }],
+    });
+  }
   if (isFounder) {
     const f = FOUNDERS.find((x) => x.id === p.id);
     sections.push({ title: 'Founding Staff', lines: [`${f.perk.name}: ${f.perk.text}`, `With you since Day 1 · ${h.daysEmployed} days (${yearsEmployed(h)} years) · ${h.careTasks} care tasks`] });
@@ -3139,9 +3221,9 @@ function openHomeSheet(id, from = null, { tab = null } = {}) {
     if (it.defId === 'F17') lines.push({ text: 'Plans every special menu (soft, balanced, small plates, hearty), whoever is cooking', color: COL.actionDark });
     // Milestone 18: the clinical places
     if (it.defId === 'F01') sections.push(...clinicalSections(w));
-    if (it.defId === 'F02') lines.push({ text: 'The Medication Cart is kept here: each medicine round starts here (round safety +8%)', color: COL.actionDark });
+    if (it.defId === 'F02') lines.push({ text: `The Medication Cart is kept here: each medicine round starts here (round safety +${Math.round(it.def.effect.value * w.layout.levelMultOf(it.uid))}%)`, color: COL.actionDark });
     if (it.defId === 'F23') lines.push({ text: 'Moderate alerts can be handled in-house: assessments and senior reviews go further', color: COL.actionDark });
-    if (it.defId === 'F28') lines.push({ text: 'Medicine rounds are safer and better recorded (round safety +10%)', color: COL.actionDark });
+    if (it.defId === 'F28') lines.push({ text: `Medicine rounds are safer and better recorded (round safety +${Math.round(it.def.effect.value * w.layout.levelMultOf(it.uid))}%)`, color: COL.actionDark });
     if (it.defId === 'F09') sections.push(...familyDeskSections(w)); // (Milestone 19)
     if (it.defId === 'F15') lines.push({ text: `Visits happen here when the resident is free, and family meetings go ${MEETING.familyRoomPct}% further`, color: COL.actionDark });
     if (it.defId === 'F29') lines.push({ text: `Every Family Trust gain goes ${TRUST.partnershipPct}% further`, color: COL.actionDark });
@@ -3151,7 +3233,9 @@ function openHomeSheet(id, from = null, { tab = null } = {}) {
       lines.push(trainees.length ? `Training now: ${trainees.map((q) => `${first(q.name)} (${w.staffing.training.course(w.staffing.trainingOf(q.id)?.courseId)?.name ?? ''})`).join(', ')}` : 'Nobody training right now: choose a course from a staff card.');
     }
     for (const r of w.programs.at(it.defId)) lines.push({ text: `Program here: ${r.def.name} — ${programSchedule(r.def)}`, color: COL.good }); // (Milestone 20)
-    sections.push({ columns: 1, buttons: [{ id: 'place:build', label: 'Move or sell in Build Mode', sub: it.def.effect ? `${it.def.effect.text}${it.def.effect.wired ? '' : ' (its system comes later)'}` : '', accent: COL.progress, onTap: () => {
+    const lvInfo = w.build.levelInfo(it.uid); // (Milestone 25c)
+    if (lvInfo) sections.push(upgradeSection(w, it, lvInfo));
+    sections.push({ columns: 1, buttons: [{ id: 'place:build', label: 'Move or sell in Build Mode', sub: it.def.effect ? `${it.def.effect.text}${lvInfo?.level > 1 && lvInfo.scaled ? ` ×${lvInfo.mult} (Level ${LEVELS.names[lvInfo.level - 1]})` : ''}${it.def.effect.wired ? '' : ' (its system comes later)'}` : '', accent: COL.progress, onTap: () => {
       homeScreen.setBuildMode(true);
       homeScreen.pick(it);
     } }] });
@@ -3175,6 +3259,256 @@ async function leaveHome() {
   await autosave.flush();
   await campaigns.refresh();
   open = null;
+}
+
+// ---------------------------------------------------------------------------
+// Milestone 25c — the series common features.
+// The Menu sheet (core/ui/MenuSheet, data/menu.js): each row opens the very same sheet the art or a bar opens.
+const placedOf = (defId) => open?.world.placed.find((p) => p.defId === defId) ?? null;
+const MENU_OPEN = {
+  residents: () => openResidents(),
+  admissions: () => openAdmissions(),
+  carePlans: () => openResidents(),
+  activities: () => openActivities(),
+  programs: () => openPrograms(),
+  emergency: () => placedOf('F01') && openHomeSheet(placedOf('F01').id, null, { tab: 'emergency' }),
+  roster: () => openRoster(),
+  recruit: () => openRecruit(),
+  training: () => placedOf('F11') && openHomeSheet(placedOf('F11').id),
+  itemStore: () => openItemStore(),
+  build: () => {
+    sheet.close();
+    homeScreen.setBuildMode(true);
+  },
+  develop: () => openDevelop(),
+  research: () => openResearch(),
+  quality: () => openQuality(),
+  family: () => placedOf('F09') && openHomeSheet(placedOf('F09').id),
+  business: () => openBusiness(),
+  partners: () => openPartners(),
+  grants: () => openGrants(),
+  ledger: () => openLedger(),
+  inbox: () => openInbox(),
+  settings: () => openSettings(),
+  help: () => openTopSheet('help'),
+  mainMenu: () => {
+    sheet.close();
+    leaveHome();
+  },
+};
+function menuState(id) {
+  const w = open?.world;
+  if (!w) return {};
+  if (id === 'training' && !placedOf('F11')) return { locked: 'Needs a Training Room (Build Mode)' };
+  if (id === 'family' && !placedOf('F09')) return { locked: 'Needs a Reception / Family Desk (Build Mode)' };
+  if (id === 'emergency' && !placedOf('F01')) return { locked: 'Needs the Central Nurse Station' };
+  if (id === 'itemStore') return { badge: w.items.count || null, sub: `${w.items.count} of ${w.items.max} · give one to raise a staff member's stat for good` };
+  if (id === 'inbox' && inboxCountNow()) return { badge: inboxCountNow() };
+  if (id === 'carePlans' && w.stalePlans().length) return { badge: w.stalePlans().length };
+  if (id === 'roster' && w.coverage.warnings().length) return { badge: w.coverage.warnings().length };
+  return {};
+}
+function openNavMenu() {
+  sheet.open(() => menuSheet({ title: MENU_TEXT.title, subtitle: MENU_TEXT.subtitle, art: MENU_TEXT.icon, accent: accentNow(), groups: MENU_GROUPS, open: (id) => MENU_OPEN[id]?.(), state: menuState }));
+}
+// The Menu icon, drawn by code (three bars on a cream tile; no file).
+assets.setFallback(MENU_TEXT.icon, (ctx, x, y, w, h) => {
+  const sz = Math.min(w, h);
+  const ox = x + (w - sz) / 2;
+  const oy = y + (h - sz) / 2;
+  ctx.save();
+  ctx.fillStyle = '#FFF6E5';
+  ctx.strokeStyle = COL.outline;
+  ctx.lineWidth = Math.max(2, sz * 0.05);
+  ctx.beginPath();
+  ctx.roundRect(ox + sz * 0.08, oy + sz * 0.08, sz * 0.84, sz * 0.84, sz * 0.18);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = COL.action;
+  for (let i = 0; i < 3; i++) {
+    ctx.beginPath();
+    ctx.roundRect(ox + sz * 0.24, oy + sz * (0.28 + i * 0.18), sz * 0.52, sz * 0.09, sz * 0.045);
+    ctx.fill();
+  }
+  ctx.restore();
+});
+// Care equipment pictures: filed art where it fits, code placeholders in the group colour for the rest, every rarity
+// frame drawn by code (core/ui/ItemArt).
+registerItemArt(assets, { types: ITEM_TYPES, groups: ITEM_GROUPS, rarities: ITEM_RARITIES });
+
+// The Inbox count: everything waiting, plus care equipment that arrived since the Inbox was last opened.
+function inboxBase() {
+  return (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting() + (open?.world?.economy?.offers().length ?? 0) + (open?.world?.partners?.offers().length ?? 0) + emergencyWaiting();
+}
+function inboxCountNow() {
+  return inboxBase() + (open?.world?.items?.unseen().length ?? 0);
+}
+
+// The next-step hint line (data/menu.js NEXT_HINTS): the first that holds is shown; tapping it opens the right sheet.
+function hintRules() {
+  const W = () => open.world;
+  const here = () => W().residents.filter((p) => !p.state.guest && !p.state.leaving);
+  const onShift = (sh) => W().team.filter((q) => W().roster.shiftOf(q.id)?.id === sh).length;
+  const emptyRoom = () => W().placed.some((p) => p.kind === 'room' && !W().byId(p.id)?.residentId);
+  const stale = () => W().stalePlans();
+  return [
+    { id: 'emergency', text: NEXT_HINTS.emergency, when: () => emergencyWaiting() > 0, open: () => openInbox() },
+    { id: 'admitFirst', text: NEXT_HINTS.admitFirst, when: () => here().length <= 1 && W().admissions.board.length > 0 && emptyRoom(), open: () => openAdmissions() },
+    { id: 'afternoon', text: NEXT_HINTS.afternoon, when: () => onShift('afternoon') === 0, open: () => openRoster() },
+    { id: 'night', text: NEXT_HINTS.night, when: () => onShift('night') === 0, open: () => openRoster() },
+    { id: 'short', text: NEXT_HINTS.short, when: () => W().coverage.warnings().length > 0, open: () => openRoster() },
+    { id: 'dining', text: NEXT_HINTS.dining, when: () => !placedOf('F03'), open: () => openBuildList() },
+    { id: 'kitchen', text: NEXT_HINTS.kitchen, when: () => !placedOf('F04') && !placedOf('F16'), open: () => openBuildList() },
+    { id: 'plan', text: () => NEXT_HINTS.plan(first(W().residentById(stale()[0]?.resident)?.name ?? 'A resident')), when: () => stale().length > 0, open: () => openHomeSheet(stale()[0].resident) },
+    { id: 'item', text: () => NEXT_HINTS.item(W().items.count), when: () => W().items.count > 0, open: () => openItemStore() },
+    { id: 'partner', text: NEXT_HINTS.partner, when: () => W().partners.offers().length > 0, open: () => openPartners() },
+    { id: 'inbox', text: () => NEXT_HINTS.inbox(inboxCountNow()), when: () => inboxCountNow() > 0, open: () => openInbox() },
+  ];
+}
+
+// Settings (data/settings.js): the series list in its order, Help / Privacy / Credits, then the CAREWORKS extras.
+// Reachable from the main menu, the Menu sheet and Help (top bar).
+function openSettings() {
+  sheet.open(() => {
+    const sections = [];
+    let group = null;
+    const optionRow = (d) => ({
+      title: d.label,
+      lines: d.line ? [{ text: d.line, color: COL.textMuted }] : [],
+      columns: Math.min(d.options.length, 5),
+      buttons: d.options.map((o) => {
+        const on = settings.get(d.id) === o.id;
+        return { id: `set_${d.id}_${o.id}`, label: `${on ? '✓ ' : ''}${o.label}`, accent: on ? COL.good : COL.progress, onTap: () => settings.set(d.id, o.id) };
+      }),
+    });
+    const heading = (g) => g !== group && sections.push({ title: (group = g).toUpperCase(), lines: [] });
+    for (const d of SETTINGS.filter((x) => !x.extra)) {
+      heading(d.group);
+      sections.push(optionRow(d));
+    }
+    heading(SETTINGS_TEXT.helpGroup);
+    const ok = [{ id: 'ok', label: 'OK', accent: COL.progress }];
+    sections.push({ columns: 1, buttons: [
+      { id: 'setHelp', label: SETTINGS_TEXT.help, sub: SETTINGS_TEXT.helpLine, icon: 'care_ui_28', accent: COL.progress, onTap: () => openTopSheet('help') },
+      { id: 'setLegal', label: SETTINGS_TEXT.legal, sub: SETTINGS_TEXT.legalLine, icon: 'care_ui_28', accent: COL.progress, onTap: () => dialog.show({ title: SETTINGS_TEXT.legal, body: SETTINGS_TEXT.legalBody, buttons: ok }) },
+      { id: 'setCredits', label: SETTINGS_TEXT.credits, sub: SETTINGS_TEXT.creditsLine, icon: 'care_reward_05', accent: COL.progress, onTap: () => dialog.show({ title: SETTINGS_TEXT.credits, body: SETTINGS_TEXT.creditsBody, buttons: ok }) },
+    ] });
+    for (const d of SETTINGS.filter((x) => x.extra)) {
+      heading(d.group);
+      sections.push(optionRow(d));
+    }
+    sections.push({ columns: 1, buttons: [{ id: 'test', label: SETTINGS_TEXT.display, sub: SETTINGS_TEXT.displayLine, accent: COL.progress, onTap: () => router.go('test') }] }); // (the Milestone 0 display test)
+    return { title: SETTINGS_TEXT.title, subtitle: SETTINGS_TEXT.subtitle, art: MENU_TEXT.icon, accent: COL.progress, sections };
+  });
+}
+
+// Facility and room levels: the Upgrade section of a piece's sheet (style guide §3).
+let upgradeMsg = null;
+function upgradeSection(w, it, info) {
+  const N = LEVELS.names;
+  const lines = [{ text: `Level ${N[info.level - 1]} of ${N[info.max - 1]}${info.scaled ? ` · its bonus ×${info.mult}` : ''}`, color: COL.actionDark }];
+  if (!info.scaled) lines.push({ text: 'Its effect is an unlock, or not yet in the game: the level is kept and will strengthen it then.', color: COL.textMuted });
+  if (info.invested) lines.push({ text: `Spent on upgrades: ${credits(info.invested)} Credits (half comes back if it is sold)`, color: COL.textMuted });
+  if (upgradeMsg) lines.push({ text: upgradeMsg, color: COL.bad });
+  const nx = info.next;
+  const buttons = nx
+    ? [{ id: 'place:upgrade', label: info.pending ? `Upgrading to Level ${N[info.pending.to - 1]}…` : `Upgrade to Level ${N[nx.level - 1]}`, sub: info.block ?? `${credits(nx.cost)} Credits · ${nx.days} days · its bonus ×${info.nextMult}`, disabled: !!info.block, accent: COL.action, onTap: () => {
+        const r = w.build.startLevel(it.uid);
+        upgradeMsg = r.ok ? null : r.reason;
+      } }]
+    : [];
+  return { title: 'Upgrade', lines, columns: 1, buttons };
+}
+
+// The care-equipment store (data/items.js): what the home has earned, each item's picture in its rarity frame. Tap one
+// to give it (each staff member's exact gain shown) or sell it back.
+const statName = (id) => STATS.find((x) => x.id === id)?.name ?? id;
+const itemSub = (w, it) => {
+  const t = w.items.typeOf(it);
+  const r = ITEM_RARITIES[it.rarity];
+  return `${r.name} · ${itemGroupById(t.group)?.name} · +${r.gain} ${statName(t.stat)}`;
+};
+let itemMsg = null;
+function openItemStore() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: ITEM_RULES.storeName, sections: [] };
+    const list = w.items.list();
+    const sections = [];
+    if (itemMsg) sections.push({ lines: [{ text: itemMsg, color: COL.actionDark }] });
+    sections.push({ lines: [`Each piece raises one staff member's stat for good — never past their tier's cap, and no more than ${ITEM_RULES.periodCap} item points each a season (3 months). Loved kinds give ×1.5.`, { text: 'Equipment only comes from play: care outcomes, great training, community partners and their events, families, well-wishers and grants. It is never bought.', color: COL.textMuted }] });
+    if (list.length) sections.push({ title: `In the store (${list.length} of ${w.items.max})`, columns: 1, buttons: list.map((it) => ({ id: `item:${it.uid}`, label: w.items.typeOf(it).name, sub: itemSub(w, it), icon: itemIcon(it.type, it.rarity), accent: COL.progress, onTap: () => openItem(it.uid) })) });
+    else sections.push({ title: 'In the store', lines: [{ text: 'Empty for now.', color: COL.textMuted }] });
+    const arr = w.items.arrivals().slice(0, 5);
+    if (arr.length) sections.push({ title: 'Recently', lines: arr.map((a) => ({ text: `${agoWord(w, a.day)}: ${a.text}`, color: COL.textMuted })) });
+    return { title: ITEM_RULES.storeName, subtitle: `${list.length} of ${w.items.max} · given from here or from a staff card`, art: ITEM_RULES.storeIcon, accent: accentNow(), sections };
+  });
+}
+// The people who could have this item, best gain first (loved kinds marked).
+function giveRow(w, uid, q, after) {
+  const pv = w.items.preview(uid, q.id);
+  const like = pv.like === 'love' ? ' · loves this kind (×1.5, Morale +)' : pv.like === 'dislike' ? ' · not keen (×0.5)' : '';
+  const cap = pv.capped === 'tier' ? ' · trimmed by their tier cap' : pv.capped === 'period' ? ' · trimmed by this season’s points' : '';
+  return {
+    pv,
+    btn: { id: `give:${uid}:${q.id}`, label: q.name, sub: pv.ok ? `${statName(pv.stat)} +${pv.gain} (now ${pv.now})${like}${cap}` : pv.why, disabled: !pv.ok, icon: q.art, iconCrop: PORTRAIT_CROP, accent: pv.like === 'love' ? COL.good : COL.progress, onTap: () => {
+      const r = w.items.give(uid, q.id);
+      itemMsg = r.ok ? `${first(q.name)}: ${statName(r.stat)} +${r.gain}${r.like === 'love' ? ' — and a happy Morale lift' : ''}` : r.why;
+      if (r.ok) autosave.request('item');
+      after();
+    } },
+  };
+}
+const teamForItems = (w) => w.team.filter((q) => !w.roster.isAgency(q.id));
+function openItem(uid) {
+  sheet.open(() => {
+    const w = open?.world;
+    const it = w?.items.get(uid);
+    if (!it) return { title: ITEM_RULES.storeName, subtitle: itemMsg ?? 'Given', accent: accentNow(), sections: [{ columns: 1, buttons: [{ id: 'back', label: '‹ Back to the store', accent: COL.progress, onTap: () => openItemStore() }] }] };
+    const t = w.items.typeOf(it);
+    const r = ITEM_RARITIES[it.rarity];
+    const rows = teamForItems(w).map((q) => giveRow(w, uid, q, () => openItemStore())).sort((a, b) => (b.pv.ok - a.pv.ok) || (b.pv.gain ?? 0) - (a.pv.gain ?? 0));
+    return {
+      title: t.name,
+      subtitle: itemSub(w, it),
+      art: itemIcon(it.type, it.rarity),
+      accent: accentNow(),
+      sections: [
+        { columns: 1, buttons: [{ id: 'back', label: '‹ Back to the store', accent: COL.progress, onTap: () => openItemStore() }] },
+        { lines: [{ text: `From: ${(w.items.arrivals().find((a) => a.item?.type === it.type)?.text ?? 'play').split(':')[0]}`, color: COL.textMuted }] },
+        { title: 'Give to', columns: 1, buttons: rows.map((x) => x.btn) },
+        { columns: 1, buttons: [{ id: `sell:${uid}`, label: `Sell it back for ${r.sell} Credits`, sub: 'A spare: it leaves the store', accent: COL.bad, onTap: () => {
+          const v = w.items.sell(uid);
+          itemMsg = v != null ? `Sold: ${t.name} (+${v} Credits)` : null;
+          autosave.request('item');
+          openItemStore();
+        } }] },
+      ],
+    };
+  });
+}
+// From a staff card: every item in the store with this person's exact gain.
+function openGiveTo(staffId) {
+  sheet.open(() => {
+    const w = open?.world;
+    const q = w?.byId(staffId);
+    if (!q) return { title: '', sections: [] };
+    const rows = w.items.list().map((it) => {
+      const g = giveRow(w, it.uid, q, () => openHomeSheet(staffId));
+      return { pv: g.pv, btn: { ...g.btn, id: `give:${it.uid}`, label: w.items.typeOf(it).name, icon: itemIcon(it.type, it.rarity), iconCrop: null } };
+    }).sort((a, b) => (b.pv.ok - a.pv.ok) || (b.pv.gain ?? 0) - (a.pv.gain ?? 0));
+    return {
+      title: `Give equipment to ${first(q.name)}`,
+      subtitle: `${w.items.pointsLeft(staffId)} of ${ITEM_RULES.periodCap} item points left this season`,
+      art: q.art,
+      accent: accentNow(),
+      sections: [
+        { columns: 1, buttons: [{ id: 'back', label: `‹ Back to ${first(q.name)}`, accent: COL.progress, onTap: () => openHomeSheet(staffId) }] },
+        ...(itemMsg ? [{ lines: [{ text: itemMsg, color: COL.actionDark }] }] : []),
+        rows.length ? { title: 'From the store', columns: 1, buttons: rows.map((x) => x.btn) } : { lines: [{ text: 'The store is empty.', color: COL.textMuted }] },
+      ],
+    };
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -3240,7 +3574,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

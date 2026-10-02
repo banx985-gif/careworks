@@ -78,16 +78,17 @@ export function ensureActivityState(saved) {
 //   care            the run's care state (care.activities is made here)
 //   hostFor(roles, day, slot) → a staff id on shift then with one of these roles (null: no host)
 //   isBirthday(day) → [residentIds] whose birthday it is (the home world knows who is here)
-export function createActivities({ care, seed = 'careworks', bus = null, today = () => 0, hostFor = () => null }) {
+export function createActivities({ care, seed = 'careworks', bus = null, today = () => 0, hostFor = () => null, partnerActive = () => false }) {
   care.activities = ensureActivityState(care.activities);
   const st = care.activities;
   const events = new EventSystem({
     bus,
     rng: new Rng(`${seed}:community`),
-    defs: COMMUNITY_EVENTS.map((e) => ({ id: e.id, kind: 'choice', weight: 1, cooldownDays: COMMUNITY.gapDays * 2, choices: [{ id: 'accept', effects: [{ type: 'book' }] }, { id: 'decline', effects: [], default: true }] })),
+    defs: COMMUNITY_EVENTS.map((e) => ({ id: e.id, kind: 'choice', weight: 1, cooldownDays: COMMUNITY.gapDays * 2, ...(e.partner ? { trigger: { partner: e.partner } } : {}), choices: [{ id: 'accept', effects: [{ type: 'book' }] }, { id: 'decline', effects: [], default: true }] })), // (Milestone 25c: a partner's event only while its deal runs)
     caps: { choice: COMMUNITY.gapDays },
     rules: { dailyChance: { choice: COMMUNITY.dailyChance }, maxOpen: 1 }, // (one notice at a time: never stacked)
     hooks: {
+      conditionMet: (rule) => (rule?.partner ? partnerActive(rule.partner) : true),
       setup(inst) {
         // the afternoon noticeDays ahead that has nothing else special (a birthday or another booking moves it on)
         let day = inst.day + COMMUNITY.noticeDays;
@@ -97,7 +98,7 @@ export function createActivities({ care, seed = 'careworks', bus = null, today =
       apply(effect, inst) {
         if (effect.type !== 'book') return;
         const e = COMMUNITY_EVENTS.find((x) => x.id === inst.id);
-        st.bookings[inst.params.day] = { event: e.id, activity: e.activity, liftMult: e.liftMult };
+        st.bookings[inst.params.day] = { event: e.id, activity: e.activity, liftMult: e.liftMult, ...(e.partner ? { partner: e.partner } : {}) };
       },
     },
   });

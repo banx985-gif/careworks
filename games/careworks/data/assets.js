@@ -18,6 +18,7 @@ import { VISIBLE_PROGRAMS } from './programs.js';
 import { PARTNERS } from './partners.js';
 import { WINGS_SPECIAL } from './wings.js';
 import { INCIDENTS } from './incidents.js';
+import { ITEM_TYPES } from './items.js';
 
 const art = (folder, key) => [key, `assets/images/${folder}/${key}.png`];
 
@@ -62,6 +63,10 @@ export const ASSETS = {
   ...Object.fromEntries(WINGS_SPECIAL.filter((w) => w.beat.startsWith('care_event')).map((w) => art('events', w.beat))),
   // Milestone 25: the Emergency icon (the Nurse Station's Emergency tab, the events, Emergency supplies)
   ...Object.fromEntries([...new Set(INCIDENTS.map((t) => t.icon))].map((k) => art('ui', k))),
+  // Milestone 25c: every UI icon (the Menu sheet's rows, the equipment store) and the filed pictures care-equipment items
+  // reuse (care equipment, rewards, UI icons). The rest of the items are code placeholders until their files exist.
+  ...Object.fromEntries(Array.from({ length: 30 }, (_, i) => art('ui', `care_ui_${String(i + 1).padStart(2, '0')}`))),
+  ...Object.fromEntries(ITEM_TYPES.filter((t) => !t.art.startsWith('care_item_')).map((t) => art({ care_equipment: 'equipment', care_reward: 'rewards', care_ui: 'ui' }[t.art.replace(/_[0-9]+$/, '')], t.art))),
   // Milestone 0 loader test (?screen=test): the placeholder PWA icon as a real image, and one deliberately missing file.
   m0Real: 'assets/branding/pwa/icon-192.png',
   m0Missing: 'assets/m0-missing-test.png',

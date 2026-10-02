@@ -13,6 +13,7 @@
 //   traits: ids in TRAITS. Legendary / Secret staff also carry their signature trait (the §12 trait column) after one
 //     (Legendary) or two (Secret) ordinary ones from their role's Elite traits, so their tier's trait slots are used.
 import { ROLES, STAT_IDS, TIERS } from './roles.js';
+import { ROLE_LIKES } from './items.js';
 
 const stats = (s) => Object.fromEntries(s.split('/').map((v, i) => [STAT_IDS[i], Number(v)]));
 
@@ -273,4 +274,17 @@ export function checkStaffArt(exists, { list = STAFF, agency = {} } = {}) {
     if (a.tag !== 'AGENCY') problems.push(`agency ${role}: not tagged AGENCY`);
   }
   return { problems, checked: { portraits: list.length, badges: Object.keys(ROLES).length, agency: Object.keys(agency).length } };
+}
+
+// Milestone 25c: which care-equipment groups each staff member loves (×1.5, and a small Morale lift) or dislikes (×0.5)
+// — from their role (data/items.js ROLE_LIKES): their own group, one more, and for about half of them one they dislike.
+// Picked by their id, so a person always has the same likes (an agency worker's role decides theirs the same way).
+export function staffLikes(def) {
+  const r = ROLE_LIKES[def?.role];
+  if (!r) return { loves: [], dislike: null };
+  let h = 0;
+  for (const ch of String(def.id)) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  const loves = [r.love, r.also[h % r.also.length]];
+  const dislike = (h >> 3) % 2 === 0 ? r.dislike[(h >> 4) % r.dislike.length] : null;
+  return { loves, dislike: loves.includes(dislike) ? null : dislike };
 }

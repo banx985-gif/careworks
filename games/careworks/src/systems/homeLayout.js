@@ -15,13 +15,17 @@
 //   layout.canSell(uid, { occupied }) → { ok, reason } · layout.findSpot(defId, near, uid?)
 //   layout.upgrade() → { ok, reason } · layout.problems() → [{ piece, text }] · layout.fixUp() → [moved pieces]
 //   layout.effectTotal(key) · layout.serialize()
+// Milestone 25c: levels 1–3 per placed piece (core/FacilitySystem levels; data/facilities.js LEVELS): layout.levelOf(uid)
+//   · levelOfDef(defId) (the best copy, 0 when none) · levelMultOf(uid) · levelMultOfDef(defId) (1 when none) ·
+//   upgradePending(uid) · invested(uid) · nextUpgrade(uid) → { level, cost, days, rank } | null ·
+//   startUpgrade(uid, { today }) (the home world checks money and rank first) · tickUpgrades(today) → [{ uid, level }]
 // Milestone 24: stages S3–S5 (each opens one or two floor zones), the building site (layout.building: the upgrade under
 // way, the world finishes it), the 70-resident logical cap, and specialist wings: painted floor tiles per wing
 // (layout.wings: paint / tilesOf / wingAt / wingOfPiece / hubOf / active / unlocked). Wing-only rooms (RM04–RM07) and
 // the Rank A hubs (F30–F32) must stand fully inside their wing; a wing works once a hub stands inside it.
 import { FacilitySystem } from '../../../../core/FacilitySystem.js';
 import { ROOMS, ROOM_SHAPE, roomById } from '../../data/rooms.js';
-import { FACILITIES, facilityById } from '../../data/facilities.js';
+import { FACILITIES, facilityById, LEVELS, upgradeCost, levelMultOf } from '../../data/facilities.js';
 import { FIXED_WALLS, DEFAULT_LAYOUT, PROPS, STAGES, MAX_FLOOR, ENTRANCE, SPOTS, pieceTiles, zonesOf, LOGICAL_CAP } from '../../data/home.js';
 import { WINGS_SPECIAL, wingById, wingForRoom, HUB_ONLY } from '../../data/wings.js';
 
@@ -64,6 +68,7 @@ export function createLayout({ saved = null, bus = null } = {}) {
     entrance: ENTRANCE,
     keepClear: FIXED_CELLS.filter((c) => c.gap), // the lounge's doorways
     fixed: [...FIXED_CELLS.filter((c) => !c.gap), ...FIXED_PROPS.map((p) => ({ col: p.col, row: p.row }))],
+    levels: { max: LEVELS.max, mult: LEVELS.mult }, // (Milestone 25c)
     reasons: { outside: 'Off the floor', locked: 'Off the floor: that part comes with a bigger stage', overlap: 'Overlaps the {name}', door: 'Keep the doorway clear', blocked: 'Blocks the only path to the {name}', fixed: 'That is part of the building (a wall or fixed furniture)' },
   });
   const s = { ...newLayoutState(), ...(saved ?? {}) };
@@ -71,7 +76,7 @@ export function createLayout({ saved = null, bus = null } = {}) {
   s.sold = [...(s.sold ?? [])];
   s.wings = Object.fromEntries(Object.entries(s.wings ?? {}).filter(([id]) => wingById(id)).map(([id, t]) => [id, [...t]])); // (Milestone 24; an older save: none)
   s.building = s.building ? { ...s.building } : null;
-  fs.load({ placement: s.placement, nextUid: s.nextUid, expansions: STAGES.filter((st) => st.n <= s.stage).flatMap(zonesOf).map((z) => z.id) });
+  fs.load({ placement: s.placement, nextUid: s.nextUid, expansions: STAGES.filter((st) => st.n <= s.stage).flatMap(zonesOf).map((z) => z.id), levels: s.levels ?? null }); // (Milestone 25c: an older save has no levels — all Level I)
 
   // --- pieces ---------------------------------------------------------------------------------------------------
   let cache = null;
@@ -484,6 +489,32 @@ export function createLayout({ saved = null, bus = null } = {}) {
     sellValue: (uid) => (fs.get(uid) ? fs.sellValue(fs.get(uid)) : 0),
     costOf: (defId) => defs[defId]?.cost ?? 0,
     effectTotal: (k) => fs.total(k),
+    // --- Milestone 25c: levels ---
+    levelOf: (uid) => fs.level(uid),
+    levelOfDef: (defId) => fs.levelOfDef(defId),
+    levelMultOf: (uid) => (fs.get(uid) ? levelMultOf(fs.get(uid).def, fs.level(uid)) : 1),
+    levelMultOfDef: (defId) => levelMultOf(defId, Math.max(1, fs.levelOfDef(defId))),
+    upgradePending: (uid) => fs.upgradePending(uid),
+    invested: (uid) => fs.invested(uid),
+    nextUpgrade(uid) {
+      const it = fs.get(uid);
+      if (!it) return null;
+      const level = fs.level(uid) + 1;
+      if (level > LEVELS.max) return null;
+      return { level, cost: upgradeCost(defs[it.def].cost, level), days: LEVELS.days[level - 1], rank: LEVELS.rank[level - 1] };
+    },
+    startUpgrade(uid, { today = 0 } = {}) {
+      const nx = layout.nextUpgrade(uid);
+      if (!nx) return { ok: false, reason: 'Already at Level III' };
+      const r = fs.startUpgrade(uid, { cost: nx.cost, today, days: nx.days });
+      cache = null;
+      return r.ok ? { ok: true, reason: null, ...nx, doneDay: r.doneDay } : { ok: false, reason: r.why };
+    },
+    tickUpgrades(today) {
+      const done = fs.tickUpgrades(today);
+      if (done.length) cache = null;
+      return done;
+    },
     // Mark a pathing Grid (MAX_FLOOR in size) for the current layout.
     buildGrid(grid) {
       const b = blockedFor(pieces());
@@ -564,7 +595,7 @@ export function createLayout({ saved = null, bus = null } = {}) {
     siteZones: () => (s.building ? zonesOf(STAGES[s.building.to - 1]) : []),
     serialize() {
       const f = fs.serialize();
-      return { placement: f.placement, nextUid: f.nextUid, names: { ...s.names }, stage: s.stage, sold: s.sold.map((x) => ({ ...x })), debugUnlock: !!s.debugUnlock, wings: Object.fromEntries(Object.entries(s.wings).map(([id, t]) => [id, [...t]])), building: s.building ? { ...s.building } : null };
+      return { placement: f.placement, nextUid: f.nextUid, ...(f.levels && Object.keys(f.levels).length ? { levels: f.levels } : {}), names: { ...s.names }, stage: s.stage, sold: s.sold.map((x) => ({ ...x })), debugUnlock: !!s.debugUnlock, wings: Object.fromEntries(Object.entries(s.wings).map(([id, t]) => [id, [...t]])), building: s.building ? { ...s.building } : null };
     },
   };
   return layout;

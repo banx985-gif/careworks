@@ -147,7 +147,7 @@ export function fallsRisk({ level, aid = 'none', plan = {}, fallsStaff = false, 
   if (research) parts.push({ key: 'research', text: research.text, value: research.value });
   let risk = clamp(parts.reduce((a, p) => a + p.value, 0));
   if (lab) {
-    const after = risk * FALLS.lab.mult;
+    const after = risk * (1 + (FALLS.lab.mult - 1) * +lab); // (Milestone 25c: lab = its level ×; true = ×1)
     parts.push({ key: 'lab', text: FALLS.lab.text, value: r1(after - risk) });
     risk = after;
   }

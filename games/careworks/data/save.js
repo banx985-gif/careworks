@@ -8,7 +8,7 @@ export const SAVE = {
   count: 4,
   prefix: 'campaign_',
   accountKey: 'account',
-  version: 25, // 2 = Milestone 2 (the clock and the residents' state), 3 = Milestone 3 (the staff), 4 = Milestone 4 (care
+  version: 26, // 2 = Milestone 2 (the clock and the residents' state), 3 = Milestone 3 (the staff), 4 = Milestone 4 (care
   // plans, tasks, call bells, familiarity), 5 = Milestone 5 (the Dining Room and Staff Room, the props, Credits / Care
   // Tokens), 6 = Milestone 6 (every resident, the 24 × 16 home, applicants, the ledger), 7 = Milestone 7 (three
   // shifts, floats, wings, on call, coverage history, agency hires), 8 = Milestone 8 (plan reviews, stale reasons,
@@ -28,6 +28,8 @@ export const SAVE = {
   // and level, the month's Mood), 23 = Milestone 23 (community partners and grants: the deals, tiers and history, the grant
   // board and active grants, the counters, the assistive-tech pilot), 24 = Milestone 24 (stages 3–5: the stage being built, the
   // painted wings and their tiles; per-wing rosters were already in the staff state), 25 = Milestone 25 (incidents: the event under way
-  // and its timeline, Preparedness inputs, emergency supplies, past events and their after-reports, falls; staff off sick); src/systems/facility.js
+  // and its timeline, Preparedness inputs, emergency supplies, past events and their after-reports, falls; staff off sick), 26 =
+  // Milestone 25c (facility and room levels with any upgrade under way; the care-equipment store, likes, season points and
+  // arrivals in the staff state; settings are the device's, never in a slot); src/systems/facility.js
   // SAVE_MIGRATIONS moves older saves
 };
