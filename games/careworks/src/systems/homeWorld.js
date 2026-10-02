@@ -60,6 +60,12 @@
 // community activities, training time) and a countable obligation; grants with a countable goal and a deadline. The home
 // feeds the counters only with what residents chose to join (a session with a joiner, a pilot session someone said yes
 // to). The assistive-tech pilot is offered to everyone here; only those who say yes take part. world.partners is the API.
+// Milestone 25: incidents, outbreaks and emergencies (src/systems/incidents.js, data/incidents.js): seven bounded event
+// templates whose band (mild / moderate / severe) follows the home's Preparedness; 2–4 responses each (Credits or free; the
+// home takes a free one when no choice comes); unwell residents, facilities out of action, staff off sick, extra care
+// tasks, an urgent transfer through the M18 alert path; every event ends on its own with an after-report. Falls switch
+// on the M16 falls risk (help → the nurse's check → a few days' rest → family told → the plan flagged). Emergency
+// supplies (a stock level and a standing order). world.incidents is the API.
 // People walk on core/Agent (A* on core/Grid), so they only pass through doorways. No drawing here — the home screen
 // draws it — so the Node tests run it as it is.
 //   createHomeWorld({ founderId, clock, resident, residents, staff, care, seed, bus, admissions, ledger, startCredits, shortStaffing })
@@ -154,6 +160,8 @@ import { joinChance, choiceBand } from './activities.js';
 import { dayOfWeek } from '../../data/activities.js';
 import { createPartners, environmentScore } from './partners.js';
 import { PILOT } from '../../data/partners.js';
+import { incidentById, FALLS_INCIDENT, INCIDENT_TASKS, PREPAREDNESS } from '../../data/incidents.js';
+import { createIncidents, ensureIncidents, fallChance } from './incidents.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
 // own live layout; these are for older saves' upgrades and the tests.
@@ -246,6 +254,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   let research = null; // (Milestone 21: made with the ledger, below)
   let economy = null; // (Milestone 22: made with the ledger, below)
   let partners = null; // (Milestone 23: made with the ledger, below)
+  let incidents = null; // (Milestone 25: made with the partners, below)
+  let ic = null; // (Milestone 25: care.incidents)
   const pp = (key) => partners?.perk(key) ?? 0; // (Milestone 23: an active partner's perk)
   // Milestone 22: a resident's Support Level, from their assessed needs (at admission; an older or test resident: their
   // profile's — the level their support type always had)
@@ -278,13 +288,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const therapySpace = (p) => {
     for (const tp of THERAPY_PLACES) {
       if (tp.kind === 'facility') {
-        const pc = layout.ofDef(tp.id)[0];
+        const pc = offline(tp.id) ? null : layout.ofDef(tp.id)[0]; // (Milestone 25: not one out of action)
         if (pc) return { ...tp, piece: pc };
       } else if (roomList().find((r) => r.id === p.state.room)?.defId === tp.id) return { ...tp, piece: null };
     }
     return { ...THERAPY_NO_SPACE, piece: null };
   };
-  const calmPiece = () => CALM_PLACES.map((id) => layout.ofDef(id)[0]).find(Boolean) ?? null;
+  const calmPiece = () => CALM_PLACES.map((id) => (offline(id) ? null : layout.ofDef(id)[0])).find(Boolean) ?? null; // (Milestone 25: not one out of action)
   const placeRef = (p, place) => {
     if (place === 'calm') {
       const pc = calmPiece();
@@ -431,7 +441,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const groupRefusal = (s, p) => (p.state.prefs?.groupActivity === 'refuse' && !(activityById(s.activity)?.prefKey && p.state.prefs?.[activityById(s.activity).prefKey]) ? 'prefers not to join group activities' : null);
   // --- nutrition and dining (Milestone 15) -------------------------------------------------------------------------------
   const dining = createDining({ care });
-  const kitchenNow = () => KITCHEN_IDS.map((id) => layout.ofDef(id)[0]).find(Boolean) ?? null; // (the best one placed)
+  const kitchenNow = () => KITCHEN_IDS.map((id) => (offline(id) ? null : layout.ofDef(id)[0])).find(Boolean) ?? null; // (the best one placed; Milestone 25: not one out of action)
   const hasOffice = () => layout.ofDef(DIET_OFFICE).length > 0;
   const specialtiesOf = (id) => staffing?.specialtiesOf(id) ?? [];
   const onShiftNow = () => crew.people.filter((q) => !q.leftTeam && roster.onShift(q.id));
@@ -588,7 +598,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (t.roleFrom?.[q.role] != null && ownWorkWaiting(q.role)) return null;
     const pin = pinOf(t);
     if (pin && pin !== q.id) return null;
-    if (!pin && t.type !== 'bell' && crew.tooTired(q)) return null;
+    if (!pin && t.type !== 'bell' && !t.urgent && crew.tooTired(q)) return null; // (Milestone 25: help after a fall comes, tired or not)
     if (t.source === 'lifeStory' && q.role === 'CW' && familiarityOf(care, t.resident, q.id) < LIFE_STORY.careWorkerFrom) return null; // (Milestone 17: a Care Worker who knows them)
     if (t.source === 'kitchen') return scorePair({ task: { ...t, pinned: pin }, person: { id: q.id, role: q.role, energy: q.model.energy }, tiles: tilesBetween(q, kitchenPool()[0]), doneThisBand: q.bandDone ?? 0, now: absNow() });
     const p = byResident(t.resident) ?? arthur;
@@ -638,6 +648,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (status === 'missed' && t.essential) coverage?.recordMissed(); // care recovery (Milestone 7)
     clinicalOver(t, status); // (Milestone 18: a missed round stop / health check; an assessment that didn't happen)
     if (t.source === 'meeting') meetingOver(t, status); // (Milestone 19: a family meeting that didn't happen moves on)
+    if (t.source === 'fall') fallOver(t, status); // (Milestone 25: nobody came in time)
+    if (t.source === 'incident' && status === 'missed') incidentTaskMissed(t); // (Milestone 25)
     if (t.source === 'program' && status === 'refused') countFor(progState.running[t.program], t.resident, 'declined'); // (Milestone 20: their choice)
     bus?.emit('care:task', { id: t.id, type: t.type, status, resident: t.resident });
   }
@@ -680,6 +692,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         else if (t.source === 'meeting') meetingDone(p, t, q); // (Milestone 19: the family meeting was held)
         else if (t.source === 'program') programTaskDone(p, t, helper, personal); // (Milestone 20)
         else if (t.source === 'pilot') pilotTaskDone(p, t, helper); // (Milestone 23: an assistive-tech pilot session they said yes to)
+        else if (t.source === 'fall') fallHelped(p, t, q); // (Milestone 25: helped up after a fall)
+        else if (t.source === 'incident') incidentTaskDone(p, t, helper); // (Milestone 25: isolation care, cleaning, a cool drink)
         else log(p, personal ? `${t.name} with ${helperName(helper)}: ${personal}` : `${t.name} (with ${helperName(helper)})`);
         if (t.type === 'hydration') p.state.hydration = { last: absNow() }; // (Milestone 15: their last drink)
         if (t.optionId === SO_VISITS.option && t.type === 'visit') familyCall(p, helper); // (Milestone 19: SO07's family call)
@@ -742,7 +756,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const prepDoneNow = prepStatus === 'done' || prepStatus === 'late';
     const cookQ = prepDoneNow && rec.prep.by ? crew.byId(rec.prep.by) : null;
     const hosp = hospitalityOn();
-    const q = mealQuality({ kitchen: kitchen?.defId ?? null, prep: prepStatus === 'done' ? 'onTime' : prepStatus === 'late' ? 'late' : 'none', cook: cookQ ? { nut: cookQ.model.stats?.NUT ?? 0, traits: cookQ.model.traits } : null, hospitalityOn: hosp, program: programOn('PRG07', p) ? programById('PRG07').effects.quality : 0, research: rb('mealQuality') + pp('mealQuality') }); // (Milestone 21; Milestone 23: Hearth Nutrition) // (Milestone 20: Nutrition Plus)
+    const q = mealQuality({ kitchen: kitchen?.defId ?? null, prep: prepStatus === 'done' ? 'onTime' : prepStatus === 'late' ? 'late' : 'none', cook: cookQ ? { nut: cookQ.model.stats?.NUT ?? 0, traits: cookQ.model.traits } : null, hospitalityOn: hosp, program: programOn('PRG07', p) ? programById('PRG07').effects.quality : 0, research: rb('mealQuality') + pp('mealQuality'), incident: incidentMeal() }); // (Milestone 25: a storm or water issue keeps meals simple) // (Milestone 21; Milestone 23: Hearth Nutrition) // (Milestone 20: Nutrition Plus)
     // their menu: made if someone on shift can (or the Nutrition Office plans it)
     const diet = dietOf(st);
     st.diet = diet;
@@ -799,6 +813,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // Someone who can't come to the Dining Room today: resting in bed, unwell, or still not up. → the reason, or null
   function cantCome(p, meal, day) {
     const n = p.state.needs;
+    if (p.state.unwell) return 'unwell: isolation care in their room'; // (Milestone 25: an outbreak)
     if (n.mobility >= TRAY.bedMobility) return 'resting in bed today';
     if (n.clinical >= TRAY.unwellClinical) return 'feeling unwell';
     if (meal.id === 'breakfast' && routineTask(p, 'wake', day)?.status === 'missed') return 'still in bed';
@@ -981,6 +996,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return;
     }
     if (st.leaving || !joined(p) || world.isAsleep(p) || st.step?.status !== 'doing' || p.agent.state === 'walking') return;
+    if (st.unwell || st.fallen || st.fallRest) return; // (Milestone 25: resting after a fall, or unwell)
     const h = hourNow();
     if (h < WALKING.fromHour || h > WALKING.toHour) return;
     const block = `${clock.totalDays}:${Math.floor(h * 4)}`;
@@ -1087,7 +1103,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const t = ok[Math.min(n, ok.length - 1)];
     return t ? { col: t[0], row: t[1] } : null;
   }
-  const medRoom = () => layout.ofDef(MED_ROOM.id)[0] ?? null;
+  const medRoom = () => (offline(MED_ROOM.id) ? null : layout.ofDef(MED_ROOM.id)[0]) ?? null; // (Milestone 25: out of action in a fault)
   // Where the cart is collected: the Medication Room, else the Nurse Station.
   function cartSpot() {
     const pc = medRoom();
@@ -1574,6 +1590,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     delete st.familyRoom; // (Milestone 19: the next step takes them out of the Family Room; the visitor goes with them)
     closePrevious(p);
     const t = routineTask(p, step.id, day);
+    // Milestone 25: resting after a fall, or unwell in an outbreak (isolation) — no group activity today; never a refusal
+    if (step.activity && (fallResting(p) || st.unwell)) {
+      st.step = { id: step.id, day, status: 'refused', resting: true, helper: null };
+      if (t && isOpen(t)) finish(t, 'scaled');
+      addLog(st, day, now(), st.unwell ? `Staying in ${theirOf(p.id)} room while unwell (no ${step.name.toLowerCase()} today)` : `Resting after ${theirOf(p.id)} fall (no ${step.name.toLowerCase()} today)`);
+      const r = placeTile(p, 'room');
+      p.agent.walkTo(grid, r.col, r.row);
+      bus?.emit('care:step', { resident: st.id, step: step.id, status: 'resting' });
+      return;
+    }
     // Milestone 7, fallback step 4: short-staffed, so the day's activity is scaled back (never held against them)
     if (step.activity && coverage.skipsActivity(day)) {
       st.step = { id: step.id, day, status: 'refused', scaled: true, helper: null };
@@ -1707,6 +1733,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       for (const p of residents) if (inCare(p)) planLifeStory(p, inst, at); // (Milestone 17)
       for (const p of residents) if (inCare(p)) planProgramTasks(p, inst, at); // (Milestone 20: one-to-one program offers)
       for (const p of residents) if (inCare(p)) planPilot(p, inst, at); // (Milestone 23: assistive-tech pilot sessions, for those who said yes)
+      for (const p of residents) if (inCare(p)) planFalls(p, inst, at); // (Milestone 25: a fall, perhaps, at a seeded time in the band)
+      planIncidentTasks(inst, at); // (Milestone 25: isolation care, cleaning, cool drinks)
       for (const p of residents) if (inCare(p)) maybeAlert(p, inst, at); // (Milestone 18: someone may become unwell)
       planExtraChecks(inst, at); // (Milestone 18: Increase observation)
       for (const p of residents) if (inCare(p)) logRefused(p, roundLead(inst, secondHelpers(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p), steps: stepsFor(p, inst.day) }))));
@@ -1721,6 +1749,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
     tickClinical(at); // (Milestone 18)
     tickFamily(at); // (Milestone 19: visitors arriving, sitting with the resident, leaving; a meeting opening)
+    tickFalls(at); // (Milestone 25)
+    incidents.tick(at); // (Milestone 25: an event starting, the home's own choice, its end)
     const current = new Set(residents.map((p) => (p.state.step ? routineTask(p, p.state.step.id, p.state.step.day) : null)).filter(Boolean));
     for (const t of care.tasks) {
       if (current.has(t) || t.type === 'bell' || !(t.status === 'open' || t.status === 'claimed') || t.due > at) continue;
@@ -1795,7 +1825,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       // Milestone 13: a familiar helper works a little faster (communication / routine efficiency, bible §6)
       // (Milestone 15: a Care Worker preps more slowly than a Hospitality worker)
       const rate = kitchenTask ? (q.role === 'HN' || specialtiesOf(q.id).includes('nutrition') ? 1 : PREP.careWorkerRate) : 1 + familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, q.id)).speedUp;
-      t.workLeft -= hours * rate;
+      t.workLeft -= (hours * rate) / incidentSlow(t); // (Milestone 25: the hoist out, or the water low)
       if (t.workLeft <= 1e-9) completeTask(t, q);
     }
     // free staff pick their next task (bible §15 order: src/systems/careTasks.js scorePair)
@@ -1847,6 +1877,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const party = rec.party === day;
       if (!(rec.nextVisit != null && rec.nextVisit <= day) && !meeting && !party) continue;
       if (fh.visits.some((v) => v.resident === p.id && v.day === day)) continue;
+      // Milestone 25: an outbreak pauses visits for a few days (they come once it is over; a meeting moves on)
+      if (visitsPaused(day)) {
+        if (meeting) moveMeeting(p, 'visits are paused for a few days');
+        evNow().stats.visitsPaused = (evNow().stats.visitsPaused ?? 0) + 1;
+        continue;
+      }
       addVisit(p, day, { meeting, party });
     }
   }
@@ -2763,7 +2799,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       rank: () => rankNow,
       score: (name) => (name === 'nutrition' ? nutritionOutcome() : name === 'environment' ? environmentNow().score : null),
       buildable: (id) => hasPiece(id) || layout.unlock(id).ok,
-      emergency: () => !!(economy.state.debt.loan || economy.state.debt.investor),
+      emergency: () => !!(economy.state.debt.loan || economy.state.debt.investor) || !!ic?.active || (ic?.lastEnd != null && clock.totalDays - ic.lastEnd < 28), // (Milestone 25: recovery grants after an event too)
       allocate: ({ stay, count, tag }) => {
         // (someone the home can take now, or once a room it can build is placed)
         const fits = (def) => prereqOf(def, { roles: teamRoles(), placeable: roomTemplatesHere() }).ok || (!!def.requires?.room && layout.unlock(def.requires.room).ok && (!def.requires.role || teamRoles().has(def.requires.role)));
@@ -2796,6 +2832,350 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const n = partners.pilot.state?.answers[p.id]?.sessions ?? 0;
     log(p, `${t.name} ${n} of ${PILOT.sessions} with ${helperName(helper)}${done ? ': the pilot is complete' : ''}`);
   }
+  // --- incidents, outbreaks and emergencies (Milestone 25) -----------------------------------------------------------------
+  // (src/systems/incidents.js, data/incidents.js) Bounded templates: the home's Preparedness sets the band, the player
+  // chooses one of 2–4 responses (the home takes a free one on its own when no choice comes), and every event ends by
+  // itself. Here: what each one does in the home. Falls switch on the Milestone 16 falls risk. Nothing here ever ends the
+  // save, lets staff go or removes a resident for good; all timing is game time (pausing changes nothing).
+  ic = care.incidents = ensureIncidents(care.incidents, { startDay: careSaved ? 0 : clock.totalDays });
+  let fallsMult = 1; // (tests only: world.incidents.setFallsMultForTests)
+  const evNow = () => ic?.active ?? null;
+  // A facility out of action (a storm, or an equipment fault) — not once a generator has power back on.
+  function offline(defId) {
+    const ev = ic?.active;
+    return !!ev && !ev.restored && ev.targets.facilities.includes(defId);
+  }
+  function incidentMeal() {
+    const ev = evNow();
+    if (!ev || (ev.kind !== 'storm' && ev.kind !== 'water')) return 0;
+    ev.stats.meals = (ev.stats.meals ?? 0) + 1;
+    return Math.round(ev.params.meal * ev.mult * 10) / 10;
+  }
+  // × the time some work takes: the hoist out (moving and handling), the water low (kitchen prep, laundry and washing).
+  function incidentSlow(t) {
+    const ev = evNow();
+    if (!ev || (ev.kind !== 'equipment' && ev.kind !== 'water')) return 1;
+    const kinds = INCIDENT_TASKS.slowTypes[ev.kind];
+    if (!(kinds.includes(t.type) || (ev.kind === 'water' && t.source === 'kitchen'))) return 1;
+    return 1 + (ev.params.slow - 1) * Math.min(1, ev.mult);
+  }
+  const visitsPaused = (day) => evNow()?.kind === 'outbreak' && day < (evNow().params.pauseUntil ?? 0);
+  const responseOf = (ev) => (ev?.response ? incidentById(ev.kind).responses.find((r) => r.id === ev.response.id) : null);
+  // The home's Preparedness inputs: training, the hub, supplies, the staffing reserve, the Environment score, research.
+  function prepInputs() {
+    const t = team();
+    const has = (q, sp) => specialtiesOf(q.id).includes(sp);
+    const rows = coverage.status();
+    return { infection: t.filter((q) => has(q, 'infection')).length, leads: t.filter((q) => has(q, 'shiftLead')).length, hub: hasPiece(PREPAREDNESS.hub.facility), supplies: ic.supplies.stock, floats: t.filter((q) => roster.isFloat(q.id) && roster.shiftOf(q.id)).length, shiftsOver: rows.filter((r) => r.required > 0 && r.pct >= PREPAREDNESS.reserve.overPct).length, shifts: rows.length, environment: environmentNow().score, research: new Set(research.doneIds()) };
+  }
+  // An event begins: who is unwell, which facilities are out, who is off sick, who needs the hospital service.
+  function incidentBegin(ev) {
+    const tpl = incidentById(ev.kind);
+    const rng = new Rng(`${seed}:incTargets:${ev.id}:${ev.day}`);
+    const shuffle = (list) => list.map((x) => ({ x, r: rng.next() })).sort((a, b) => a.r - b.r).map((o) => o.x);
+    const here = seated().filter((p) => inCare(p) && !p.state.away);
+    if (ev.kind === 'outbreak') {
+      const ill = shuffle(here).slice(0, ev.params.unwell);
+      if (!ill.length) return false;
+      ev.targets.residents = ill.map((p) => p.id);
+      for (const p of ill) {
+        p.state.unwell = { ev: ev.id, from: ev.start };
+        log(p, `Unwell with the bug going round: staying in ${theirOf(p.id)} room for now`);
+      }
+      ev.params.pauseUntil = ev.day + 1 + Math.round(ev.params.visitPauseDays); // (the next N days' visits wait; today's were already planned)
+      ev.stats.unwell = ill.map((p) => p.name);
+    } else if (ev.kind === 'heatwave') {
+      if (!here.length) return false;
+    } else if (ev.kind === 'storm' || ev.kind === 'equipment') {
+      const n = ev.kind === 'storm' ? ev.params.offline : 1;
+      ev.targets.facilities = shuffle((tpl.offlineFrom ?? []).filter((id) => hasPiece(id))).slice(0, n);
+      ev.stats.offline = ev.targets.facilities.map((id) => facilityById(id)?.name ?? id);
+    } else if (ev.kind === 'staffing') {
+      const pool = team().filter((q) => !roster.isTraining(q.id) && roster.shiftOf(q.id));
+      const n = Math.min(ev.params.off, Math.floor(pool.length * tpl.maxOffShare));
+      if (n < 1) return false;
+      const off = shuffle(pool).slice(0, n);
+      for (const q of off) {
+        roster.setSick(q.id, true);
+        for (const t of care.tasks) if ((t.status === 'claimed' || t.status === 'working') && t.slots[0] === q.id) unclaim(t);
+      }
+      ev.targets.staff = off.map((q) => q.id);
+      ev.stats.off = off.map((q) => q.name);
+      ev.stats.agency = 0;
+    } else if (ev.kind === 'transfer') {
+      const p = [...here].filter((x) => !alertOf(x.id) && !x.state.fallen).sort((a, b) => (b.state.needs.clinical ?? 0) - (a.state.needs.clinical ?? 0) || a.id.localeCompare(b.id))[0];
+      if (!p) return false;
+      const a = raiseAlert(p, ev.params.alert, wordFor(rng, ev.params.alert), ev.start);
+      noticeAlert(a, 'at once (an urgent call)');
+      ev.targets.resident = p.id;
+      ev.targets.alert = a.id;
+      ev.stats.resident = p.name;
+    }
+    ev.stats.comfortLost = 0;
+    ev.stats.done = 0;
+    ev.stats.missed = 0;
+    bus?.emit('care:incidentStart', { id: ev.id, kind: ev.kind });
+    return true;
+  }
+  function incidentEnd(ev) {
+    for (const id of ev.targets.residents) {
+      const p = byResident(id);
+      if (p?.state.unwell?.ev === ev.id) {
+        delete p.state.unwell;
+        log(p, 'Feeling better: the bug has passed');
+      }
+    }
+    for (const id of ev.targets.staff) roster.setSick(id, false);
+    if (ev.kind === 'transfer') {
+      const a = cl.alerts.find((x) => x.id === ev.targets.alert);
+      ev.stats.alert = a ? (a.status === 'open' ? 'still being looked after' : a.how) : null;
+      ev.stats.hospital = (byResident(ev.targets.resident)?.state.away?.alert ?? null) === ev.targets.alert || !!a?.actions.some((x) => x.action === 'hospital');
+    }
+    ev.stats.comfortLost = Math.round((ev.stats.comfortLost ?? 0) * 10) / 10;
+  }
+  function incidentRespond(ev, r, by) {
+    if (r.m18) {
+      const a = cl.alerts.find((x) => x.id === ev.targets.alert);
+      if (!a || a.status !== 'open') return { ok: true }; // (already settled: the choice is just noted)
+      const res = act(a, r.m18, by === 'auto' ? 'auto' : 'player');
+      return res.ok ? { ok: true } : { ok: false, reason: res.reason };
+    }
+    if (r.overtime) {
+      const back = ev.targets.staff[ev.targets.staff.length - 1];
+      if (back) {
+        roster.setSick(back, false);
+        ev.targets.staff = ev.targets.staff.filter((id) => id !== back);
+        ev.stats.covered = crew.byId(back)?.name ?? back;
+      }
+      for (const q of team()) q.model.morale = clamp(q.model.morale - 3);
+    }
+    return { ok: true };
+  }
+  // Each frame while one runs: an urgent transfer follows the M18 alert (the nurse may act first).
+  function incidentDuring(ev, at) {
+    if (ev.kind !== 'transfer' || ev.response) return;
+    const a = cl.alerts.find((x) => x.id === ev.targets.alert);
+    const first = a?.actions[0];
+    if (!first) return;
+    const r = incidentById('transfer').responses.find((x) => x.m18 === first.action);
+    ev.response = { id: r?.id ?? first.action, name: r?.name ?? ACTIONS[first.action]?.name ?? first.action, cost: 0 };
+    ev.by = first.by === 'auto' ? 'nurse' : 'player';
+    ev.respondedAt = at;
+  }
+  function reportLines(ev) {
+    const S = ev.stats;
+    const out = [];
+    const list = (xs) => (xs.length <= 2 ? xs.join(' and ') : `${xs.slice(0, -1).join(', ')} and ${xs[xs.length - 1]}`);
+    const firsts = (xs) => list((xs ?? []).map((n) => first(n)));
+    if (ev.kind === 'outbreak') {
+      out.push(`${firsts(S.unwell)} ${S.unwell?.length === 1 ? 'was' : 'were'} unwell; visits paused ${Math.max(0, Math.round(ev.params.visitPauseDays))} day${Math.round(ev.params.visitPauseDays) === 1 ? '' : 's'}${S.visitsPaused ? ` (${S.visitsPaused} visit${S.visitsPaused === 1 ? '' : 's'} waited)` : ''}`);
+      if (S.done || S.missed) out.push(`Isolation care and cleaning: ${S.done} done${S.missed ? `, ${S.missed} missed` : ''}`);
+    }
+    if (ev.kind === 'heatwave' && (S.done || S.missed)) out.push(`Cool drinks: ${S.done} given${S.missed ? `, ${S.missed} missed` : ''}`);
+    if (ev.kind === 'storm' || ev.kind === 'equipment') out.push(S.offline?.length ? `Out of action: ${list(S.offline)}${ev.restored ? ' (back on with the generator)' : ''}` : ev.kind === 'storm' ? 'No facility was out of action' : 'Only the lifting hoist was out');
+    if (ev.kind === 'equipment') out.push('Moving and handling were slower while the hoist was out');
+    if ((ev.kind === 'storm' || ev.kind === 'water') && S.meals) out.push(`${S.meals} meal${S.meals === 1 ? ' was' : 's were'} kept simple`);
+    if (ev.kind === 'water') out.push('The kitchen and laundry were slowed');
+    if (ev.kind === 'staffing') {
+      out.push(`Off sick: ${firsts(S.off)}${S.covered ? ` (${first(S.covered)} came back to cover)` : ''}`);
+      out.push(`Agency workers booked while they were off: ${S.agency ?? 0}`);
+    }
+    if (ev.kind === 'transfer') out.push(`${first(S.resident ?? '')}: ${S.hospital ? 'went to the hospital service (room held)' : 'looked after at home'}${S.alert ? ` · ${S.alert === 'well' ? 'settled' : S.alert === 'overdone' ? 'settled (a smaller step would have done)' : S.alert}` : ''}`);
+    if (S.comfortLost) out.push(`Comfort lost across the home: about ${Math.round(S.comfortLost)} points`);
+    if (ev.spent) out.push(`Spent: ${ev.spent} Credits`);
+    return out;
+  }
+  incidents = createIncidents({
+    state: ic,
+    ledger,
+    bus,
+    seed,
+    abs: absNow,
+    today: () => clock.totalDays,
+    month: (day) => clock.dateOf(day).month,
+    hooks: {
+      prepInputs,
+      begin: incidentBegin,
+      end: incidentEnd,
+      respond: incidentRespond,
+      during: incidentDuring,
+      reportLines,
+      need: (key) => (key === 'nurseOnShift' ? nursesOn().length > 0 : key === 'teamOf2' ? team().length >= 2 : false),
+      cost: (kind) => (kind === 'hospital' ? HOSPITAL.fee : kind === 'clinician' ? clinicianFee() : 0),
+      log: (text) => bus?.emit('care:incidentLog', { text }),
+    },
+  });
+  // A response chosen mid-band: its extra tasks start now (not at the next band).
+  const respondNow = incidents.respond;
+  incidents.respond = (id, by = 'player') => {
+    const r = respondNow(id, by);
+    if (r.ok) planIncidentTasks(bandInstance(hourNow(), clock.totalDays), absNow());
+    return r;
+  };
+  // The extra care a response runs: isolation care and cleaning for those unwell; a cool drink for everyone.
+  function planIncidentTasks(inst, at) {
+    const ev = evNow();
+    const r = responseOf(ev);
+    if (!r?.tasks) return;
+    const add = (p, def, key, place = 'resident') => {
+      const h = def.at[inst.band.id];
+      if (h == null) return;
+      const due = bandEnd(inst.band, inst.day);
+      if (due <= at || care.tasks.some((t) => t.source === 'incident' && t.key === key)) return;
+      addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: def.type, essential: false, name: def.name, source: 'incident', key, incident: ev.id, task: def === INCIDENT_TASKS.coolDrink ? 'coolDrink' : def === INCIDENT_TASKS.cleaning ? 'cleaning' : 'isolation', place, roles: [...def.roles], minutes: def.minutes, drops: { ...(def.drops ?? {}) }, outcomes: {}, opens: Math.max(at, absHour(inst.day, h)), due, at: h });
+    };
+    if (ev.kind === 'outbreak') {
+      for (const id of ev.targets.residents) {
+        const p = byResident(id);
+        if (!p || !inCare(p) || !p.state.unwell) continue;
+        add(p, INCIDENT_TASKS.isolation, `${ev.id}:iso:${p.id}:${inst.key}`);
+        add(p, INCIDENT_TASKS.cleaning, `${ev.id}:clean:${p.id}:${inst.key}`, 'room');
+      }
+    }
+    if (ev.kind === 'heatwave') for (const p of seated()) if (inCare(p) && !p.state.away) add(p, INCIDENT_TASKS.coolDrink, `${ev.id}:drink:${p.id}:${inst.key}`);
+  }
+  function incidentTaskDone(p, t, helper) {
+    const ev = evNow();
+    if (ev?.id === t.incident) ev.stats.done = (ev.stats.done ?? 0) + 1;
+    if (t.task === 'isolation') p.state.outcomes.comfort = clamp(p.state.outcomes.comfort + INCIDENT_TASKS.isolation.comfort);
+    log(p, `${t.name} (with ${helperName(helper)})`);
+  }
+  function incidentTaskMissed(t) {
+    const ev = evNow();
+    const p = byResident(t.resident);
+    if (!ev || ev.id !== t.incident || !p) return;
+    ev.stats.missed = (ev.stats.missed ?? 0) + 1;
+    if (t.task === 'coolDrink') {
+      const loss = -ev.params.missed * ev.mult;
+      p.state.outcomes.comfort = clamp(p.state.outcomes.comfort + loss);
+      ev.stats.comfortLost = (ev.stats.comfortLost ?? 0) - loss;
+    }
+  }
+  // While one runs, an hour's Comfort: those unwell in an outbreak; everyone awake in the daytime in a heatwave.
+  function incidentHour(p, hours) {
+    const ev = evNow();
+    if (!ev || p.state.leaving || p.state.guest) return;
+    let rate = 0;
+    if (ev.kind === 'outbreak' && p.state.unwell?.ev === ev.id) rate = ev.params.comfortPerHour;
+    else if (ev.kind === 'heatwave' && !world.isAsleep(p)) {
+      const h = hourNow();
+      if (h >= INCIDENT_TASKS.heatHours[0] && h < INCIDENT_TASKS.heatHours[1]) rate = ev.params.comfortPerHour;
+    }
+    if (!rate) return;
+    const loss = rate * ev.mult * hours;
+    const before = p.state.outcomes.comfort;
+    p.state.outcomes.comfort = clamp(before + loss);
+    ev.stats.comfortLost = (ev.stats.comfortLost ?? 0) + (before - p.state.outcomes.comfort);
+  }
+  // --- falls (Milestone 25: the Milestone 16 falls risk now produces occasional falls) ---
+  const fallResting = (p) => !!p.state.fallRest && clock.totalDays < p.state.fallRest.until;
+  // At a waking band's start: a seeded chance of a fall at a seeded time inside it.
+  function planFalls(p, inst, at) {
+    const st = p.state;
+    if (!FALLS_INCIDENT.bands.includes(inst.band.id) || st.fallAt != null || st.fallen || fallResting(p) || st.away || !st.falls) return;
+    const rng = new Rng(`${seed}:fall:${p.id}:${inst.key}`);
+    if (rng.next() >= (fallChance(st.falls.risk) / FALLS_INCIDENT.bands.length) * fallsMult) return;
+    const from = Math.max(at, absHour(inst.day, inst.band.from));
+    const to = bandEnd(inst.band, inst.day) - 0.5;
+    st.fallAt = from + rng.next() * Math.max(0, to - from);
+  }
+  function tickFalls(at) {
+    for (const p of seated()) {
+      const st = p.state;
+      if (st.fallAt == null || at < st.fallAt) continue;
+      delete st.fallAt;
+      if (inCare(p) && !st.away && !st.fallen && !world.isAsleep(p)) fall(p);
+    }
+  }
+  function fall(p, severity = null) {
+    const st = p.state;
+    const F = FALLS_INCIDENT;
+    const risk = st.falls?.risk ?? 0;
+    const sev = severity ?? (risk >= F.moderateFrom && new Rng(`${seed}:fallSev:${p.id}:${clock.totalDays}`).next() < F.moderateChance ? 'moderate' : 'minor');
+    if (st.memory?.walk) endWalk(p, 'step', null, true);
+    // (they stay where they are until someone comes)
+    p.agent.path = [];
+    p.agent.goal = null;
+    p.agent._onArrive = null;
+    p.agent.setState('idle');
+    const inst = bandInstance(hourNow(), clock.totalDays);
+    const t = addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: 'personal', essential: false, urgency: 5, urgent: true, name: F.help.name, source: 'fall', place: 'resident', roles: [...F.help.roles], minutes: F.help.minutes, drops: {}, outcomes: {}, opens: absNow(), due: absNow() + F.help.dueHours });
+    const rec = { id: `f${(ic.fallCount ?? 0) + 1}`, day: clock.totalDays, at: absNow(), resident: p.id, name: p.name, risk, band: st.falls?.band ?? null, severity: sev, task: t.id, helpedAt: null, helper: null, alert: null, restUntil: clock.totalDays + F.rest[sev], well: null };
+    incidents.noteFall(rec);
+    st.fallen = { at: absNow(), severity: sev, rec: rec.id };
+    st.fallRest = { until: rec.restUntil, rec: rec.id };
+    const d = F.dips[sev];
+    if (st.mobility) st.mobility.level = clamp(st.mobility.level + d.mobility);
+    st.outcomes.mood = clamp(st.outcomes.mood + d.mood);
+    st.outcomes.safety = clamp(st.outcomes.safety + d.safety);
+    if (st.rehab?.goals && st.rehab.goals.confidence != null) st.rehab.goals.confidence = clamp(st.rehab.goals.confidence + F.rehabConfidence[sev]);
+    st.review = { ...(st.review ?? { day: null, needs: null, reasons: [] }), fall: clock.totalDays }; // (the plan is flagged for review)
+    log(p, `Had a fall (${sev === 'moderate' ? 'a harder one' : 'a small one'}): help is on the way`);
+    trust(p, F.trust.told, `Told about ${theirOf(p.id)} fall straight away`, 'fall');
+    updateFalls(p);
+    bus?.emit('care:fall', { resident: p.id, name: p.name, severity: sev });
+    return rec;
+  }
+  const fallRec = (p) => ic.falls.find((f) => f.id === p.state.fallen?.rec || f.id === p.state.fallRest?.rec) ?? null;
+  function upAgain(p) {
+    p.state.fallen = null;
+    const s = p.state.step;
+    if (s && (s.status === 'walking' || s.status === 'waiting') && !s.arthurThere) {
+      const step = dayStep(p, s.id, s.day);
+      if (step) walkResident(p, step, s.day);
+    }
+  }
+  // Helped up: the nurse checks them (an M18 alert, "had a fall", noticed at once — the six high-level choices).
+  function fallHelped(p, t, q) {
+    const rec = fallRec(p);
+    const mins = rec ? Math.round((absNow() - rec.at) * 60) : 0;
+    upAgain(p);
+    const a = raiseAlert(p, rec?.severity ?? 'minor', FALLS_INCIDENT.word, absNow());
+    noticeAlert(a, `when ${helperName(q.id)} helped ${themOf(p)} up`);
+    if (rec) Object.assign(rec, { helpedAt: absNow(), helper: q.id, alert: a.id, minutes: mins });
+    log(p, `Helped up after the fall by ${helperName(q.id)} (${mins} min): resting for a few days`);
+  }
+  // Nobody came in time (or nobody was on shift): they got up on their own, slowly; the nurse still checks them.
+  function fallOver(t, status) {
+    const p = byResident(t.resident);
+    if (!p?.state.fallen || status === 'away' || status === 'gone') return;
+    const rec = fallRec(p);
+    upAgain(p);
+    const a = raiseAlert(p, rec?.severity ?? 'minor', FALLS_INCIDENT.word, absNow());
+    noticeAlert(a, 'after the fall');
+    if (rec) rec.alert = a.id;
+    log(p, 'Got up after the fall on their own: nobody came in time');
+  }
+  // A new day: anyone whose rest is over — handled well (help came quickly and the alert has settled) gives the family's
+  // Trust back.
+  function fallsDay(day) {
+    for (const p of seated()) {
+      const fr = p.state.fallRest;
+      if (!fr || day < fr.until) continue;
+      delete p.state.fallRest;
+      const rec = ic.falls.find((f) => f.id === fr.rec);
+      if (!rec || rec.well != null) continue;
+      const a = cl.alerts.find((x) => x.id === rec.alert);
+      rec.well = rec.helpedAt != null && rec.helpedAt - rec.at <= FALLS_INCIDENT.helpWithinHours && !!a && a.status !== 'open';
+      log(p, rec.well ? 'Back on ' + theirOf(p.id) + ' feet after the fall' : 'Rest after the fall is over');
+      if (rec.well) trust(p, FALLS_INCIDENT.trust.handledWell, `Looked after well after ${theirOf(p.id)} fall`, 'fall');
+    }
+  }
+  // world.incidents extras: what is out of action now, a fall now (tests and ?debug=1), the tests' falls multiplier.
+  incidents.offlineNow = () => (evNow()?.restored ? [] : (evNow()?.targets.facilities ?? []));
+  incidents.visitsPaused = () => visitsPaused(clock.totalDays);
+  incidents.fallNow = (residentId, severity = null) => {
+    const p = byResident(residentId);
+    if (!p || !inCare(p) || p.state.away || p.state.fallen) return { ok: false, reason: 'They can’t fall right now' };
+    return { ok: true, rec: fall(p, severity) };
+  };
+  incidents.setFallsMultForTests = (m) => (fallsMult = m);
+  // (tests only: an older milestone's own measurement — no random events and no falls; never saved, never in the game)
+  incidents.offForTests = () => {
+    incidents.setQuietForTests(true);
+    fallsMult = 0;
+  };
+  incidents.fallsThisMonth = () => ic.falls.filter((f) => f.day >= monthRange().fromDay).length;
   function moveOuts(day) {
     const M = MOVE_OUT;
     for (const p of seated()) {
@@ -3017,6 +3397,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (meals) partners.noteSaving('foodPct', meals * FOOD_COST.perMeal); // (Milestone 23: Hearth Nutrition's saving, posted at the month's close)
     partners.noteRoomChecks(day - 1, ...roomChecksOn(day - 1)); // (Milestone 23: the Environment score's cleanliness)
     partners.daily(day); // (Milestone 23: deals end, new offers, grants met or past their deadline)
+    incidents.daily(day); // (Milestone 25: emergency supplies; perhaps an event later today)
+    fallsDay(day); // (Milestone 25: rest after a fall over — handled well gives the family's Trust back)
     for (const p of inSession()) p.state.diet = dietOf(p.state);
     bus?.emit('care:dayEnd', world.daySummary(day - 1));
     if (shortStaffing) coverage.dayEnd(day - 1); // care recovery for yesterday's missed essential tasks (Milestone 7)
@@ -3050,6 +3432,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     staffState.roster.agency.push({ id, name: def.name, role, art: def.art, shift: inst.shift, key: inst.key, start: inst.start, end: inst.end, model: null });
     const q = crew.addPerson(model, { agency: true });
     world.people.push(q);
+    if (ic?.active?.kind === 'staffing') ic.active.stats.agency = (ic.active.stats.agency ?? 0) + 1; // (Milestone 25: the after-report)
     return q;
   }
   // They walked out: gone from the team, the roster and the home.
@@ -3245,6 +3628,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         noteMobilityNeed(p.state, hours); // (Milestone 16)
         if (p.state.memory) memoryHour(p, hours); // (Milestone 17: stimulation)
         programHour(p, hours); // (Milestone 20: Night Comfort — calmer for anyone awake at night)
+        incidentHour(p, hours); // (Milestone 25: unwell in an outbreak, or a heatwave)
       }
       const b = bandAt(hourNow());
       if (b !== band) {
@@ -3265,6 +3649,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           awayTick(p); // (Milestone 18: at the hospital service, or on the way there / back)
           continue;
         }
+        if (p.state.fallen) continue; // (Milestone 25: where they fell, until help comes)
         if (p.state.stay && due(p)) {
           startLeaving(p);
           continue;
@@ -3585,6 +3970,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     environment: () => environmentNow(),
     // The resident card: their answer to the assistive-tech pilot (null: not asked)
     pilotOf: (residentId) => partners.pilot.state?.answers[residentId] ?? null,
+    // --- Milestone 25: incidents, outbreaks and emergencies (src/systems/incidents.js) ---------------------------------------
+    get incidents() {
+      return incidents;
+    },
     // --- Milestone 21: research -----------------------------------------------------------------------------------------------
     get research() {
       return research;
@@ -3808,11 +4197,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       }
       if (st.leaving) return `Going home today: walking out to the front door`;
       if (st.familyRoom) return `In the Family Room with ${fromWord(p)}`; // (Milestone 19)
+      if (st.fallen) return 'Had a fall: waiting for help to get up'; // (Milestone 25)
       if (!joined(p)) return p.agent.state === 'walking' ? `Arriving: walking to ${who} room` : `Settling in to ${who} room`;
       const step = st.step && dayStep(p, st.step.id, st.step.day);
       if (!step) return `In ${who} room`;
       if (st.step.declined) return `Free time in ${who} room (chose not to join ${step.name.toLowerCase()})`;
       if (st.step.scaled) return `In ${who} room: activities scaled back today (short-staffed)`;
+      if (st.step.resting) return st.unwell ? `In ${who} room: unwell, with isolation care` : `In ${who} room: resting after a fall`; // (Milestone 25)
       if (st.step.status === 'refused') return `Chose to stay in ${who} room (said no to ${step.activity ? step.name : step.name.toLowerCase()})`;
       if (st.step.status === 'missed') return `No help came for ${stepWord(step)}`;
       const helper = st.step.helper ? first(crew.byId(st.step.helper)?.name ?? '') : null;

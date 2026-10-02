@@ -115,6 +115,7 @@ export const LEDGER_ROWS = [
   { cat: 'recruit', name: 'Recruitment', icon: 'care_ui_02', kind: 'cost' },
   { cat: 'clinical', name: 'Clinician and hospital', icon: 'care_ui_04', kind: 'cost' },
   { cat: 'programs', name: 'Specialist programs', icon: 'care_ui_03', kind: 'cost' },
+  { cat: 'emergency', name: 'Emergency supplies and responses', icon: 'care_ui_27', kind: 'cost' }, // (Milestone 25)
   { cat: 'transport', name: 'Transport and outings (later)', icon: 'care_ui_03', kind: 'cost' },
   { cat: 'build', name: 'Building', icon: 'care_ui_03', kind: 'cost' },
   { cat: 'loanRepay', name: 'Emergency Credit repayment', icon: 'care_ui_05', kind: 'cost' },

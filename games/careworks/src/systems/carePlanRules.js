@@ -78,6 +78,7 @@ export function staleReasons(st, today) {
   const since = today - r.day;
   if (since >= REVIEW.periodDays) out.push({ key: 'period', text: `${since} days since the last review` });
   if (r.hospital != null) out.push({ key: 'hospital', text: 'Back from the hospital service: review the plan' }); // (Milestone 18)
+  if (r.fall != null) out.push({ key: 'fall', text: 'After a fall: review the plan (falls prevention)' }); // (Milestone 25)
   return out;
 }
 export function markReviewed(st, today) {

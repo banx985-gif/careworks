@@ -77,7 +77,7 @@ export const FACILITIES = [
   f('F30', 'High-Care Nursing Wing Hub', 'Maker', rank('A'), 9000, fx('highCareWing', 1, 'Unlocks the High-Care wing'), { text: 'The heart of a high-care wing' }),
   f('F31', 'Rehabilitation Wing Hub', 'Maker', rank('A'), 8800, fx('rehabWing', 1, 'Unlocks Rehab wing expansion'), { text: 'The heart of a rehabilitation wing' }),
   f('F32', 'Palliative Care Wing Hub', 'Maker', rank('A'), 9000, fx('palliativeWing', 1, 'Unlocks the Palliative wing'), { text: 'The heart of a palliative wing' }),
-  f('F33', 'Emergency Preparedness Hub', 'Thinker', research('Safety', 5, 'OPS4', 'Emergency Readiness'), 7600, fx('emergencySeverityPct', -15, 'Emergency severity −15%'), { text: 'Plans and kit for when things go wrong' }),
+  f('F33', 'Emergency Preparedness Hub', 'Thinker', research('Safety', 5, 'OPS4', 'Emergency Readiness'), 7600, fx('emergencySeverityPct', -15, 'Emergency severity −15%', true), { text: 'Plans and kit for when things go wrong' }),
   f('F34', 'Centenarian Garden', 'Secret', { type: 'secret', value: 'SEC-FAC-01', text: 'Secret' }, 12000, fx('prestigeWellbeingPct', 20, 'Prestige wellbeing program +20%'), { text: 'A secret' }),
   f('F35', 'Legacy House', 'Secret', { type: 'secret', value: 'SEC-FAC-02', text: 'Secret' }, 15000, fx('prestigeStoryHub', 1, 'Prestige story / familiar-care hub'), { text: 'A secret' }),
 ];

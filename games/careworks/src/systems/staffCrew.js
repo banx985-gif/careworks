@@ -275,6 +275,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       if (p.mode === 'leaving') return p.leftTeam ? 'Leaving the home: no longer on the team' : 'Agency shift over: leaving the home';
       if (p.mode === 'toTrain') return `Going to the Training Room (${trainingLabel(p.id)})`;
       if (p.mode === 'training') return `Training: ${trainingLabel(p.id)}`;
+      if (roster.isSick?.(p.id) && (p.mode === 'toRest' || p.mode === 'resting')) return 'Off sick: not working until they feel better'; // (Milestone 25)
       if (p.mode === 'toRest') return 'Off shift: going to the Staff Room';
       if (p.mode === 'resting') return 'Off shift: resting in the Staff Room';
       if (p.mode === 'toPost') return 'On shift: walking the home';

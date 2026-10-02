@@ -63,6 +63,7 @@ export function ensureRosterState(saved, ids) {
     onCall: r.onCall ?? DEFAULT_ROSTER.onCall,
     onCallAfternoon: r.onCallAfternoon ?? DEFAULT_ROSTER.onCallAfternoon, // (Milestone 10 fix: older saves get it on too)
     training: { ...(r.training ?? {}) }, // Milestone 11: staff id → true while away training
+    sick: { ...(r.sick ?? {}) }, // Milestone 25: staff id → true while off sick (a staffing surge)
     cover: Object.fromEntries(Object.entries(r.cover ?? {}).map(([k, v]) => [k, [...v]])),
     agency: (r.agency ?? []).map((a) => ({ ...a, model: a.model ? { ...a.model } : null })),
   };
@@ -80,6 +81,7 @@ export function createRoster(state, { abs = () => 0, wingOfRoom = null, wingExis
   // Which shift they are working at time t: their own, a float cover, or their agency shift.
   function workingAt(id, t) {
     if (R().training?.[id]) return null; // Milestone 11: away at the Training Room, off the roster
+    if (R().sick?.[id]) return null; // Milestone 25: off sick, off the roster until they are back
     const ag = agencyOf(id);
     if (ag) return t >= ag.start && t < ag.end ? ag.shift : null;
     const own = R().shifts[id];
@@ -129,15 +131,15 @@ export function createRoster(state, { abs = () => 0, wingOfRoom = null, wingExis
     },
     // Who works that instance: everyone on the shift, the floats covering it, its agency workers.
     peopleOn(inst) {
-      const own = Object.keys(R().shifts).filter((id) => R().shifts[id] === inst.shift && !R().training?.[id]);
-      const cover = R().cover[inst.key] ?? [];
+      const own = Object.keys(R().shifts).filter((id) => R().shifts[id] === inst.shift && !R().training?.[id] && !R().sick?.[id]);
+      const cover = (R().cover[inst.key] ?? []).filter((id) => !R().sick?.[id]);
       const agency = R().agency.filter((a) => a.key === inst.key).map((a) => a.id);
       return [...new Set([...own, ...cover, ...agency])];
     },
     // Floats who could cover that instance: on another shift that doesn't overlap it, not already on it.
     floatsFor(inst) {
       return Object.keys(R().floats).filter((id) => {
-        if (!R().floats[id] || agencyOf(id) || R().training?.[id]) return false;
+        if (!R().floats[id] || agencyOf(id) || R().training?.[id] || R().sick?.[id]) return false;
         const own = R().shifts[id];
         if (!own || own === OFF || !SHIFTS[own] || own === inst.shift) return false;
         if (R().cover[inst.key]?.includes(id)) return false;
@@ -181,6 +183,13 @@ export function createRoster(state, { abs = () => 0, wingOfRoom = null, wingExis
       if (on) R().training[id] = true;
       else delete R().training[id];
     },
+    // Milestone 25: off sick for a few days (a staffing surge): off the roster, their shift kept for when they are back.
+    isSick: (id) => !!R().sick?.[id],
+    setSick(id, on) {
+      R().sick ??= {};
+      if (on) R().sick[id] = true;
+      else delete R().sick[id];
+    },
     join(id, shiftId = OFF) {
       R().shifts[id] = shiftId;
       R().wings[id] = DEFAULT_WING;
@@ -190,6 +199,7 @@ export function createRoster(state, { abs = () => 0, wingOfRoom = null, wingExis
       delete R().wings[id];
       delete R().floats[id];
       delete R().training?.[id];
+      delete R().sick?.[id];
       for (const k of Object.keys(R().cover)) R().cover[k] = R().cover[k].filter((x) => x !== id);
     },
     setOnCall(on, shiftId = 'night') {

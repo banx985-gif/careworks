@@ -98,6 +98,8 @@ import { TRUST, MEETING, MEETING_ASK, COMPLAINT, COMPLAINTS, FIXES, REQUESTS, RE
 import { yearsEmployed } from './systems/staffTeam.js';
 import { LEDGER_ROWS, CLOSE_CATS, DEBT, ROOM_FEES } from '../data/economy.js';
 import { TIERS as PARTNER_TIERS, GRANT_RULES, PILOT, partnerById, grantById, COUNTER_LABELS } from '../data/partners.js';
+import { INCIDENTS, incidentById, SEVERITY, SUPPLIES, LEDGER_CATEGORY as LEDGER_CATEGORY_EMERGENCY } from '../data/incidents.js';
+import { bandFor } from './systems/incidents.js';
 import { levelOfNeeds, requiredCost, fundingOf } from './systems/economy.js';
 import { VISIBLE_PROGRAMS, validatePrograms, dayList, LEDGER_CATEGORY } from '../data/programs.js';
 import { unlockWords } from './systems/programs.js';
@@ -488,7 +490,7 @@ const topBar = createTopBar({
   },
   onStats: () => openLedger(),
   onInbox: () => openInbox(),
-  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting() + (open?.world?.economy?.offers().length ?? 0) + (open?.world?.partners?.offers().length ?? 0), // (Milestone 23: partnership offers) // (Milestone 22: debt offers) // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home; Milestone 18: alerts waiting for a choice; Milestone 19: family asks, requests, new complaints)
+  inboxCount: () => (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting() + (open?.world?.economy?.offers().length ?? 0) + (open?.world?.partners?.offers().length ?? 0) + emergencyWaiting(), // (Milestone 25: an event waiting for a choice, after-reports) // (Milestone 23: partnership offers) // (Milestone 22: debt offers) // (Milestone 14: community notices waiting; Milestone 16: residents ready to go home; Milestone 18: alerts waiting for a choice; Milestone 19: family asks, requests, new complaints)
   onHelp: () => openTopSheet('help'),
   onLockedSpeed: (speed) => sheet.open(() => ({ title: `${speed}× speed`, subtitle: SPEED_LOCKED, accent: COL.progress, sections: [] })),
 });
@@ -598,6 +600,18 @@ bus.on('home:wing', ({ name, art, hub, later }) => {
   if (!open) return;
   bigBeat = { title: `The ${name} opens`, text: later ? `${hub} placed · ${later}` : `${hub} placed: the wing is ready for its residents and staff`, art, age: 0 };
   autosave.request('wing');
+});
+// Milestone 25: an event begins (a medium beat — never a pop-up over the home), ends (a quiet line), a fall
+bus.on('care:incident', ({ name, band }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`${name} (${SEVERITY.names[band].toLowerCase()}): choose a response (Inbox)`, false);
+  autosave.request('incident');
+});
+bus.on('care:incidentEnd', ({ name }) => {
+  if (open && router.currentName === 'home' && !dayBeat.current && !bigBeat) dayBeat.showText(`${name}: over — the after-report is in the Inbox`, true);
+  autosave.request('incident');
+});
+bus.on('care:fall', ({ name }) => {
+  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} had a fall: help is on the way`, false);
 });
 bus.on('care:complaint', ({ name }) => {
   if (open && router.currentName === 'home') dayBeat.showText(`A complaint from ${first(name)}'s family: an improvement task (Quality)`, false);
@@ -959,6 +973,7 @@ function openInbox() {
     if (message) sections.push({ lines: [{ text: message, color: COL.bad }] });
     // Milestone 22: Emergency Credit / a Rescue Investor
     for (const o of w.economy.offers()) sections.push(offerSection(w, o, (m) => (message = m)));
+    sections.push(...incidentInbox(w)); // (Milestone 25: an event waiting for a choice; after-reports)
     sections.push(...partnerInbox(w)); // (Milestone 23: partnership offers)
     // Milestone 18: alerts — the six high-level choices
     for (const a of w.clinical.alerts()) sections.push(alertSection(w, a, 'inbox'));
@@ -981,7 +996,7 @@ function openInbox() {
     }
     const past = w.activities.history().slice(-4).reverse();
     sections.push({ title: 'Earlier', lines: past.length ? past.map((h) => ({ text: `${h.def.name}: ${h.accepted ? 'accepted' : h.auto ? 'no answer (let go)' : 'declined'}`, color: COL.textMuted })) : [{ text: notices.length ? '' : 'Nothing yet. Letters from families, partners and inspectors will arrive here too.', color: COL.textMuted }] });
-    const waiting = notices.length + alertsWaiting() + familyWaiting() + w.economy.offers().length + w.partners.offers().length; // (Milestone 23)
+    const waiting = notices.length + alertsWaiting() + familyWaiting() + w.economy.offers().length + w.partners.offers().length + emergencyWaiting(); // (Milestone 23; Milestone 25)
     return { title: 'Inbox', subtitle: waiting ? `${waiting} waiting` : 'Nothing waiting', art: 'care_ui_01', accent: accentNow(), sections };
   });
 }
@@ -1451,7 +1466,7 @@ function rehabSections(w, it) {
     out.push({ title: 'Mobility', lines: [
       { text: `${AIDS[m.aid].name}${m.aid === 'none' ? '' : ` · walks at ${Math.round(AIDS[m.aid].speed * 100)}% of the usual pace`}`, color: COL.actionDark },
       { text: `Falls risk ${f.risk} (${f.band})${mods.length ? ` · ${mods.join(' · ')}` : ''}`, color: f.band === 'High' ? COL.warn : COL.textMuted },
-      { text: 'Stored for the care team; falls themselves are not in the game yet.', color: COL.textMuted },
+      { text: fallLine(w, it), color: it.state.fallRest || it.state.fallen ? COL.warn : COL.textMuted }, // (Milestone 25: falls happen now)
     ], bars: [{ label: 'Mobility level', value: m.level, color: COL.progress }] });
   }
   const r = st.rehab;
@@ -1938,6 +1953,157 @@ function openPlaceholder(slot) {
   sheet.open(() => ({ title: slot.title, subtitle: slot.text, art: slot.icon, accent: accentNow(), sections: [] }));
 }
 // Business (Milestone 6): the Ledger, and Save and Main Menu (the run is saved first).
+// --- Milestone 25: incidents, outbreaks and emergencies ------------------------------------------------------------------
+// The Nurse Station's Emergency tab (Preparedness and what raises it, the event under way with its responses, supplies,
+// falls, past events), the Inbox (an event waiting for a choice, the after-reports) and Business → Emergency supplies.
+// Every response is free or paid in Credits; none is ever a purchase.
+const EMERGENCY_ICON = 'care_ui_27';
+const BAND_COLOUR = { mild: COL.good, moderate: COL.actionDark, severe: COL.warn };
+const costChip = (c) => (c ? `${credits(c)} Cr` : 'Free');
+const absNowOf = (w) => w.clock.totalDays * 24 + w.hour;
+const emergencyWaiting = () => {
+  const inc = open?.world?.incidents;
+  return inc ? (inc.active && !inc.active.response ? 1 : 0) + inc.reports().length : 0;
+};
+const namesOf = (w, ids) => ids.map((id) => first(w.byId(id)?.name ?? w.residentById(id)?.name ?? id));
+function leftWords(w, ev) {
+  const h = Math.max(0, ev.end - absNowOf(w));
+  return h < 1 ? 'ending now' : h < 20 ? `about ${Math.round(h)} hour${Math.round(h) === 1 ? '' : 's'} left` : `about ${Math.round(h / 24) || 1} day${Math.round(h / 24) === 1 ? '' : 's'} left`;
+}
+// The event under way: what is happening, its band and Preparedness, and its responses (until one is chosen).
+function incidentSection(w, from) {
+  const inc = w.incidents;
+  const ev = inc.active;
+  if (!ev) return null;
+  const tpl = incidentById(ev.kind);
+  const T = ev.targets;
+  const lines = [
+    { text: tpl.text, color: COL.textMuted },
+    { text: `${SEVERITY.names[ev.band]} · Preparedness ${ev.prep.score} when it began · ${leftWords(w, ev)}${ev.hub ? ' · the Emergency Preparedness Hub: impact −15%' : ''}`, color: BAND_COLOUR[ev.band] },
+  ];
+  if (T.residents.length) lines.push({ text: `Unwell: ${namesOf(w, T.residents).join(', ')} (isolation in their rooms)${inc.visitsPaused() ? ' · family visits paused for now' : ''}`, color: COL.actionDark });
+  if (T.facilities.length) lines.push({ text: `Out of action: ${T.facilities.map((id) => facilityById(id)?.name ?? id).join(', ')}${ev.restored ? ' (back on: the generator)' : ''}`, color: ev.restored ? COL.good : COL.actionDark });
+  if (ev.kind === 'equipment') lines.push({ text: 'The lifting hoist is out: getting up, moving and going to bed take longer', color: COL.actionDark });
+  if (ev.kind === 'storm' || ev.kind === 'water') lines.push({ text: ev.kind === 'water' ? 'The kitchen and laundry are slowed; meals are a little plainer' : 'Meals are kept simple until the power is back', color: COL.actionDark });
+  if (T.staff.length) lines.push({ text: `Off sick: ${namesOf(w, T.staff).join(', ')} · the roster's fallback covers the gaps`, color: COL.actionDark });
+  if (T.resident) lines.push({ text: `${first(w.residentById(T.resident)?.name ?? '')} seems very unwell: the six choices are on ${theirOf(T.resident)} card too`, color: COL.actionDark });
+  if (ev.response) lines.push({ text: `Chosen${ev.by === 'auto' ? ' by the home' : ev.by === 'nurse' ? ' by the nurse on shift' : ''}: ${ev.response.name}`, color: COL.good });
+  else lines.push({ text: `Choose a response — or the home will “${tpl.responses.find((r) => r.id === tpl.auto).name.toLowerCase()}” in about ${Math.max(1, Math.ceil(ev.autoAt - absNowOf(w)))} hour${Math.ceil(ev.autoAt - absNowOf(w)) <= 1 ? '' : 's'}. Pausing never makes it worse.`, color: COL.textMuted });
+  const buttons = ev.response
+    ? []
+    : inc.responses().map((r) => ({ id: `inc:${from}:${r.id}`, label: r.name, sub: r.can.ok ? r.text : r.can.reason, cost: costChip(r.cost), disabled: !r.can.ok, icon: EMERGENCY_ICON, accent: r.cost ? COL.progress : COL.action, onTap: () => {
+      if (w.incidents.respond(r.id).ok) autosave.request('incident');
+    } }));
+  return { title: ev.name, titleDot: ev.response ? null : COL.bad, lines, columns: 1, buttons };
+}
+function reportSection(w, h, from) {
+  const R = h.report;
+  const lines = [
+    { text: `${SEVERITY.names[h.band]} · ${h.days} day${h.days === 1 ? '' : 's'} · ${h.response ? `${h.by === 'auto' ? 'the home chose' : h.by === 'nurse' ? 'the nurse chose' : 'you chose'}: ${h.response.name.toLowerCase()}` : 'no response needed'}`, color: BAND_COLOUR[h.band] },
+    ...R.lines.map((t) => ({ text: t, color: COL.actionDark })),
+    { text: `What helped: ${R.helped.length ? R.helped.join('; ') : 'not much was in place yet'}`, color: COL.good },
+    ...(R.next.length ? [{ text: `Next time: ${R.next.join('; ')}`, color: COL.textMuted }] : []),
+    { text: 'The home is back to normal.', color: COL.textMuted },
+  ];
+  return { title: `After the ${h.name.toLowerCase()}`, lines, columns: 1, buttons: [{ id: `incReport:${from}:${h.id}`, label: 'Got it', accent: COL.action, onTap: () => {
+    w.incidents.markSeen(h.id);
+    autosave.request('incident');
+  } }] };
+}
+function fallsLines(w) {
+  const falls = w.incidents.falls();
+  const lines = [{ text: `Falls this month: ${w.incidents.fallsThisMonth()} · so far: ${w.incidents.state.fallCount ?? 0}`, color: COL.actionDark }];
+  for (const f of falls.slice(-3).reverse()) {
+    const help = f.helpedAt != null ? `helped up in ${f.minutes ?? 0} min` : f.alert ? 'got up on their own (nobody came in time)' : 'help on the way';
+    lines.push({ text: `${first(f.name)} · ${agoWord(w, f.day)} · ${f.severity === 'moderate' ? 'a harder fall' : 'a small fall'} · ${help}${f.well ? ' · looked after well' : ''}`, color: COL.textMuted });
+  }
+  lines.push({ text: 'Each resident’s falls risk sets how often: the Falls Prevention Plan (MO05), a Falls-Safe Layout (EN05), a Falls specialist on shift, the Falls Prevention Lab (F19), the Falls Prevention Program and falls research all lower it.', color: COL.textMuted });
+  return lines;
+}
+// The Nurse Station's Emergency tab.
+function emergencySections(w) {
+  const inc = w.incidents;
+  const pr = inc.prep();
+  const band = bandFor(pr.score);
+  const out = [];
+  const ev = incidentSection(w, 'station');
+  if (ev) out.push(ev);
+  for (const h of inc.reports()) out.push(reportSection(w, h, 'station'));
+  out.push({ title: 'Preparedness', lines: [
+    { text: `Preparedness ${pr.score} / 100: an event now would be ${SEVERITY.names[band].toLowerCase()}`, color: BAND_COLOUR[band] },
+    { text: `Mild from ${SEVERITY.moderateBelow}, moderate from ${SEVERITY.severeBelow}. Better prepared: milder, shorter events. Events are rare, end on their own and never need a purchase.`, color: COL.textMuted },
+  ], bars: pr.parts.map((x) => ({ label: x.name, value: x.value, max: x.max, color: x.value >= x.max ? COL.good : x.value > 0 ? COL.progress : COL.textMuted, text: `${Math.round(x.value)}/${x.max}` })) });
+  const raise = pr.parts.filter((x) => x.value < x.max);
+  out.push({ title: 'What raises it', lines: raise.length ? raise.map((x) => ({ text: `${x.name} (${x.detail}): ${x.raise}`, color: COL.textMuted })) : [{ text: 'Everything is in place.', color: COL.good }] });
+  const sp = inc.supplies;
+  out.push({ title: 'Emergency supplies', lines: [{ text: `Stock ${Math.round(sp.stock)} / 100 · ${sp.plan.name}${sp.plan.perWeek ? ` (${sp.plan.perWeek} Credits a week)` : ': it slowly runs down'}`, color: sp.stock >= 60 ? COL.good : sp.stock >= 30 ? COL.actionDark : COL.warn }], bars: [{ label: 'Supplies', value: sp.stock, color: COL.progress }], columns: 1, buttons: [{ id: 'station:supplies', label: 'Emergency supplies', sub: 'A standing order, or a one-off top-up (Business)', icon: EMERGENCY_ICON, accent: COL.action, onTap: () => openSupplies() }] });
+  out.push({ title: 'Falls', lines: fallsLines(w) });
+  const past = inc.history().filter((h) => h.seen).slice(-5).reverse();
+  out.push({ title: 'Past events', lines: past.length ? past.map((h) => ({ text: `${h.name} (${SEVERITY.names[h.band].toLowerCase()}) · ${agoWord(w, Math.floor(h.start / 24))} · ${h.days} day${h.days === 1 ? '' : 's'}${h.response ? ` · ${h.response.name.toLowerCase()}` : ''}`, color: COL.textMuted })) : [{ text: 'None yet. A new home has its first 28 days quiet.', color: COL.textMuted }] });
+  if (debug.enabled) {
+    out.push({ title: 'Debug', columns: 2, buttons: [
+      ...INCIDENTS.map((t) => ({ id: `incDebug:${t.id}`, label: `Start: ${t.name} (debug)`, disabled: !!inc.active, accent: COL.progress, onTap: () => inc.start(t.id) })),
+      { id: 'incDebug:end', label: 'End it now (debug)', disabled: !inc.active, accent: COL.progress, onTap: () => inc.end() },
+      { id: 'incDebug:fall', label: 'A fall now (debug)', sub: 'The first resident who can', accent: COL.progress, onTap: () => w.residents.some((p) => inc.fallNow(p.id).ok) },
+    ] });
+  }
+  return out;
+}
+function openSupplies() {
+  let message = null;
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: 'Emergency supplies', sections: [] };
+    const sp = w.incidents.supplies;
+    const pr = w.incidents.prep().parts.find((x) => x.key === 'supplies');
+    return {
+      title: 'Emergency supplies',
+      subtitle: 'Stock for when things go wrong: part of the home’s Preparedness',
+      art: EMERGENCY_ICON,
+      accent: accentNow(),
+      sections: [
+        ...(message ? [{ lines: [{ text: message, color: COL.bad }] }] : []),
+        { lines: [
+          { text: `Stock ${Math.round(sp.stock)} / 100 · Preparedness +${Math.round(pr.value)} of ${pr.max}`, color: COL.actionDark },
+          { text: `Each event uses some (more in a severe one). Without a standing order the stock runs down by ${SUPPLIES.fadePerDay} a day; an order tops it up by ${SUPPLIES.refillPerDay} a day to its level and is paid weekly.`, color: COL.textMuted },
+        ], bars: [{ label: 'Supplies', value: sp.stock, color: COL.progress }] },
+        { title: 'Standing order', columns: 1, buttons: SUPPLIES.plans.map((p) => ({ id: `supplies:${p.id}`, label: `${sp.plan.id === p.id ? '✓ ' : ''}${p.name}`, sub: p.level ? `Keeps the stock at ${p.level}` : 'Nothing ordered', cost: p.perWeek ? `${p.perWeek} Cr a week` : 'Free', accent: sp.plan.id === p.id ? COL.good : COL.action, onTap: () => {
+          sp.setPlan(p.id);
+          autosave.request('supplies');
+        } })) },
+        { title: 'One-off', columns: 1, buttons: [{ id: 'supplies:topUp', label: `Top up now (+${SUPPLIES.topUp.points})`, sub: 'Straight away', cost: `${credits(SUPPLIES.topUp.cost)} Cr`, disabled: sp.stock >= 100, accent: COL.action, onTap: () => {
+          const r = sp.topUp();
+          message = r.ok ? null : r.reason;
+          if (r.ok) autosave.request('supplies');
+        } }] },
+      ],
+    };
+  });
+}
+function incidentInbox(w) {
+  const out = [];
+  const ev = incidentSection(w, 'inbox');
+  if (ev && !w.incidents.active.response) out.push(ev);
+  for (const h of w.incidents.reports()) out.push(reportSection(w, h, 'inbox'));
+  return out;
+}
+function emergencyLedger(w, range) {
+  const ls = w.ledger.economy.ledger.filter((l) => l.day >= range.fromDay && l.category === LEDGER_CATEGORY_EMERGENCY);
+  const sum = ls.reduce((t, l) => t + l.amount, 0);
+  const evs = w.incidents.history().filter((h) => Math.floor(h.start / 24) >= range.fromDay);
+  return { title: 'Emergencies', lines: [
+    { text: `Events this month: ${evs.length}${w.incidents.active ? ' (one under way)' : ''} · falls this month: ${w.incidents.fallsThisMonth()}`, color: COL.actionDark },
+    { text: `Emergency supplies and responses this month: ${sum ? '−' : ''}${credits(-sum)} Credits`, color: sum ? COL.bad : COL.textMuted },
+    { text: `Preparedness ${w.incidents.prep().score} / 100 (Nurse Station → Emergency)`, color: COL.textMuted },
+  ] };
+}
+function fallLine(w, it) {
+  const st = it.state;
+  const mine = w.incidents.falls().filter((f) => f.resident === it.id);
+  if (st.fallen) return 'Had a fall: help is on the way';
+  if (st.fallRest) return `Resting after a fall: back to activities in ${Math.max(1, st.fallRest.until - w.clock.totalDays)} day${st.fallRest.until - w.clock.totalDays === 1 ? '' : 's'} (the plan is flagged for review)`;
+  return mine.length ? `Falls here: ${mine.length} (last ${agoWord(w, mine[mine.length - 1].day)}) · a lower risk means fewer falls` : 'No falls here · a lower risk means fewer falls';
+}
 function openBusiness() {
   const slot = BOTTOM_SLOTS.find((s) => s.id === 'business');
   sheet.open(() => {
@@ -1956,6 +2122,7 @@ function openBusiness() {
           buttons: [
             { id: 'ledger', label: 'Ledger', sub: `Balance ${credits(b)} Credits · this month and last, line by line`, icon: 'care_ui_05', accent: COL.action, onTap: () => openLedger() },
             ...(open?.world ? [partnersButton(open.world), grantsButton(open.world)] : []), // (Milestone 23)
+            ...(open?.world ? [{ id: 'business:supplies', label: 'Emergency supplies', sub: `Stock ${Math.round(open.world.incidents.supplies.stock)} / 100 · ${open.world.incidents.supplies.plan.name} · Preparedness ${open.world.incidents.prep().score}`, icon: EMERGENCY_ICON, accent: COL.action, onTap: () => openSupplies() }] : []), // (Milestone 25)
             { id: 'mainMenu', label: 'Save and Main Menu', accent: COL.progress, onTap: () => leaveHome() },
           ],
         },
@@ -2268,6 +2435,7 @@ function openLedger() {
       programLedger(w, w.monthRange()),
       researchLedger(w, w.monthRange()),
       clinicalLedger(w, w.monthRange()),
+      emergencyLedger(w, w.monthRange()), // (Milestone 25)
       { columns: 1, buttons: [{ id: 'ledger:back', label: '‹ Back to Business', accent: COL.progress, onTap: () => openBusiness() }] },
     ];
     return { title: 'Ledger', subtitle: `Credits · Month ${c.month}, Year ${c.year}`, art: 'care_ui_05', accent: accentNow(), sections };
@@ -2932,7 +3100,7 @@ function staffMenu(w, p, accent) {
 }
 // from: 'residents' / 'roster' when opened from a bottom-bar list (Milestone 5) — the card then has a way back to it.
 const BACK_TO = { residents: { label: '‹ Back to residents', open: () => openResidents() }, roster: { label: '‹ Back to the roster', open: () => openRoster() } };
-function openHomeSheet(id, from = null) {
+function openHomeSheet(id, from = null, { tab = null } = {}) {
   if (open?.world.residentById(id)) markMissedSeen(id);
   const back = BACK_TO[from];
   const withBack = (menu) => (back ? { ...menu, sections: [{ columns: 1, buttons: [{ id: 'back', label: back.label, accent: COL.progress, onTap: back.open }] }, ...menu.sections] } : menu);
@@ -2987,8 +3155,10 @@ function openHomeSheet(id, from = null) {
       homeScreen.setBuildMode(true);
       homeScreen.pick(it);
     } }] });
+    // Milestone 25: the Nurse Station has two tabs — Clinical (as before) and Emergency (Preparedness, events, supplies, falls)
+    if (it.defId === 'F01') return { title: it.def.name, subtitle: sub, art: sheet.tab === 'emergency' ? EMERGENCY_ICON : it.def.art, accent, tabs: [{ id: 'clinical', label: 'Clinical', sections }, { id: 'emergency', label: 'Emergency', badge: emergencyWaiting() || null, sections: emergencySections(w) }] };
     return { title: it.def.name, subtitle: sub, art: it.def.art, accent, sections };
-  });
+  }, { tab });
 }
 // Leaving the home for the Main Menu: save the run first; a reload after this opens the menu again.
 async function leaveHome() {
@@ -3070,7 +3240,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');
