@@ -51,7 +51,8 @@ export function unlockOf(def, ctx) {
     else if (r.type === 'role') ok = !!ctx.roles?.has(r.role);
     else if (r.type === 'night') ok = !!ctx.night;
     else if (r.type === 'research') ok = !!ctx.researched?.(r.node) || !!ctx.debug; // (Milestone 21: the node is done)
-    else if (r.type === 'partner' || r.type === 'wing') ok = !!ctx.debug; // (Milestones 23 / 24: ?debug=1 only)
+    else if (r.type === 'wing') ok = !!ctx.wings?.has(r.id) || !!ctx.debug; // (Milestone 27: the wing works — its hub stands inside it)
+    else if (r.type === 'partner') ok = !!ctx.debug; // (Milestone 23: ?debug=1 only)
     else ok = false;
     if (!ok) return { ok: false, reason: ruleText(r), lock: r.type };
   }

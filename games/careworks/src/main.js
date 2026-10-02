@@ -124,6 +124,9 @@ import { unlockWords } from './systems/programs.js';
 import { RESEARCH, BRANCHES, researchById, nodeLabel, validateResearch, QUEUES } from '../data/research.js';
 import { FACILITIES } from '../data/facilities.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
+import { AccountBook } from '../../../core/AccountBook.js';
+import { MajorFeedback } from '../../../core/MajorFeedback.js';
+import { BOOK, MEMORIAL, PLAN as EOL_PLAN, ACCOUNT_KEY as EOL_ACCOUNT_KEY } from '../data/endOfLife.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
 import { createSlotsScreen } from './screens/SlotsScreen.js';
 import { createSetupScreen } from './screens/SetupScreen.js';
@@ -177,6 +180,7 @@ const loop = new FixedStepLoop({
     carePops.update(dt);
     dayBeat.update(dt);
     if (bigBeat && (bigBeat.age += dt) >= BIG_BEAT_LIFE) bigBeat = null;
+    memorial.update(dt); // (Milestone 27: real time — the moment waits while the game is paused)
     autosave.tick(dt);
     hintLine.update(dt); // (Milestone 25c)
     dialog.update(dt);
@@ -188,6 +192,10 @@ const loop = new FixedStepLoop({
     sheet.render(ctx);
     if (router.currentName === 'home') drawBigBeat(ctx);
     dialog.render(ctx);
+    if (memorial.active) {
+      memorial.height = renderer.height;
+      memorial.render(ctx); // (Milestone 27)
+    }
     if (onTestScreen()) drawButton(ctx, pauseButton(), loop.paused ? 'RESUME' : 'PAUSE', { selected: loop.paused });
     if (loop.paused) drawPaused(ctx);
     debug.compact = sheet.active || !onTestScreen(); // one FPS line on the menus, the full box on the test screen
@@ -224,12 +232,12 @@ debug.log(`seeded rng check: ${rng.int(0, 9999)} (same every reload)`);
 const pauseButton = () => layout.anchor('top-right', 240, THEME.button.minH, 80);
 router.modal = {
   get active() {
-    return loop.paused || dialog.active;
+    return loop.paused || dialog.active || memorial.active; // (Milestone 27: the memorial moment takes every tap)
   },
-  onTap: (p) => (loop.paused ? loop.resume('tap') : dialog.onTap(p)),
+  onTap: (p) => (loop.paused ? loop.resume('tap') : dialog.active ? dialog.onTap(p) : memorial.onTap()),
   onDown: (p) => dialog.active && dialog.onDown?.(p),
   onUp: (p) => dialog.active && dialog.onUp?.(p),
-  onBack: () => (loop.paused ? loop.resume('back') : dialog.onBack()),
+  onBack: () => (loop.paused ? loop.resume('back') : dialog.active ? dialog.onBack() : memorial.onTap()),
 };
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'p' && e.key !== 'P' && e.key !== ' ') return;
@@ -310,6 +318,7 @@ function openRun(n, data) {
   if (debug.enabled && PARAMS.get('paused') === '1') clock.speed = 0; // ?debug=1&paused=1: open exactly as saved (tests)
   data.economy ??= { ...ECONOMY_START };
   open = { n, data, world, seenMissed: new Set() };
+  keepPages(world.endOfLife.pages(), data.facility.name); // (Milestone 27: any page this campaign has that the account book hasn't)
   vfx.clear();
   carePops.clear();
   dayBeat.current = null;
@@ -327,7 +336,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left', 'care:birthday', 'care:ready', 'care:discharge', 'care:aid', 'care:walk', 'care:walkEnd', 'care:lifeStory', 'home:walkPath', 'care:alert', 'care:alertAction', 'care:alertEnd', 'care:transfer', 'care:back', 'care:roundIssue'],
+  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left', 'care:birthday', 'care:ready', 'care:discharge', 'care:aid', 'care:walk', 'care:walkEnd', 'care:lifeStory', 'home:walkPath', 'care:alert', 'care:alertAction', 'care:alertEnd', 'care:transfer', 'care:back', 'care:roundIssue', 'care:stage', 'care:passed'],
   save: () => saveRun(),
   stamp: () => (open && !spawn ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && !spawn && router.currentName === 'home' && !open.world.clock.paused,
@@ -343,6 +352,7 @@ async function prepareSaves() {
   campaigns = createCampaigns({ adapter, save: SAVE, bus });
   if (debug.enabled && PARAMS.get('reset') === '1') for (const n of campaigns.slots.numbers()) await campaigns.slots.remove(n);
   await campaigns.refresh();
+  await loadMemoryBook(); // (Milestone 27: the account's Memory Book)
   if (debug.enabled) {
     const r = validateResidents(new DataValidator(), RESIDENTS, ROUTINE.map((x) => x.id)).report();
     debug.log(r.ok ? `residents: ${RESIDENTS.length} checked` : `resident data: ${r.errors.join('; ')}`);
@@ -1031,6 +1041,8 @@ function openInbox() {
   open?.world?.items?.markSeen();
   const freshQuality = open?.world?.quality ? [...open.world.quality.unseen()] : []; // (Milestone 26: inspection results)
   open?.world?.quality?.markSeen();
+  const freshStages = open?.world?.endOfLife ? [...open.world.endOfLife.unseen()] : []; // (Milestone 27: care-stage lines)
+  open?.world?.endOfLife?.markSeen();
   sheet.open(() => {
     const w = open?.world;
     if (!w) return { title: 'Inbox', subtitle: TOP_SHEETS.inbox.text, accent: COL.progress, sections: [] };
@@ -1041,6 +1053,7 @@ function openInbox() {
     // Milestone 22: Emergency Credit / a Rescue Investor
     for (const o of w.economy.offers()) sections.push(offerSection(w, o, (m) => (message = m)));
     sections.push(...incidentInbox(w)); // (Milestone 25: an event waiting for a choice; after-reports)
+    sections.push(...eolInbox(w, freshStages)); // (Milestone 27: the comfort-first offer, care-stage lines)
     sections.push(...qualityInbox(w, freshQuality)); // (Milestone 26: inspection results)
     sections.push(...partnerInbox(w)); // (Milestone 23: partnership offers)
     // Milestone 18: alerts — the six high-level choices
@@ -1064,7 +1077,7 @@ function openInbox() {
     }
     const past = w.activities.history().slice(-4).reverse();
     sections.push({ title: 'Earlier', lines: past.length ? past.map((h) => ({ text: `${h.def.name}: ${h.accepted ? 'accepted' : h.auto ? 'no answer (let go)' : 'declined'}`, color: COL.textMuted })) : [{ text: notices.length ? '' : 'Nothing yet. Letters from families, partners and inspectors will arrive here too.', color: COL.textMuted }] });
-    const waiting = notices.length + alertsWaiting() + familyWaiting() + w.economy.offers().length + w.partners.offers().length + emergencyWaiting(); // (Milestone 23; Milestone 25)
+    const waiting = notices.length + alertsWaiting() + familyWaiting() + w.economy.offers().length + w.partners.offers().length + emergencyWaiting() + w.endOfLife.offers().length; // (Milestone 23; Milestone 25; Milestone 27)
     return { title: 'Inbox', subtitle: waiting ? `${waiting} waiting` : 'Nothing waiting', art: 'care_ui_01', accent: accentNow(), sections };
   });
 }
@@ -1379,6 +1392,7 @@ function familySection(w, it) {
   if (rec.meeting) lines.push({ text: `Care-plan meeting booked: ${aheadWord(w, rec.meeting.day)} afternoon${rec.meeting.review ? ' (a review with the family)' : ''}`, color: COL.actionDark });
   if (rec.untold) lines.push({ text: `Not told yet: ${optionById(rec.untold.option)?.name ?? 'a plan change'} (they dislike it). A meeting or a family call tells the family.`, color: COL.warn });
   for (const n of (rec.notes ?? []).slice(-2)) lines.push({ text: `Family wish (${agoWord(w, n.day)}): ${n.text}`, color: COL.actionDark });
+  for (const n of (rec.told ?? []).slice(-1)) lines.push({ text: `Family ${n.text} (${agoWord(w, n.day)})`, color: COL.progress }); // (Milestone 27: a care-stage notice)
   for (const c of w.family.open().filter((x) => x.resident === it.id)) lines.push({ text: `Complaint open: ${c.text}. ${w.family.improvement(c.id).text}`, color: COL.warn });
   const all = familyShown.has(it.id);
   const hist = [...rec.history].reverse().slice(0, all ? 40 : 5);
@@ -1483,6 +1497,16 @@ function qualityTabs(w) {
     { id: 'accreditation', label: 'Accreditation', badge: Q.accreditations().filter((a) => a.status === 'ready' && a.check.pass).length || null, sections: accSections },
     { id: 'benchmark', label: 'Benchmark', sections: benchSections },
     { id: 'inspections', label: 'Inspections', badge: Q.unseen().length || null, sections: inspSections },
+    { id: 'records', label: 'Records', sections: recordSections(w) }, // (Milestone 27)
+  ];
+}
+// Quality → Records (Milestone 27): the Memory Book (account-wide) and how each end-of-life period went — a gentle note
+// where it could have been better, never a penalty.
+function recordSections(w) {
+  const results = [...w.endOfLife.results()].reverse().slice(0, 6);
+  return [
+    { lines: [{ text: 'Your records across every home. A resident passing is never scored: only their comfort, the plan, the family’s support and their wishes are.', color: COL.textMuted }], columns: 1, buttons: [{ id: 'records:book', label: BOOK.title, sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} · ${BOOK.subtitle.toLowerCase()}`, icon: MEMORIAL.art.book, accent: COL.progress, onTap: () => openMemoryBook() }] },
+    { title: 'End-of-life care in this home', lines: results.length ? results.flatMap((r) => [{ text: `${dateWord(w, r.day)} · ${r.name}: comfort ${r.score}${r.good ? ' · a well-supported time' : ''}`, color: r.good ? COL.good : COL.actionDark }, ...(r.note ? [{ text: `What could have been better: ${r.note}`, color: COL.textMuted }] : [])]) : [{ text: 'Nothing yet.', color: COL.textMuted }] },
   ];
 }
 function inspectionSection(w, x) {
@@ -2170,6 +2194,188 @@ function drawBigBeat(ctx) {
   ctx.font = font(THEME.size.body, false);
   ctx.fillText(b.text, W / 2, y + h + 190);
   ctx.restore();
+}
+
+// --- Milestone 27: end of life and the Memory Book --------------------------------------------------------------------
+// The memorial moment (core/MajorFeedback: restrained — the room's light dims softly, a short quiet card with the friends
+// and staff who knew them, then the game carries on), the resident card's Care stage section, the Inbox's care-stage
+// lines and the comfort-first offer, and the Memory Book: kept in the ACCOUNT store (core/AccountBook — never a campaign
+// slot, so a new campaign or New Game+ keeps every page; there is no delete).
+const memoryBook = new AccountBook({ name: EOL_ACCOUNT_KEY, bus });
+let bookSaving = Promise.resolve();
+async function loadMemoryBook() {
+  try {
+    const acc = await campaigns.slots.loadAccount();
+    memoryBook.load(acc?.[EOL_ACCOUNT_KEY]);
+  } catch (err) {
+    debug.log(`memory book: ${err?.message ?? err}`);
+  }
+}
+// Pages into the account book (the home's name added); written to the account store when any is new. → how many new
+function keepPages(pages, home) {
+  const n = memoryBook.merge((pages ?? []).map((p) => ({ ...p, home: p.home ?? home ?? null })));
+  if (n && campaigns) {
+    bookSaving = bookSaving
+      .then(async () => {
+        const acc = await campaigns.slots.loadAccount();
+        memoryBook.load(acc?.[EOL_ACCOUNT_KEY]); // (never drops a page another tab kept)
+        await campaigns.slots.saveAccount({ ...acc, [EOL_ACCOUNT_KEY]: memoryBook.serialize() });
+      })
+      .catch((err) => debug.log(`memory book not saved: ${err?.message ?? err}`));
+  }
+  return n;
+}
+const memorial = new MajorFeedback({ layout, width: W, height: renderer.height, pause: () => {}, minShowSec: 1.6, hint: 'Tap to carry on' });
+let memorialResume = false;
+function showMemorial(e) {
+  const w = open?.world;
+  if (!w) return;
+  const pt = homeScreen.worldPointOfPlace?.(e.room);
+  if (pt && !lowFx()) vfx.sprite('world', MEMORIAL.art.glow, pt.x, pt.y, { size: 340, life: 4.5, from: 0.6, to: 1, hold: 3, alpha: 0.75 });
+  if (!memorial.active) memorialResume = !w.clock.paused;
+  w.clock.pause();
+  const lines = [e.friends.length ? `Friends: ${e.friends.map(first).join(', ')}` : null, (e.staff.length ? e.staff : e.page?.staff ?? []).length ? `The team who knew ${theirOf(e.resident) === 'her' ? 'her' : 'him'}: ${(e.staff.length ? e.staff : e.page.staff).map(first).join(', ')}` : null].filter(Boolean);
+  memorial.show({
+    title: e.name,
+    subtitle: e.card,
+    accent: '#B06A3E',
+    drawFn: (ctx, t) => drawMemorial(ctx, t, e, lines),
+    onAck: () => {
+      if (!memorial.active && memorialResume) open?.world?.clock.resume();
+    },
+  });
+}
+function drawMemorial(ctx, t, e, lines) {
+  // a calm panel in the middle of the safe area (over the dimmed home, never over the bars): the portrait in the Memorial
+  // Glow, then the friends and staff who knew them
+  const k = Math.min(1, t / 0.6);
+  const sr = layout.safeRect;
+  const pw = Math.min(sr.w - 96, 780);
+  const ph = 430 + lines.length * 58;
+  const x = sr.x + (sr.w - pw) / 2;
+  const y = Math.max(sr.y + 260, sr.y + sr.h / 2 - ph / 2 - 140);
+  ctx.save();
+  ctx.globalAlpha = 0.9 * k;
+  ctx.fillStyle = 'rgba(46, 36, 30, 0.9)';
+  ctx.beginPath();
+  ctx.roundRect(x, y, pw, ph, 32);
+  ctx.fill();
+  ctx.globalAlpha = 0.7 * k;
+  assets.draw(ctx, MEMORIAL.art.glow, W / 2 - 230, y - 10, 460, 400);
+  ctx.globalAlpha = k;
+  const ps = 300;
+  assets.drawCrop(ctx, e.art, PORTRAIT_CROP, { x: W / 2 - ps / 2, y: y + 40, w: ps, h: ps });
+  if (e.good) assets.draw(ctx, MEMORIAL.art.star, W / 2 + ps / 2 - 30, y + 30, 100, 100); // (a well-supported time: the Memory Book Star)
+  ctx.fillStyle = '#FFF4DC';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = font(THEME.size.body, false);
+  lines.forEach((l, i) => ctx.fillText(l, W / 2, y + 400 + i * 58, pw - 60));
+  ctx.restore();
+}
+bus.on('care:passed', (e) => {
+  keepPages([e.page], open?.data?.facility?.name);
+  debug.log(`passed peacefully: ${e.name} (comfort ${e.score})`);
+  if (open && !spawn) showMemorial(e);
+});
+// The resident card's Care stage section: the stage and its forecast line, their wishes, the comfort-first offer, the
+// palliative support meeting and the comfort score so far (Approaching end of life / Final days).
+function stageSection(w, it) {
+  const E = w.endOfLife;
+  const f = E.forecast(it.id);
+  if (!f) return null;
+  const lines = [{ text: f.stage.line, color: f.stage.id === 'settled' ? COL.actionDark : COL.progress }];
+  if (!f.eligible && f.stage.id === 'settled') lines.push({ text: 'A short stay: care stages are only for residents living here for good', color: COL.textMuted });
+  if (f.stage.id !== 'settled') lines.push({ text: `${f.stage.name} for ${f.days} day${f.days === 1 ? '' : 's'}${f.slowed ? ` · good care has slowed this by ${f.slowed} day${f.slowed === 1 ? '' : 's'}` : ''}. Changes come slowly; the next one is always shown here first.`, color: COL.textMuted });
+  if (f.told.length) lines.push({ text: `Family told (${agoWord(w, f.told.at(-1).day)})`, color: COL.good });
+  const sections = [{ title: 'Care stage', titleDot: f.stage.id === 'settled' ? null : COL.progress, lines }];
+  if (debug.enabled && f.eligible) {
+    sections[0].columns = 1;
+    sections[0].buttons = [f.next ? { id: `eol:debugNext:${it.id}`, label: `Next stage (debug): ${f.next.name}`, sub: 'Starts it now, as in play (the forecast, the Inbox line, the family told)', accent: COL.progress, onTap: () => {
+      E.setStageForTests(it.id, f.next.id, f.next.id === 'final' ? { due: 0 } : {});
+      autosave.request('debug');
+    } } : { id: `eol:debugPass:${it.id}`, label: 'Pass now (debug)', sub: 'The memorial moment and the Memory Book page now', accent: COL.progress, onTap: () => {
+      sheet.close();
+      E.passNowForTests(it.id);
+    } }];
+  }
+  if (!E.inEol(it.id)) return sections;
+  const wish = E.wishes(it.id);
+  const c = E.comfortNow(it.id);
+  const plan = it.state.plan ?? {};
+  const onPlan = Object.entries(EOL_PLAN.options).every(([d, o]) => plan[d] === o);
+  const rec = w.family.recordOf(it.id);
+  const buttons = [
+    { id: `eol:plan:${it.id}`, label: onPlan ? 'Comfort care in place' : 'Switch to comfort care', sub: onPlan ? 'Palliative Comfort Plan and Family Setup on the plan' : EOL_PLAN.offer(first(it.name)), disabled: onPlan, accent: COL.action, onTap: () => {
+      const r = w.endOfLife.acceptPlan(it.id);
+      eolMessage = r.ok ? null : r.reason;
+      if (r.ok) autosave.request('eol');
+    } },
+  ];
+  if (rec?.contact) {
+    const can = w.family.canBook();
+    buttons.push({ id: `eol:meet:${it.id}`, label: rec.meeting ? 'Meeting booked' : 'Palliative support meeting', sub: rec.meeting ? `${aheadWord(w, rec.meeting.day)} afternoon` : can ? `The Founder or a nurse sits with ${rec.contact.name}: what to expect, and how to stay close` : 'Needs the Founder or a nurse on the Afternoon shift', disabled: !!rec.meeting || !can, accent: COL.action, onTap: () => bookMeeting(w, it.id, { kind: 'palliative' }) });
+  }
+  sections.push({ title: 'Their wishes', lines: [...wish.map((x) => ({ text: x.text, color: COL.actionDark })), ...(eolMessage ? [{ text: eolMessage, color: COL.bad }] : [])], columns: 1, buttons });
+  if (c) sections.push({ title: `Comfort so far: ${c.score}`, lines: [{ text: 'Judged only on comfort, the plan, the family’s support, familiar faces, their wishes and staffing. Never on the passing itself.', color: COL.textMuted }, ...(c.boosts ? [{ text: `Boosts: +${c.boosts} (Palliative Practice, the Family Lounge, a Palliative Suite, the program, the wing hub)`, color: COL.good }] : [])], bars: c.parts.map((p) => ({ label: p.label, value: p.value, color: p.value >= 70 ? COL.good : p.value >= 50 ? COL.actionDark : COL.warn, text: `${p.value}` })) });
+  return sections;
+}
+let eolMessage = null;
+// The Inbox: new care-stage lines (and the passing notes), and each open comfort-first offer.
+function eolInbox(w, fresh) {
+  const E = w.endOfLife;
+  const out = [];
+  for (const id of E.offers()) {
+    const p = w.residentById(id);
+    if (!p) continue;
+    out.push({ title: `${p.name}: comfort care offered`, lines: [{ text: EOL_PLAN.offer(first(p.name)), color: COL.actionDark }, { text: 'Never forced: the plan stays as it is unless you switch it.', color: COL.textMuted }], columns: 2, buttons: [
+      { id: `eolInbox:accept:${id}`, label: 'Switch to comfort care', sub: 'CL08 and EN08 on the plan', accent: COL.good, onTap: () => {
+        E.acceptPlan(id);
+        autosave.request('eol');
+      } },
+      { id: `eolInbox:keep:${id}`, label: 'Keep the plan', sub: 'Switch later from the card', accent: COL.progress, onTap: () => {
+        E.keepPlan(id);
+        autosave.request('eol');
+      } },
+    ] });
+  }
+  if (fresh.length) out.push({ title: 'Care stages', lines: fresh.slice(-6).reverse().map((n) => ({ text: `${agoWord(w, n.day)}: ${n.text}`, color: n.stage === 'passed' ? COL.actionDark : COL.progress })), columns: 1, buttons: [{ id: 'eolInbox:book', label: 'Memory Book', sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} kept`, icon: MEMORIAL.art.book, accent: COL.progress, onTap: () => openMemoryBook() }] });
+  return out;
+}
+// The Memory Book (Quality → Records, and the Menu): a page per resident who passed at any of your homes, newest first.
+function openMemoryBook() {
+  sheet.open(() => {
+    const pages = [...memoryBook.list].reverse();
+    return {
+      title: BOOK.title,
+      subtitle: pages.length ? `${pages.length} page${pages.length === 1 ? '' : 's'} · ${BOOK.subtitle}` : BOOK.subtitle,
+      art: MEMORIAL.art.book,
+      accent: '#B06A3E',
+      sections: pages.length
+        ? [{ lines: [{ text: 'Kept for good across every home and New Game+. Pages can be read; nothing here can be removed.', color: COL.textMuted }], columns: 1, buttons: pages.map((p) => ({ id: `book:${p.id}`, label: p.name, sub: `${p.time} at ${p.home ?? 'the home'} · ${p.passed}`, icon: p.art, iconCrop: PORTRAIT_CROP, accent: COL.progress, onTap: () => openMemoryPage(p.id) })) }]
+        : [{ lines: [{ text: BOOK.empty, color: COL.textMuted }] }],
+    };
+  });
+}
+function openMemoryPage(id) {
+  sheet.open(() => {
+    const p = memoryBook.get(id);
+    if (!p) return { title: BOOK.title, sections: [] };
+    const they = p.pronoun === 'she' ? 'She' : 'He';
+    return {
+      title: p.name,
+      subtitle: `${p.time} at ${p.home ?? 'the home'} · ${p.arrived} to ${p.passed}`,
+      art: p.art,
+      accent: '#B06A3E',
+      sections: [
+        { columns: 1, buttons: [{ id: 'book:back', label: '‹ Memory Book', accent: COL.progress, onTap: () => openMemoryBook() }] },
+        { lines: [{ text: `${they} loved ${String(p.interest ?? 'good company').toLowerCase()}.`, color: COL.actionDark }, ...(p.beside ? [{ text: `Passed peacefully, with ${p.beside} beside ${they === 'She' ? 'her' : 'him'}.`, color: COL.actionDark }] : [])] },
+        { title: 'Friendships', lines: p.friends.length ? p.friends.map((n) => ({ text: n, color: COL.actionDark })) : [{ text: 'Friendly with everyone', color: COL.textMuted }] },
+        { title: 'Story moments', lines: p.moments.map((m) => ({ text: `${m.when}: ${m.text}`, color: COL.actionDark })) },
+        { title: 'The staff who knew them best', lines: p.staff.length ? p.staff.map((n) => ({ text: n, color: COL.actionDark })) : [{ text: 'The whole team', color: COL.textMuted }] },
+      ],
+    };
+  });
 }
 
 function openPlaceholder(slot) {
@@ -3037,6 +3243,7 @@ function residentSections(w, it) {
   return [
     { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `${room} · Support Level ${w.levelOf(it.id) ?? supportLevel(it.def)} · funding ${credits(fundingOf(w.levelOf(it.id) ?? 1))}, required care ${credits(requiredCost(w.levelOf(it.id) ?? 1).total)} a month`, `${WAKE.windows[wakeWindowOf(it.def)].name} · gets up at ${clockText(st.wakeAt ?? 7)}`, { text: stayLine(w, it), color: st.stay ? COL.actionDark : COL.textMuted }] },
     { title: 'Life story', lines: [it.def.story, { text: (st.tags?.length ? st.tags : it.def.tags).join(' · '), color: COL.actionDark }, ...(st.returning ? [{ text: 'Returning: stayed here before', color: COL.good }] : [])] },
+    ...(stageSection(w, it) ?? []), // (Milestone 27)
     planSection(w, it),
     ...healthSections(w, it),
     { title: 'Tasks today', lines: taskLines(w, it) },
@@ -3445,6 +3652,7 @@ const MENU_OPEN = {
   research: () => openResearch(),
   quality: () => openQuality(),
   complaints: () => openComplaints(), // (Milestone 26: Quality is the hub now)
+  memoryBook: () => openMemoryBook(), // (Milestone 27: account-wide)
   family: () => placedOf('F09') && openHomeSheet(placedOf('F09').id),
   business: () => openBusiness(),
   partners: () => openPartners(),
@@ -3468,6 +3676,7 @@ function menuState(id) {
   if (id === 'inbox' && inboxCountNow()) return { badge: inboxCountNow() };
   if (id === 'carePlans' && w.stalePlans().length) return { badge: w.stalePlans().length };
   if (id === 'roster' && w.coverage.warnings().length) return { badge: w.coverage.warnings().length };
+  if (id === 'memoryBook') return { sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} · kept for good across every home` };
   return {};
 }
 function openNavMenu() {
@@ -3500,10 +3709,10 @@ registerItemArt(assets, { types: ITEM_TYPES, groups: ITEM_GROUPS, rarities: ITEM
 
 // The Inbox count: everything waiting, plus care equipment that arrived since the Inbox was last opened.
 function inboxBase() {
-  return (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting() + (open?.world?.economy?.offers().length ?? 0) + (open?.world?.partners?.offers().length ?? 0) + emergencyWaiting();
+  return (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting() + (open?.world?.economy?.offers().length ?? 0) + (open?.world?.partners?.offers().length ?? 0) + emergencyWaiting() + (open?.world?.endOfLife?.offers().length ?? 0); // (Milestone 27: a comfort-first offer)
 }
 function inboxCountNow() {
-  return inboxBase() + (open?.world?.items?.unseen().length ?? 0) + (open?.world?.quality?.unseen().length ?? 0); // (Milestone 26: inspection results)
+  return inboxBase() + (open?.world?.items?.unseen().length ?? 0) + (open?.world?.quality?.unseen().length ?? 0) + (open?.world?.endOfLife?.unseen().length ?? 0); // (Milestone 26: inspection results; Milestone 27: care-stage lines)
 }
 
 // The next-step hint line (data/menu.js NEXT_HINTS): the first that holds is shown; tapping it opens the right sheet.
@@ -3737,7 +3946,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

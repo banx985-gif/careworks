@@ -13,6 +13,7 @@
 //       activityPct      activity lifts + value%                        mealQuality  meal quality + value points
 //       energyPct        Energy used on shift + value% (negative: tire more slowly)
 //       meetingPct       family-meeting Trust + value%                  trustPct     every Family Trust gain + value%
+//       comfortScore     the end-of-life comfort score + value points (Milestone 27)
 //     later: 'Mnn'   stored and shown: its system comes in that milestone ("comes into play later")
 export const BRANCHES = [
   { id: 'CLN', name: 'Clinical', icon: 'care_ui_03', colour: '#3E7CB1' },
@@ -40,7 +41,7 @@ export const RESEARCH = [
   n('CLN3', 'Skin Care Practice', 'Skin checks and gentle skin care done well', // (M18 rule: the bible's name was a diagnosis word)
     { effects: [fx('taskPct.observation', 8, 'Health checks go 8% further')] }),
   n('CLN4', 'Clinical Escalation', 'Knowing when and how to escalate', { effects: [fx('resolvePct', 8, 'Alert actions settle a further 8% more often')] }),
-  n('CLN5', 'Palliative Practice', 'Comfort-first care at the end of life', { extra: ['PER4'], later: 'M27' }),
+  n('CLN5', 'Palliative Practice', 'Comfort-first care at the end of life', { extra: ['PER4'], effects: [fx('comfortScore', 6, 'End-of-life comfort score +6')] }), // (Milestone 27)
   n('CLN6', 'Advanced Clinical Leadership', 'Clinical leadership across the home', { effects: [fx('roundSafety', 4, 'Medicine-round safety +4'), fx('taskPct.meds', 5, 'Medicine rounds go 5% further')] }),
   // --- Personal care ---
   n('PER1', 'Dignity & Choice', 'Personal care that keeps dignity and choice', { effects: [fx('taskPct.personal', 5, 'Personal care goes 5% further')] }),
@@ -81,7 +82,7 @@ export const RESEARCH = [
 export const researchById = (id) => RESEARCH.find((x) => x.id === id) ?? null;
 // "Reablement (MOB4)"
 export const nodeLabel = (id) => (researchById(id) ? `${researchById(id).name} (${id})` : id);
-export const EFFECT_KEYS = ['roundSafety', 'resolvePct', 'falls', 'rehabPct', 'memoryPct', 'familiarPct', 'activityPct', 'mealQuality', 'energyPct', 'meetingPct', 'trustPct'];
+export const EFFECT_KEYS = ['roundSafety', 'resolvePct', 'falls', 'rehabPct', 'memoryPct', 'familiarPct', 'activityPct', 'mealQuality', 'energyPct', 'meetingPct', 'trustPct', 'comfortScore']; // (Milestone 27: comfortScore)
 
 // Queues (§26): one slot to start. The second opens with the Staff Education Centre (F27) — facility progression. VIP
 // (Milestone 36) is only a hook here: an entitlement that can open the second slot, never skip a prerequisite (core

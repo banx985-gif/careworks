@@ -101,6 +101,10 @@
 //   world.moveStaff(id, shiftId | 'off') · world.setFloat(id, on) · world.setOnCall(on)
 //   world.layout (src/systems/homeLayout.js) · world.floor · world.stage · world.roomNumber(id) · world.spotTile(ref)
 //   world.build.place(defId, col, row) / move(uid, col, row) / sell(uid) / upgrade() / check(…) → { ok, reason, … }
+//   world.endOfLife (Milestone 27): stageOf(id) · forecast(id) · wishes(id) · comfortNow(id) · acceptPlan(id) / keepPlan(id)
+//                    · offers() · notes() / unseen() / markSeen() · results() · pages() · passings() · heldUntil(roomId)
+//                    bus: 'care:stage' { resident, name, stage } · 'care:passed' { resident, name, room, card, beside,
+//                    friends, staff, page, score, good, poor, note, lift }
 //   world.serialize() → { clock, residents, staff, care, admissions, ledger, layout }   (the run save; the page keeps the rest)
 import { Grid } from '../../../../core/Grid.js';
 import { Agent } from '../../../../core/Agent.js';
@@ -172,6 +176,8 @@ import { incidentById, FALLS_INCIDENT, INCIDENT_TASKS, PREPAREDNESS } from '../.
 import { createIncidents, ensureIncidents, fallChance } from './incidents.js';
 import { createQuality, ensureQualityState } from './quality.js';
 import { READINGS } from '../../data/quality.js';
+import { stageById, EOL_STAGES, PACE, GOOD_CARE, COMFORT, SIGNAL, MEMORIAL, BOOK, PLAN as EOL_PLAN, WISHES } from '../../data/endOfLife.js';
+import { ensureEolState, ensureResidentEol, eligible as eolEligible, weeklyChance, stageLength, nextStage, newAcc, comfortOf, signalLift, familyResult, betterNote, wishesOf, timeAt } from './endOfLife.js';
 
 // The default layout (Milestones 1–9, and a new home): its wall tiles, its grid and its spots. The home world uses its
 // own live layout; these are for older saves' upgrades and the tests.
@@ -421,6 +427,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
 
   // --- care tasks (Milestone 4) --------------------------------------------------------------------------------
   const care = ensureCareState(careSaved);
+  // Milestone 27: end of life (the section further down); an M26 save: everyone Settled, nothing held, no pages
+  const eol = (care.eol = ensureEolState(care.eol));
+  const eolOf = (p) => (p ? ensureResidentEol(p.state) : null);
+  const stageOf = (p) => (p ? eolOf(p).stage : 'settled');
+  const inEol = (p) => EOL_STAGES.includes(stageOf(p));
   const progState = (care.programs = ensureProgramState(care.programs)); // (Milestone 20; an M19 save: none running)
   const assignSys = new AssignmentSystem({ staff: sys, getJobs: () => care.tasks.filter((t) => t.status === 'claimed' || t.status === 'working') });
   const absNow = () => absHour(clock.totalDays, hourNow());
@@ -516,7 +527,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const cur = acts.session(day, slot);
       const started = cur && (cur.joined.length || cur.declined.length || (day === clock.totalDays && hourNow() >= TIMETABLE.slots[slot].at - 0.5));
       if (cur && (!force || started)) continue;
-      acts.planSession(day, slot, sessionInfo(day, slot), inSession(), friendIds);
+      acts.planSession(day, slot, sessionInfo(day, slot), inSession().filter((p) => stageOf(p) !== 'final'), friendIds); // (Milestone 27: the final days are quiet ones)
     }
   }
   const routineTask = (p, stepId, day) => care.tasks.find((t) => t.source === 'routine' && t.stepId === stepId && t.day === day && t.resident === p.id) ?? null;
@@ -830,6 +841,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function cantCome(p, meal, day) {
     const n = p.state.needs;
     if (p.state.unwell) return 'unwell: isolation care in their room'; // (Milestone 25: an outbreak)
+    if (stageOf(p) === 'final') return 'resting in their room, with company close'; // (Milestone 27)
     if (n.mobility >= TRAY.bedMobility) return 'resting in bed today';
     if (n.clinical >= TRAY.unwellClinical) return 'feeling unwell';
     if (meal.id === 'breakfast' && routineTask(p, 'wake', day)?.status === 'missed') return 'still in bed';
@@ -1501,6 +1513,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const pev = s.event ? COMMUNITY_EVENTS.find((e) => e.id === s.event && e.partner) : null;
       if (pev) items.rollSource('partnerEvent', { why: pev.name });
     }
+    if (s.event && !s.joined.includes(p.id)) addMoment(p, 'event', { name: COMMUNITY_EVENTS.find((e) => e.id === s.event)?.name ?? act.name }); // (Milestone 27: the Memory Book)
     if (!s.joined.includes(p.id)) s.joined.push(p.id);
     if (feeling === 'love' || feeling === 'like' || s.birthday) p.state.lastLikedDay = day;
     delete p.state.wouldEnjoy;
@@ -2183,6 +2196,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     fh.meetings = (fh.meetings ?? 0) + 1;
     partners?.record('familyReview', { resident: p.id, kind: m.kind, review: !!m.review }); // (Milestone 23)
     if (m.kind === 'partnership') countFor(progState.running.PRG06, p.id, 'joined'); // (Milestone 20: a partnership meeting held)
+    if (m.kind === 'palliative' && inEol(p)) (eolOf(p).acc ??= newAcc(clock.totalDays)).meeting = true; // (Milestone 27: the family supported)
     const change = trust(p, lift, `${MEETING_KINDS[m.kind]?.name ?? 'Care-plan meeting'} with ${helperName(q.id)}${pct ? ' (Family Room)' : ''}`, 'meeting');
     log(p, `Family meeting with ${helperName(q.id)}: ${fromWord(p)}'s wish noted — "${note}" (Family Trust ${signedN(change)})`);
     let first = false;
@@ -2212,7 +2226,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const rec = familyOf(p);
     if (!rec?.contact) return { ok: false, reason: 'No family to meet' };
     if (p.state.leaving || p.state.away) return { ok: false, reason: 'Not here right now' };
-    if (MEETING_KINDS[kind]?.stored) return { ok: false, reason: 'Comes in a later update' };
+    if (MEETING_KINDS[kind]?.eol && !inEol(p)) return { ok: false, reason: 'Offered once they are approaching the end of life' }; // (Milestone 27)
     if (rec.meeting) return { ok: false, reason: `Booked for ${dayWord(rec.meeting.day)} afternoon` };
     if (!attendeeRostered()) return { ok: false, reason: 'Needs the Founder or a nurse on the Afternoon shift' };
     const today = clock.totalDays;
@@ -2699,7 +2713,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
   }
   // What the rules read: placed facilities, the team's roles, the Night shift, the debug switch.
-  const programCtx = () => ({ researched: (id) => !!research?.has(id), facilities: facilityIds(), roles: teamRoles(), night: team().some((q) => roster.shiftOf(q.id)?.id === 'night' && !roster.isTraining(q.id)), debug: !!progState.debug });
+  const programCtx = () => ({ researched: (id) => !!research?.has(id), facilities: facilityIds(), roles: teamRoles(), night: team().some((q) => roster.shiftOf(q.id)?.id === 'night' && !roster.isTraining(q.id)), wings: new Set(WINGS_SPECIAL.filter((w) => layout.wings.active(w.id)).map((w) => w.id)), debug: !!progState.debug }); // (Milestone 27: working wings)
   const hoursPeople = () => team().map((q) => ({ id: q.id, role: q.role, shift: roster.shiftOf(q.id)?.id ?? null, training: roster.isTraining(q.id) }));
   const programHours = (d) => hoursFor(d, { people: hoursPeople(), state: progState });
   // Can it start now? → { ok, reason }
@@ -2716,7 +2730,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (ledger.balance < d.resources.weeklyCost) return { ok: false, reason: `Not enough Credits for a week (${d.resources.weeklyCost})` };
     return { ok: true, reason: null };
   }
-  function startProgram(id, { wing = 'home' } = {}) {
+  function startProgram(id, { wing = programById(id)?.unlock.find((r) => r.type === 'wing')?.id ?? 'home' } = {}) { // (Milestone 27: a wing's own program runs in that wing)
     const c = canStartProgram(id);
     if (!c.ok) return c;
     progState.running[id] = newRun(id, clock.totalDays, wing);
@@ -3234,14 +3248,265 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (clin < M.clinical || mood < M.mood) return 0;
     return research.addRp(M.rp, `A good month of care (${label})`, 'month');
   }
+  // --- Milestone 27: end of life and the Memory Book ------------------------------------------------------------------
+  // (src/systems/endOfLife.js, data/endOfLife.js) Slow, forecast care stages for residents living here for good; the
+  // comfort-first plan offered (never forced); the comfort score of the end-of-life period; the memorial moment and the
+  // Memory Book page. Nothing here takes a score, Credits or Rank away: a passing is never a failure, and only good care
+  // changes the pace (it slows it).
+  let eolPaceMult = 1; // (tests and ?debug=1 only: × the weekly chance; never saved)
+  const yearDays = () => clock.daysPerMonth * clock.monthsPerYear;
+  const yearsHere = (p) => Math.floor((clock.totalDays - (p.state.admittedDay ?? 0)) / yearDays());
+  const roomDefOf = (p) => roomList().find((r) => r.id === p.state.room)?.defId ?? null;
+  // A good day of care (it slows a stage): Comfort and Mood high enough, and none of their essential care missed.
+  function goodCareDay(p, day) {
+    const o = p.state.outcomes;
+    if (o.comfort < GOOD_CARE.comfort || o.mood < GOOD_CARE.mood) return false;
+    return !care.tasks.some((t) => t.resident === p.id && t.day === day && t.essential && t.status === 'missed');
+  }
+  // A story moment for the Memory Book (their birthday tea, cheering a friend home, a community event joined).
+  function addMoment(p, kind, x = {}) {
+    if (!p || p.state.guest) return;
+    const m = (p.state.moments ??= []);
+    m.push({ day: clock.totalDays, kind, ...x });
+    if (m.length > BOOK.momentsKept) m.splice(0, m.length - BOOK.momentsKept);
+  }
+  // A stage starts: its seeded length, the Inbox line, the family told, the card's forecast line.
+  function enterStage(p, stage) {
+    const e = eolOf(p);
+    e.n = (e.n ?? 0) + 1;
+    e.stage = stage;
+    e.since = clock.totalDays;
+    e.slow = 0;
+    const len = stageLength(stage, seed, p.id, e.n);
+    e.due = len == null ? null : clock.totalDays + len;
+    if (EOL_STAGES.includes(stage)) e.acc ??= newAcc(clock.totalDays);
+    if (stage === 'approaching') e.offer = DOMAINS.every((d) => !EOL_PLAN_IDS.includes(p.state.plan?.[d.id])) ? 'open' : null;
+    if (stage === 'final') {
+      // never two passings in the same week: the final days wait for the gap after the last passing
+      const last = Math.max(-Infinity, ...eol.passings.map((x) => x.day));
+      e.due = Math.max(e.due, last + PACE.passingGapDays);
+      const r = new Rng(`${seed}:eolHour:${p.id}:${e.n}`);
+      e.passAt = absHour(e.due, PACE.hours[0] + r.next() * (PACE.hours[1] - PACE.hours[0]));
+    }
+    const s = stageById(stage);
+    const rec = familyOf(p);
+    if (rec?.contact && s.family) {
+      rec.told = [...(rec.told ?? []), { day: clock.totalDays, text: s.family(first(p.name)) }].slice(-6);
+      e.told.push({ day: clock.totalDays, stage });
+      if (e.acc) e.acc.told = true;
+    }
+    if (s.inbox) {
+      eol.notes.push({ uid: eol.nextNote++, day: clock.totalDays, resident: p.id, name: p.name, stage, text: s.inbox(first(p.name)), seen: false });
+      if (eol.notes.length > 30) eol.notes.shift();
+    }
+    log(p, s.line);
+    bus?.emit('care:stage', { resident: p.id, name: p.name, stage, stageName: s.name });
+  }
+  // One end-of-life day into the comfort record (yesterday's tasks, plan, family, familiar faces, wishes, staffing).
+  function eolAccumulate(p, day) {
+    const e = eolOf(p);
+    const a = (e.acc ??= newAcc(day));
+    a.days += 1;
+    const tasks = care.tasks.filter((t) => t.resident === p.id && t.day === day);
+    a.tasksDone += tasks.filter((t) => t.status === 'done').length;
+    a.tasksMissed += tasks.filter((t) => t.status === 'missed').length;
+    const plan = p.state.plan ?? {};
+    a.plan += (plan.CL === 'CL08' ? COMFORT.plan.CL08 : 0) + (plan.EN === 'EN08' ? COMFORT.plan.EN08 : 0);
+    const rec = familyOf(p);
+    if (!rec?.contact) a.noFamily = true;
+    else if ((rec.lastVisit != null && rec.lastVisit >= a.from) || hasPiece('F24')) a.close = true;
+    const ids = team().filter((q) => roster.shiftOf(q.id)).map((q) => q.id);
+    const familiar = ids.some((id) => familiarityOf(care, p.id, id) >= COMFORT.familiarAt);
+    if (familiar) a.familiar += 1;
+    // their wishes: something they enjoy (company, a visit, a session joined), who they want near, the place
+    const joy = tasks.some((t) => t.status === 'done' && (t.optionId === 'CL08' || t.domain === 'SO' || t.type === 'visit')) || Object.keys(TIMETABLE.slots).some((slot) => acts.session(day, slot)?.joined?.includes(p.id)) || rec?.lastVisit === day;
+    const friendHere = topFriends(care, p.id, seated().map((q) => q.id), 3).some((r) => r.friendship >= FRIENDSHIP.friendAt);
+    const near = rec?.contact ? (rec.lastVisit != null && rec.lastVisit >= a.from) || !!eolOf(p).acc?.meeting : friendHere || familiar;
+    const place = wishesOf(p.def).find((w) => w.id === 'place');
+    const placeOk = !place.garden || hasPiece(EOL_GARDEN) || roomDefOf(p) === 'RM07';
+    a.wishes += ((joy ? 1 : 0) + (near ? 1 : 0) + (placeOk ? 1 : 0)) / 3;
+    const recs = staffState.coverage.history.filter((h) => h.day === day);
+    a.coverage += recs.length ? recs.filter((h) => h.safe).length / recs.length : SHIFT_IDS.filter((sid) => team().some((q) => roster.shiftOf(q.id)?.id === sid)).length / SHIFT_IDS.length; // (no coverage records: shifts with anyone on them)
+  }
+  // The boosts on the comfort score: CLN5, the F24 lounge (× its level), their own Palliative Suite, PRG10 in their wing,
+  // the F32 hub.
+  function comfortBoosts(p) {
+    const B = COMFORT.boosts;
+    let b = rb('comfortScore'); // (CLN5 Palliative Practice: research)
+    if (hasPiece('F24')) b += B.F24 * lvOf('F24');
+    if (roomDefOf(p) === 'RM07') b += B.RM07;
+    if (programOn('PRG10', p)) b += programById('PRG10').effects.comfortScore ?? B.PRG10;
+    if (hasPiece('F32')) b += B.F32;
+    return Math.round(b * 10) / 10;
+  }
+  const comfortNow = (p) => comfortOf(eolOf(p).acc ?? newAcc(clock.totalDays), comfortBoosts(p));
+  // Each midnight: the weekly check for Settled residents, stages under way (good care slows them; one at a time into
+  // the final days), yesterday into the comfort record, grief easing, held rooms opening.
+  function eolDay(day) {
+    for (const [room, until] of Object.entries(eol.held)) if (until <= day) delete eol.held[room];
+    for (const [id, left] of Object.entries(eol.grief.staff)) {
+      const back = Math.min(left, MEMORIAL.staffRecover * (hasPiece(MEMORIAL.staffRoom) ? MEMORIAL.staffRoomMult : 1));
+      const q = crew.byId(id);
+      if (q && !q.leftTeam) q.model.morale = clamp(q.model.morale + back);
+      if (left - back <= 0.001) delete eol.grief.staff[id];
+      else eol.grief.staff[id] = left - back;
+    }
+    for (const p of seated()) {
+      const st = p.state;
+      if (st.grief > 0) st.grief = Math.max(0, st.grief - MEMORIAL.friendRecover); // (their Mood drifts back on its own)
+      const e = eolOf(p);
+      if (e.stage === 'settled') {
+        if (day % PACE.checkEvery !== 0 || !joined(p) || !eolEligible(p.def, st) || st.away) continue;
+        const chance = weeklyChance({ age: p.def.age, years: yearsHere(p), level: levelOf(p), good: goodCareDay(p, day - 1) }) * eolPaceMult;
+        if (new Rng(`${seed}:eolWeek:${p.id}:${day}`).next() < chance) enterStage(p, 'more');
+        continue;
+      }
+      if (EOL_STAGES.includes(e.stage)) eolAccumulate(p, day - 1);
+      const s = stageById(e.stage);
+      if (e.stage !== 'final' && goodCareDay(p, day - 1) && e.slow < s.slowMax) e.slow = Math.min(s.slowMax, e.slow + PACE.slowPerDay);
+      if (e.stage === 'final' || e.due == null || day < e.due + Math.floor(e.slow)) continue;
+      const next = nextStage(e.stage);
+      // one resident in the final days at a time: anyone else waits a day
+      if (next === 'final' && seated().some((q) => q !== p && stageOf(q) === 'final')) continue;
+      enterStage(p, next);
+    }
+  }
+  // Each frame: a resident in the final days passes peacefully at the quiet hour planned (later if they are away).
+  function eolTick() {
+    for (const p of [...residents]) {
+      const e = p.state.eol;
+      if (!e || e.stage !== 'final' || e.passAt == null || p.state.leaving || p.state.guest) continue;
+      if (absNow() < e.passAt) continue;
+      if (p.state.away || p.state.fallen) {
+        e.passAt = absNow() + 2;
+        continue;
+      }
+      passPeacefully(p);
+    }
+  }
+  // Who was beside them: their family when they stayed close (a visit in the final days, or the palliative meeting),
+  // else the familiar face on shift.
+  function besideOf(p) {
+    const rec = familyOf(p);
+    const e = eolOf(p);
+    const finalFrom = e.since ?? clock.totalDays;
+    if (rec?.contact && ((rec.lastVisit != null && rec.lastVisit >= finalFrom) || e.acc?.meeting || hasPiece('F24'))) return `${theirOf(p.id)} ${rec.contact.relation.toLowerCase()} ${rec.contact.name}`;
+    const on = team().filter((q) => roster.onShift(q.id));
+    const f = topFamiliar(care, { residentId: p.id }, on.map((q) => q.id), 1)[0];
+    return f ? helperName(f.staff) : null;
+  }
+  // The Memory Book page: name, portrait, time at the home, favourite interest, friendships, story moments, the staff
+  // they knew best (plain text only, so the account copy never needs this campaign).
+  function memoryPage(p, result, beside) {
+    const st = p.state;
+    const day = clock.totalDays;
+    const from = st.admittedDay ?? 0;
+    const date = (d) => {
+      const x = clock.dateOf(d);
+      return `Month ${x.month}, Year ${x.year}`;
+    };
+    const friends = topFriends(care, p.id, null, BOOK.friendsShown).filter((r) => r.friendship >= FRIENDSHIP.friendAt).map((r) => residentById(r.other)?.name ?? r.other);
+    const staffIds = topFamiliar(care, { residentId: p.id }, null, BOOK.staffShown).map((r) => r.staff);
+    const staff = staffIds.map((id) => crew.byId(id)?.name ?? staffById(id)?.name ?? id);
+    const moments = [{ day: from, text: BOOK.moments.moved() }, ...(st.moments ?? []).map((m) => ({ day: m.day, text: BOOK.moments[m.kind]?.(m) ?? m.kind }))].map((m) => ({ when: date(m.day), text: m.text }));
+    const t = timeAt(day - from, clock.daysPerMonth, clock.monthsPerYear);
+    return {
+      id: `${seed}:${p.id}:${day}`,
+      resident: p.id,
+      name: p.name,
+      art: p.def.art,
+      pronoun: p.def.pronoun ?? null,
+      age: p.def.age ?? null,
+      arrived: date(from),
+      passed: date(day),
+      years: t.years,
+      months: t.months,
+      time: t.text,
+      interest: p.def.interest ?? null,
+      friends,
+      moments,
+      staff,
+      beside,
+      comfort: result.score,
+    };
+  }
+  // The passing: the comfort score of the end-of-life period (the good-care signal, the family's last Trust result, or a
+  // gentle note), the memorial (friends' and staff's small dips that recover), the Memory Book page, the room held a few
+  // days. No Credits, score or Rank is taken: the passing itself is never scored.
+  function passPeacefully(p) {
+    const st = p.state;
+    const e = eolOf(p);
+    const day = clock.totalDays;
+    if (e.acc && e.acc.days === 0) eolAccumulate(p, day); // (a test passing on the first day: today so far)
+    for (const t of care.tasks) if (t.resident === p.id && isOpen(t)) finish(t, 'gone');
+    const res = comfortOf(e.acc ?? newAcc(day), comfortBoosts(p));
+    const lift = signalLift(res.score);
+    if (lift > 0) eol.lifts.push({ from: day, until: day + SIGNAL.days, lift });
+    if (eol.lifts.length > 20) eol.lifts.shift();
+    const rec = familyOf(p);
+    const famLift = rec?.contact ? familyResult(res.score) : 0;
+    if (famLift > 0) trust(p, famLift, `Thank you for caring for ${callOf(rec.contact, p.def)} so well at the end`, 'endOfLife');
+    const good = res.score >= COMFORT.good;
+    const poor = res.score < COMFORT.poor;
+    const note = poor ? betterNote(res.parts) : null;
+    const beside = besideOf(p);
+    // the memorial: friends and staff who knew them
+    const friends = [];
+    for (const q of seated()) {
+      if (q === p || !areFriends(care, p.id, q.id)) continue;
+      const before = q.state.outcomes.mood;
+      q.state.outcomes.mood = clamp(before - MEMORIAL.friendMood);
+      q.state.grief = (q.state.grief ?? 0) + (before - q.state.outcomes.mood);
+      log(q, `Remembering ${first(p.name)}`);
+      friends.push(q.name);
+    }
+    const staff = [];
+    for (const q of team()) {
+      if (familiarityOf(care, p.id, q.id) < MEMORIAL.knewAt) continue;
+      const before = q.model.morale;
+      q.model.morale = clamp(before - MEMORIAL.staffMorale);
+      eol.grief.staff[q.id] = (eol.grief.staff[q.id] ?? 0) + (before - q.model.morale);
+      staff.push(q.name);
+    }
+    const page = memoryPage(p, res, beside);
+    eol.pages.push(page);
+    eol.results.push({ day, resident: p.id, name: p.name, score: res.score, base: res.base, boosts: res.boosts, parts: res.parts, good, poor, note, lift, family: famLift, beside });
+    if (eol.results.length > 40) eol.results.shift();
+    eol.passings.push({ day, resident: p.id, name: p.name });
+    const room = st.room;
+    if (room) eol.held[room] = day + MEMORIAL.heldDays;
+    admissions.passed({ id: p.id, name: p.name, level: levelOf(p), nursing: nursingOf(p), moodAvg: moodAvgOf(p), room: roomDefOf(p), admittedDay: st.admittedDay ?? 0, leftDay: day, stay: st.stay?.type ?? p.def.stay });
+    noteLeft(care, { residentId: p.id }, day);
+    const card = MEMORIAL.card({ name: p.name, beside, them: theirOf(p.id) === 'her' ? 'her' : 'him' });
+    addLog(st, logDay(st), now(), card);
+    // the Inbox line: the card, and how the time went (a gentle note where it could have been better — never a penalty)
+    const how = good ? ` A well-supported time (comfort ${res.score}).` : note ? ` Comfort ${res.score}. What could have been better: ${note}.` : ` Comfort ${res.score}.`;
+    eol.notes.push({ uid: eol.nextNote++, day, resident: p.id, name: p.name, stage: 'passed', text: `${card}${how}`, seen: false });
+    if (eol.notes.length > 30) eol.notes.shift();
+    st.passed = day;
+    st.leaving = true;
+    st.step = null;
+    delete st.joinAt;
+    removeResident(p);
+    bus?.emit('care:passed', { resident: p.id, name: p.name, art: p.def.art, room, card, beside, friends, staff, page, score: res.score, good, poor, note, lift });
+  }
+  const EOL_PLAN_IDS = Object.values(EOL_PLAN.options);
+  const EOL_GARDEN = WISHES.gardenFacility;
+
   // --- quality inputs (Milestone 26) ------------------------------------------------------------------------------------
   // One day's snapshot of what really happened, for the five headline scores, inspections and accreditations
   // (src/systems/quality.js turns the counts into readings). Every number is read from game state the earlier milestones
   // already keep; none can be set by the player except by running the home.
+  // Milestone 27: natural decline is never a failure — residents in the end-of-life stages are judged by their comfort
+  // score (the good-care signal below), not by the Wellbeing averages; friends' and staff's grief after a passing is read
+  // past; a family stays in Family Trust for a month after a passing, and so do the days lived here in the falls rate.
   function qualityInputs(day) {
-    const here = seated();
+    const all = seated();
+    const here = all.filter((p) => !inEol(p));
     const n = here.length;
     const mean = (f) => (n ? here.reduce((t, p) => t + f(p), 0) / n : null);
+    const recent = eol.passings.filter((x) => x.day > day - SIGNAL.days && x.day <= day + 1).map((x) => x.resident);
+    const lift = Math.min(SIGNAL.max, eol.lifts.filter((l) => l.from <= day + 1 && day < l.until).reduce((t, l) => t + l.lift, 0));
     const tasks = care.tasks.filter((t) => t.day === day && t.essential);
     const crewNow = team();
     const crewMean = (f) => (crewNow.length ? crewNow.reduce((t, q) => t + f(q), 0) / crewNow.length : null);
@@ -3254,20 +3519,20 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const programDays = {};
     for (const [id, run] of Object.entries(progState.running ?? {})) programDays[id] = Math.max(0, day + 1 - (run.since ?? day + 1));
     return {
-      residents: n,
+      residents: all.length + recent.length,
       clinical: clinicalScore(cl, day).score,
       essential: { done: tasks.filter((t) => t.status === 'done').length, missed: tasks.filter((t) => t.status === 'missed').length },
       falls28: (ic?.falls ?? []).filter((f) => f.day > day - 28 && f.day <= day).length,
       infection: training ? (100 * training.value) / training.max : 0,
-      mood: mean((p) => p.state.outcomes.mood),
+      mood: mean((p) => Math.min(100, p.state.outcomes.mood + (p.state.grief ?? 0))),
       comfort: mean((p) => p.state.outcomes.comfort),
       independence: mean((p) => p.state.outcomes.independence),
       connection: mean((p) => p.state.outcomes.connection),
       choice: n ? here.filter((p) => day - (p.state.lastLikedDay ?? day) < OUTCOME.noLikedDays).length / n : null,
-      trust: homeTrust(care.families, here.map((p) => p.id)),
+      trust: homeTrust(care.families, [...all.map((p) => p.id), ...recent]),
       overdue: fh.complaints.filter((c) => c.status === 'open' && day > c.due).length,
       compliments: fh.compliments.filter((k) => k.day > day - READINGS.complimentDays && k.day <= day).length,
-      morale: crewMean((q) => q.model.morale),
+      morale: crewMean((q) => Math.min(100, q.model.morale + (eol.grief.staff[q.id] ?? 0))),
       energy: crewMean((q) => q.model.energy),
       shifts: { safe: recs.filter((h) => h.safe).length, total: recs.length },
       trained: crewNow.length ? crewNow.filter(recently).length / crewNow.length : 0,
@@ -3282,6 +3547,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       rehabDischarges: care.rewards?.discharges?.length ?? 0,
       programDays,
       incidentsEnded: (ic?.history ?? []).filter((h) => Math.floor(h.end / 24) === day).length,
+      lifts: lift > 0 ? Object.fromEntries(SIGNAL.scores.map((id) => [id, lift])) : null, // (Milestone 27: the good-care signal)
     };
   }
   // A new home, or an older (M25c) save: the window filled from the home as it is now, and a rank floor that keeps what
@@ -3315,7 +3581,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   staffState.items ??= newItemsState();
   const seasonKey = () => `Y${clock.year}S${Math.floor((clock.month - 1) / ITEM_RULES_SEASON)}`;
   const items = createItems({ state: staffState.items, seed, bus, person: (id) => { const q = crew.byId(id); return q && !q.agency && !q.leftTeam ? q : null; }, pay: (amount, reason, category) => ledger.economy.add('credits', amount, reason, category), today: () => clock.totalDays, season: seasonKey });
-  const freeRooms = () => roomList().filter((r) => !r.residentId);
+  const freeRooms = () => roomList().filter((r) => !r.residentId && !(eol.held[r.id] > clock.totalDays)); // (Milestone 27: a room held for a few days after a passing)
   // Milestone 10: the free rooms a resident may have, best first — one of the template they need (Memory Support,
   // High-Care), else a general room, the kind they would like first.
   // Milestone 24: memory / rehab / high-care residents prefer a free room in their wing; everyone else one in the Home wing
@@ -3384,7 +3650,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
     // Milestone 15: the special menus someone on the team can make (a diet trait, or the Nutrition specialty)
     const dietSkills = new Set(team().flatMap((q) => [...skillsOf({ traits: q.model.traits, specialties: specialtiesOf(q.id) })]));
-    return { name: p.name, needs: p.state.needs, level: supportLevel(p.def), support: p.def.support, stay: p.def.stay, visitors: p.def.visitors, teamRoles: roles, shiftRoles, shiftCounts, rooms: roomTemplatesHere(), facilities: facilityIds(), programs: new Set(Object.keys(progState.running)), dietSkills }; // (Milestone 20: running programs)
+    return { name: p.name, needs: p.state.needs, level: supportLevel(p.def), support: p.def.support, stay: p.def.stay, visitors: p.def.visitors, eolStage: stageOf(p), teamRoles: roles, shiftRoles, shiftCounts, rooms: roomTemplatesHere(), facilities: facilityIds(), programs: new Set(Object.keys(progState.running)), dietSkills }; // (Milestone 20: running programs)
   }
   // End of a day: who had essential care missed (a run of such days makes their plan stale).
   function noteMissed(day) {
@@ -3481,6 +3747,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const first = b.first == null;
       if (first) b.first = day;
       for (const id of bdays) b.held[id] = clock.dateOf(day).year;
+      for (const id of bdays) addMoment(byResident(id), 'birthday'); // (Milestone 27: the Memory Book)
       bus?.emit('care:birthday', { residents: bdays, names: bdays.map((id) => byResident(id)?.name), first, art: first ? BIRTHDAY.firstArt : null });
       items.rollSource('birthday', { why: bdays.map((id) => byResident(id)?.name ?? id).join(' and ') }); // (Milestone 25c)
     }
@@ -3509,6 +3776,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     partners.daily(day); // (Milestone 23: deals end, new offers, grants met or past their deadline)
     incidents.daily(day); // (Milestone 25: emergency supplies; perhaps an event later today)
     fallsDay(day); // (Milestone 25: rest after a fall over — handled well gives the family's Trust back)
+    eolDay(day); // (Milestone 27: care stages, the comfort record, grief easing, held rooms opening)
     quality.daily(day, qualityInputs(day - 1)); // (Milestone 26: yesterday into the rolling scores; inspections; peers)
     for (const p of inSession()) p.state.diet = dietOf(p.state);
     bus?.emit('care:dayEnd', world.daySummary(day - 1));
@@ -3608,6 +3876,69 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return quality; // (Milestone 26: headline scores, Rank, accreditations, inspections, peers)
     },
     qualityInputsForTests: (day = clock.totalDays - 1) => qualityInputs(day),
+    // Milestone 27: end of life (care stages, the comfort-first plan, the comfort score, the memorial, Memory Book pages)
+    endOfLife: {
+      get state() {
+        return eol;
+      },
+      stageOf: (id) => stageById(stageOf(byResident(id))),
+      // A resident's stage as the card shows it: the stage, since when, the forecast line, the next stage (never a date)
+      forecast(id) {
+        const p = byResident(id);
+        if (!p) return null;
+        const e = eolOf(p);
+        return { stage: stageById(e.stage), since: e.since, days: e.since == null ? null : clock.totalDays - e.since, eligible: eolEligible(p.def, p.state), next: nextStage(e.stage) ? stageById(nextStage(e.stage)) : null, slowed: Math.floor(e.slow ?? 0), offer: e.offer ?? null, told: [...(e.told ?? [])] };
+      },
+      inEol: (id) => inEol(byResident(id)),
+      eligible: (id) => (byResident(id) ? eolEligible(byResident(id).def, byResident(id).state) : false),
+      wishes: (id) => (byResident(id) ? wishesOf(byResident(id).def) : []),
+      comfortNow: (id) => (byResident(id) && inEol(byResident(id)) ? comfortNow(byResident(id)) : null),
+      // The comfort-first plan: CL08 and EN08 (both offered from "Approaching end of life"; never forced)
+      acceptPlan(id) {
+        const p = byResident(id);
+        if (!p || !inEol(p)) return { ok: false, reason: 'Offered once they are approaching the end of life' };
+        const out = Object.entries(EOL_PLAN.options).map(([d, o]) => (p.state.plan?.[d] === o ? { ok: true } : world.changePlan(d, o, id)));
+        const ok = out.every((r) => r.ok);
+        if (ok) eolOf(p).offer = 'accepted';
+        return ok ? { ok: true, reason: null } : { ok: false, reason: out.find((r) => !r.ok).reason };
+      },
+      keepPlan(id) {
+        const p = byResident(id);
+        if (!p) return { ok: false, reason: 'Not here' };
+        eolOf(p).offer = 'kept';
+        log(p, EOL_PLAN.kept);
+        return { ok: true, reason: null };
+      },
+      offers: () => seated().filter((p) => eolOf(p).offer === 'open').map((p) => p.id),
+      notes: () => eol.notes,
+      unseen: () => eol.notes.filter((n) => !n.seen),
+      markSeen() {
+        for (const n of eol.notes) n.seen = true;
+      },
+      results: () => eol.results,
+      pages: () => eol.pages,
+      passings: () => eol.passings,
+      heldUntil: (roomId) => (eol.held[roomId] > clock.totalDays ? eol.held[roomId] : null),
+      lift: (day = clock.totalDays) => Math.min(SIGNAL.max, eol.lifts.filter((l) => l.from <= day && day < l.until).reduce((t, l) => t + l.lift, 0)),
+      // tests and ?debug=1: a stage now (its forecast and length as in play), the passing now, the weekly pace
+      setStageForTests(id, stage, { due = null } = {}) {
+        const p = byResident(id);
+        if (!p) return false;
+        enterStage(p, stage);
+        if (due != null) {
+          eolOf(p).due = clock.totalDays + due;
+          if (stage === 'final') eolOf(p).passAt = absHour(clock.totalDays + due, PACE.hours[0]);
+        }
+        return true;
+      },
+      passNowForTests(id) {
+        const p = byResident(id);
+        if (!p) return false;
+        passPeacefully(p);
+        return true;
+      },
+      setPaceForTests: (m) => (eolPaceMult = m),
+    },
     grid,
     placed,
     props,
@@ -3800,6 +4131,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         }
         if (p.state.memory) walkTick(p); // (Milestone 17: a walk of their own)
       }
+      eolTick(); // (Milestone 27: a passing at the quiet hour of the last of the final days)
       tickTasks(hours);
       for (const p of residents) p.agent.update(g, grid);
       for (const x of visitors) x.agent.update(g, grid); // (Milestone 19)
@@ -3863,6 +4195,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         }
         r.mood = mood;
         familyPlanChange(p, domain, optionId); // (Milestone 19: a disliked option — the family expects to hear)
+        if (EOL_PLAN_IDS.includes(optionId) && eolOf(p).offer === 'open') eolOf(p).offer = 'accepted'; // (Milestone 27)
         bus?.emit('care:plan', { resident: p.id, domain, option: optionId });
       }
       return r;
@@ -4247,6 +4580,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       research?.addRp(RP_INCOME.discharge, `Successful discharge: ${p.name}`, 'discharge'); // (Milestone 21)
       economy?.award('firstDischarge'); // (Milestone 22)
       p.state.rehab.dischargedDay = clock.totalDays;
+      for (const q of seated()) if (q !== p && joined(q)) addMoment(q, 'cheered', { name: p.name.split(' ')[0] }); // (Milestone 27: the Memory Book)
       startLeaving(p, { discharge: true });
       bus?.emit('care:discharge', { resident: p.id, name: p.name, first, auto, art: first ? DISCHARGE.firstArt : null });
       items.rollSource('discharge', { why: p.name }); // (Milestone 25c)

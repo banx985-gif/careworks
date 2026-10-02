@@ -62,14 +62,15 @@ export const MEETING = { at: 14, minutes: 60, urgency: 3, lift: 8, familyRoomPct
 // The family asks for one (an Inbox item): Trust under lowTrust (at most once every gapDays), or their plan is due for
 // review (a seeded chance a day, frequent / occasional families only). Declining kindly: a small dip.
 export const MEETING_ASK = { lowTrust: 45, gapDays: 14, reviewChance: 0.2, declineTrust: -1, expireDays: 5 };
-// Meeting kinds. The palliative support meeting is stored only: Milestone 27 (end of life) uses it.
+// Meeting kinds. Milestone 27: the palliative support meeting can be booked once a resident is approaching the end of
+// life (the resident card's End of life section); held, it counts for the comfort score's "family supported".
 export const MEETING_KINDS = {
   review: { name: 'Care-plan review with family' },
   meeting: { name: 'Care-plan meeting' },
   request: { name: 'Care-plan meeting (the family asked)' },
   complaint: { name: 'Meeting about a complaint' },
   partnership: { name: 'Family partnership meeting' }, // (Milestone 20: booked by the Family Partnership Program)
-  palliative: { name: 'Palliative support meeting', stored: true, milestone: 'M27' },
+  palliative: { name: 'Palliative support meeting', eol: true }, // (Milestone 27)
 };
 // The family's wish, noted on the plan after a meeting (the first that fits).
 export const NOTES = [

@@ -13,7 +13,7 @@ export const BOTTOM_SLOTS = [
   },
   {
     id: 'quality', label: 'Quality', icon: 'care_ui_04', opens: 'placeholder',
-    title: 'Quality', text: 'The five headline scores, Rank, accreditation, the peer-home benchmark and inspections (Milestone 26: src/main.js openQuality), with compliments & complaints. Your records (the Memory Book) will live here too.',
+    title: 'Quality', text: 'The five headline scores, Rank, accreditation, the peer-home benchmark and inspections (Milestone 26: src/main.js openQuality), with compliments & complaints, and Records: the Memory Book (Milestone 27). More of your account records will live here too.',
   },
   {
     id: 'business', label: 'Business', icon: 'care_ui_05', opens: 'placeholder',

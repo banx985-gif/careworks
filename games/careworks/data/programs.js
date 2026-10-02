@@ -15,7 +15,7 @@
 //     { type: 'night' }                someone is rostered on the Night shift (the Night template)
 //     { type: 'research', node }       a research node is done (data/research.js, Milestone 21); ?debug=1 allows it too
 //     { type: 'partner', text }        a community partner — Milestone 23: locked, ?debug=1 allows it
-//     { type: 'wing', wing }           a specialist wing — Milestone 24 / 27: locked, ?debug=1 allows it
+//     { type: 'wing', wing, id }       a specialist wing working (its hub placed inside it — Milestone 27; ?debug=1 allows it)
 //     { type: 'secret', secret }       never: PRG11 / PRG12 are hidden (Milestone 31)
 //   scope: 'facility' (the whole home) or 'wing' (one wing: 'home' is the only one until Milestone 24)
 //   resources:
@@ -138,13 +138,13 @@ export const PROGRAMS = [
   }),
   p('PRG10', 'Palliative Comfort Program', 'Comfort/Family', {
     scope: 'wing',
-    text: 'Comfort and family presence at the end of life (its care comes in a later update)',
-    unlock: [{ type: 'wing', wing: 'Palliative Wing' }],
+    text: 'Comfort and family presence at the end of life',
+    unlock: [{ type: 'wing', wing: 'Palliative Wing', id: 'palliative' }], // (Milestone 27: the wing works once its F32 hub stands in it)
     resources: { staff: { roles: ['CW', 'RN'], shift: 'afternoon', hours: 2 }, facility: null, shownAt: ['F24', 'F01'], weeklyCost: 50, prop: null },
     adds: { kind: 'none' },
-    suits: { text: 'Residents receiving palliative care (Milestone 27)', supports: ['Palliative'] },
-    // stored and shown only: Milestone 27 (end of life) gives it its effect
-    effects: { stored: 'M27' },
+    suits: { text: 'Residents approaching the end of life', supports: ['Palliative'] },
+    // Milestone 27: the end-of-life comfort score + comfortScore for residents in its wing
+    effects: { comfortScore: 5 },
   }),
   // Secret (Milestone 31): never listed, never startable.
   p('PRG11', 'Centenarian Living', 'Prestige', { text: 'Secret', secret: true, unlock: [{ type: 'secret', secret: 'SEC-FAC-01' }], resources: { staff: { roles: ['LC'], shift: 'afternoon', hours: 2 }, facility: null, shownAt: [], weeklyCost: 0, prop: null }, adds: { kind: 'none' }, suits: { text: '', tags: [] }, effects: {} }),
@@ -160,7 +160,7 @@ export const visibleProgram = (id) => VISIBLE_PROGRAMS.find((x) => x.id === id) 
 export const LOCKS = {
   research: { milestone: 'M21', text: (r) => `Needs research: ${nodeLabel(r.node)}` },
   partner: { milestone: 'M23', text: (r) => `Needs ${r.text} (community partners arrive in a later update)` },
-  wing: { milestone: 'M24', text: (r) => `Needs a ${r.wing} (specialist wings arrive in a later update)` },
+  wing: { milestone: 'M27', text: (r) => `Needs the ${r.wing} working (its hub placed inside the wing)` },
   night: { text: () => 'Needs staff rostered on the Night shift' },
 };
 // The rules (src/systems/programs.js): the week, the staff-hours check and stopping.
@@ -186,7 +186,7 @@ export const EFFECT_TEXT = {
   PRG07: (e) => `Meal quality +${e.quality} · drinks rounds go ${Math.round((e.hydrationMult - 1) * 100)}% further`,
   PRG08: (e) => `Comfort +${e.awakeComfortPerHour} an hour for anyone awake at night · quiet checks ease needs, so fewer call bells`,
   PRG09: (e) => `The visit lifts Mood and Social Connection ${e.liftMult}× · Social Connection +${e.joined.connection} for each visit joined`,
-  PRG10: () => 'Stored for now: its comfort and family support arrive with end-of-life care (a later update)',
+  PRG10: (e) => `End-of-life comfort score +${e.comfortScore} for residents in its wing`, // (Milestone 27)
 };
 
 // Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator.

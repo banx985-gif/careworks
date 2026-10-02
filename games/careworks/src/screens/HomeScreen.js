@@ -43,6 +43,8 @@ import { TASK_TYPES } from '../../data/tasks.js';
 import { drawTaskMarker, drawBellMarker } from '../ui/taskMarkers.js';
 import { VISITOR_LOOK } from '../../data/family.js';
 import { findPath } from '../../../../core/Pathing.js';
+import { MEMORIAL } from '../../data/endOfLife.js';
+const MEMORIAL_GLOW = MEMORIAL.art.glow; // (Milestone 27: a room held after a passing)
 
 const C = THEME.color;
 const S = THEME.size;
@@ -351,6 +353,13 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       const w = iso.cellCenter(col, row);
       return camera.worldToScreen(w.x, w.y);
     },
+    // Milestone 27: the middle of a place's art in world px (the memorial glow over a room).
+    worldPointOfPlace(id) {
+      const it = id && world?.byId(id);
+      if (!it || (it.kind !== 'room' && it.kind !== 'station')) return null;
+      const r = artRect(it);
+      return { x: r.x + r.w / 2, y: r.y + r.h * 0.45 };
+    },
     // A plan point lifted off the floor, in world px (the care pops).
     worldPointOf(x, y, lift = 0) {
       const w = iso.toWorld(x, y);
@@ -546,6 +555,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
           assets.draw(ctx, it.def.art, ...rectArgs(r));
           pictures.push(r);
           drawLevelMark(ctx, it); // (Milestone 25c: its level badge, a scaffold while it is being upgraded)
+          if (it.kind === 'room') drawHeldMark(ctx, it, r); // (Milestone 27: a room held after a passing)
         } else if (it.kind === 'prop') drawProp(ctx, it);
         else {
           if (it.kind === 'visitor') drawVisitor(ctx, it);
@@ -966,6 +976,21 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   // Milestone 25c: a piece's level — a small code-drawn badge (II / III) at the front corner of its floor, and while an
   // upgrade is under way a little scaffold (two poles, two boards) beside it. Level I shows nothing.
   const ROMAN = ['I', 'II', 'III'];
+  // Milestone 27: for the few days a room is held after a passing, its light is softly dimmed and a small Memorial Glow
+  // rests over it (restrained: no text, no flashing).
+  function drawHeldMark(ctx, it, r) {
+    if (!world.endOfLife?.heldUntil(it.id)) return;
+    const fp = it.fp;
+    ctx.save();
+    ctx.globalAlpha = 0.2;
+    ctx.fillStyle = '#2B2440';
+    isoPath(ctx, iso.outline(fp.col, fp.row, fp.w, fp.h));
+    ctx.fill();
+    ctx.globalAlpha = 0.5 + 0.15 * Math.sin(performance.now() / 1400);
+    const sz = Math.min(r.w, r.h) * 0.42;
+    assets.draw(ctx, MEMORIAL_GLOW, r.x + r.w / 2 - sz / 2, r.y + r.h * 0.18, sz, sz);
+    ctx.restore();
+  }
   function drawLevelMark(ctx, it) {
     const lv = world.build?.levelOf?.(it.uid) ?? 1;
     const pending = world.build?.upgradePending?.(it.uid) ?? null;

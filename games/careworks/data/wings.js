@@ -14,7 +14,7 @@ export const WINGS_SPECIAL = [
   { id: 'memory', name: 'Memory Support Wing', short: 'Memory', stage: 3, hubs: ['F20', 'F22'], rooms: ['RM05'], supports: ['Memory Support'], beat: 'care_event_07', tint: 'rgba(150, 120, 200, 0.16)', line: '#7E62B0' },
   { id: 'rehab', name: 'Rehabilitation Wing', short: 'Rehab', stage: 3, hubs: ['F31'], rooms: ['RM06'], supports: ['Rehabilitation'], beat: 'facility_f31', tint: 'rgba(90, 170, 120, 0.16)', line: '#3E8A5A' },
   { id: 'highCare', name: 'High-Care Nursing Wing', short: 'High-Care', stage: 4, hubs: ['F30'], rooms: ['RM04'], supports: ['High Care', 'Clinical Support'], beat: 'facility_f30', tint: 'rgba(80, 140, 200, 0.16)', line: '#3C6E9E' },
-  { id: 'palliative', name: 'Palliative Care Wing', short: 'Palliative', stage: 4, hubs: ['F32'], rooms: ['RM07'], supports: [], beat: 'facility_f32', tint: 'rgba(220, 150, 110, 0.16)', line: '#B06A3E', later: 'Its palliative care comes in a later update (Milestone 27)' },
+  { id: 'palliative', name: 'Palliative Care Wing', short: 'Palliative', stage: 4, hubs: ['F32'], rooms: ['RM07'], supports: [], beat: 'facility_f32', tint: 'rgba(220, 150, 110, 0.16)', line: '#B06A3E' }, // (Milestone 27: its care is live — RM07, PRG10, F24, the comfort score)
 ];
 export const wingById = (id) => WINGS_SPECIAL.find((w) => w.id === id) ?? null;
 // The wing a resident's support belongs to (null: the Home wing).

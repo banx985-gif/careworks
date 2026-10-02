@@ -22,6 +22,7 @@ import { ITEM_TYPES } from './items.js';
 import { ACCREDITATIONS } from './accreditations.js';
 import { PEERS } from './peers.js';
 import { QUALITY_ART } from './quality.js';
+import { MEMORIAL } from './endOfLife.js';
 
 const art = (folder, key) => [key, `assets/images/${folder}/${key}.png`];
 
@@ -75,6 +76,9 @@ export const ASSETS = {
   ...Object.fromEntries(ACCREDITATIONS.map((x) => art('awards', x.art))),
   ...Object.fromEntries(PEERS.map((p) => art('logos', p.logo))),
   ...Object.fromEntries([art('events', QUALITY_ART.finale), art('vfx', QUALITY_ART.confetti)]),
+  // Milestone 27: the Memorial Glow (a held room, the memorial moment) and the Memory Book Star (the Memory Book is
+  // care_ui_25, already listed with the UI icons; memory_book_emblem isn't drawn yet — assets/ART_STATUS.md)
+  ...Object.fromEntries([art('vfx', MEMORIAL.art.glow), art('rewards', MEMORIAL.art.star)]),
   // Milestone 0 loader test (?screen=test): the placeholder PWA icon as a real image, and one deliberately missing file.
   m0Real: 'assets/branding/pwa/icon-192.png',
   m0Missing: 'assets/m0-missing-test.png',

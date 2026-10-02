@@ -18,6 +18,7 @@
 //            roleOnTeam { role } · roleOnShifts { role, shifts } · staffOnShift { shift, count } · need { need, min }
 //            supportLevel { min } · support { supports, stays } (either matches) · visitors { visitors }
 //            room { room } (a room template the home can place) · facility { facility } · program { program }
+//            endOfLife { stages } (Milestone 27: their care stage — CL08 / EN08 are offered from "Approaching end of life")
 //   nudges (worked out): the needs its tasks ease and the outcomes they nudge
 
 export const DOMAINS = [
@@ -128,6 +129,8 @@ const FIRST_OPTIONS = [
 // A task: t(type, name, at, band, roles, minutes, place, drops, outcomes). minutesPerDay is worked out from the tasks.
 const t = (type, name, at, band, roles, minutes, drops = {}, outcomes = {}, place = 'resident') => ({ type, name, at, band, roles, minutes, place, drops, outcomes });
 const CW_RN = ['CW', 'RN'];
+// Milestone 27: the palliative options are offered once a resident is approaching the end of life (never forced; any room)
+const EOL_RULE = { type: 'endOfLife', stages: ['approaching', 'final'], reason: 'Offered once a resident is approaching the end of life' };
 const CARERS = ['CW', 'AH', 'RN'];
 const FOOD = ['HN', 'CW'];
 const TALK = ['LC', 'CW'];
@@ -244,13 +247,14 @@ const NEW_OPTIONS = [
   opt({
     id: 'CL08', domain: 'CL', name: 'Palliative Comfort Plan', roles: CW_RN,
     text: 'Comfort first: gentle care, company and calm, day and night.',
+    // (Milestone 27: the tasks shift to comfort — mouth care, company, position changes and quiet time, in plain words)
     tasks: [
-      t('observation', 'Comfort care', 10, 'morning', CW_RN, 15, { clinical: 8 }, { comfort: 3 }),
-      t('observation', 'Afternoon comfort care', 14, 'afternoon', CW_RN, 15, { clinical: 8 }, { comfort: 3 }),
-      t('observation', 'Evening comfort care', 19, 'evening', CW_RN, 15, { clinical: 8 }, { comfort: 3 }),
-      t('observation', 'Night comfort care', 23, 'night', CW_RN, 15, { clinical: 6 }, { comfort: 3 }),
+      t('observation', 'Mouth care and a gentle wash', 10, 'morning', CW_RN, 15, { clinical: 8 }, { comfort: 3 }),
+      t('observation', 'Company and a position change', 14, 'afternoon', CW_RN, 15, { clinical: 8 }, { comfort: 3, mood: 1 }),
+      t('observation', 'Quiet time and a position change', 19, 'evening', CW_RN, 15, { clinical: 8 }, { comfort: 3 }),
+      t('observation', 'Night comfort and a position change', 23, 'night', CW_RN, 15, { clinical: 6 }, { comfort: 3 }),
     ],
-    eligibility: [{ type: 'room', room: 'RM07', reason: 'Needs a Palliative Suite (arrives with the Palliative Program)' }],
+    eligibility: [EOL_RULE],
   }),
   // --- Mobility ---------------------------------------------------------------------------------------------------
   opt({
@@ -444,7 +448,7 @@ const NEW_OPTIONS = [
     id: 'EN08', domain: 'EN', name: 'Palliative Family Setup', roles: CW_RN,
     text: 'Space and comfort for family to stay close.',
     tasks: [t('roomCheck', 'Family comfort check', 15, 'afternoon', CW_RN, 15, {}, { comfort: 2 }, 'room')],
-    eligibility: [{ type: 'room', room: 'RM07', reason: 'Needs a Palliative Suite (arrives with the Palliative Program)' }],
+    eligibility: [EOL_RULE],
   }),
 ];
 
@@ -459,7 +463,7 @@ export const CARE_OPTIONS = [...FIRST_OPTIONS.map((o) => ({ changes: [], removes
       outcomes: [...new Set(o.tasks.flatMap((x) => Object.keys(x.outcomes ?? {})))],
     },
   }));
-export const ELIGIBILITY_TYPES = ['roleOnTeam', 'roleOnShifts', 'staffOnShift', 'need', 'supportLevel', 'support', 'visitors', 'room', 'facility', 'program', 'dietSkill']; // (Milestone 15: dietSkill)
+export const ELIGIBILITY_TYPES = ['roleOnTeam', 'roleOnShifts', 'staffOnShift', 'need', 'supportLevel', 'support', 'visitors', 'room', 'facility', 'program', 'dietSkill', 'endOfLife']; // (Milestone 15: dietSkill; Milestone 27: endOfLife)
 
 // Plan review (bible §9 end): a plan is stale — an amber dot, the Care badge, Care's "Plans to review" — when the
 // resident was just admitted and hasn't had a first review, a need has moved by needChange or more since the last

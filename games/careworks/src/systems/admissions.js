@@ -15,6 +15,7 @@
 //   board.waitlist(id, day) · board.decline(id, day) · board.requestAssessment(id, day) → { ok, reason }
 //   board.wentHome(record) → a resident who went home (Milestone 9): away for returnAfterDays, then may apply again
 //                            as Returning; record = { id, name, level, admittedDay, leftDay, stay }
+//   board.passed(record) → a resident who passed peacefully here (Milestone 27): never applies again
 //   board.homeGoings        the last few who went home (newest last) · board.timesHome(id)
 //   board.serialize()
 // An applicant: { id (resident id), status 'board' | 'wait', arrived (day), leaveDay, needs, outcomes, assessed (bool),
@@ -76,10 +77,12 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
     arrivals: 0,
     wentHome: {}, // Milestone 9: resident id → times they went home (a Returning applicant)
     homeGoings: [], // Milestone 9: [{ id, name, level, admittedDay, leftDay, stay }] newest last
+    passed: {}, // Milestone 27: resident id → the day they passed peacefully here (they never apply again)
     ...(saved ?? {}),
   };
   s.wentHome = { ...(s.wentHome ?? {}) };
   s.homeGoings = [...(s.homeGoings ?? [])];
+  s.passed = { ...(s.passed ?? {}) };
   s.applicants = (s.applicants ?? []).filter((a) => defs.has(a.id)).map((a) => ({ ...a }));
   s.away = { ...(s.away ?? {}) };
 
@@ -90,7 +93,7 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
 
   // Someone not in the home, not already applying and not away: picked by the run's seed (a reload never changes it).
   function arrive(day, ctx) {
-    let pool = residents.filter((r) => !ctx.inHome.has(r.id) && !get(r.id) && !(s.away[r.id] > day));
+    let pool = residents.filter((r) => !ctx.inHome.has(r.id) && !get(r.id) && !(s.away[r.id] > day) && s.passed[r.id] == null);
     // Milestone 9: never more than maxBlocked applicants the home can't take yet (when the home's context is given)
     if (ctx.roles) {
       const blocked = (r) => !prereqOf(r, ctx).ok;
@@ -173,7 +176,7 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
     // → the applicants added
     allocate({ stay, count, tag, day, inHome, fits = () => true }) {
       const out = [];
-      const all = residents.filter((r) => r.stay === stay && !inHome.has(r.id) && !get(r.id) && !(s.away[r.id] > day));
+      const all = residents.filter((r) => r.stay === stay && !inHome.has(r.id) && !get(r.id) && !(s.away[r.id] > day) && s.passed[r.id] == null);
       const pool = all.some(fits) ? all.filter(fits) : all;
       for (let i = 0; i < count && pool.length; i++) {
         const rng = new Rng(`${seed}:allocate:${tag}:${i}`);
@@ -226,6 +229,14 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
       s.homeGoings.push({ ...record });
       if (s.homeGoings.length > A.homeGoingsKept) s.homeGoings.shift();
     },
+    // Milestone 27: they passed peacefully here (never a failure). They never apply again; the days they lived here are
+    // paid like any stay's (the month's close reads homeGoings).
+    passed(record) {
+      s.passed[record.id] = record.leftDay;
+      s.homeGoings.push({ ...record, passed: true });
+      if (s.homeGoings.length > A.homeGoingsKept) s.homeGoings.shift();
+    },
+    hasPassed: (id) => s.passed[id] != null,
     get homeGoings() {
       return s.homeGoings;
     },

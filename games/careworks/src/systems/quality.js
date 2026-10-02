@@ -5,7 +5,7 @@
 // player action is applying for an accreditation, which books an inspection and never changes what it finds.
 //
 //   createQuality({ state, seed, bus, today, year, onAward(def) })
-//     q.daily(day, inputs)   yesterday's snapshot: a day's scores into the rolling window, reputation from sustained
+//     q.daily(day, inputs)   yesterday's snapshot (Milestone 27: inputs.lifts { scoreId: points } adds the good-care signal): a day's scores into the rolling window, reputation from sustained
 //                            scores, any inspection due, the yearly routine review and recognition table, the peers' drift
 //     q.prime(inputs)        a new home (or an older save): fill the window from the home as it is now
 //     q.scores() → { clinicalSafety, … } (rolling, 0–100) · q.parts(id) → [{ label, weight, value }] (the last day's)
@@ -116,6 +116,8 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
   // --- the rolling window ---------------------------------------------------------------------------------------------
   function push(day, x) {
     const { scores, parts } = dayScores(readingsOf(x));
+    // (Milestone 27: the good-care signal of a well-supported end of life — points on top, never below the day's score)
+    for (const [id, v] of Object.entries(x.lifts ?? {})) if (scores[id] != null && v > 0) scores[id] = r1(Math.min(100, scores[id] + v));
     st.samples.push({ day, scores, parts, nutrition: x.nutrition ?? null, essential: { done: x.essential?.done ?? 0, missed: x.essential?.missed ?? 0 }, unsafe: x.unsafe ?? 0, overdue: x.overdue ?? 0, incidents: x.incidentsEnded ?? 0 });
     if (st.samples.length > WINDOW) st.samples.splice(0, st.samples.length - WINDOW);
   }

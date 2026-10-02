@@ -41,6 +41,8 @@ function passes(r, ctx) {
       return !!ctx.programs?.has(r.program);
     case 'dietSkill': // Milestone 15: someone on the team who can make that menu, or a Nutrition Office (F17)
       return !!ctx.facilities?.has('F17') || !!ctx.dietSkills?.has(r.diet);
+    case 'endOfLife': // Milestone 27: their care stage is one of these (CL08 / EN08: approaching the end of life)
+      return (r.stages ?? []).includes(ctx.eolStage);
     default:
       return false;
   }
