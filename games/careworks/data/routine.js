@@ -4,14 +4,19 @@
 // The calendar (bible §3): 12 months × 28 days. secondsPerDay is NOT the bible's 2.5 s: at 2.5 s Arthur could never
 // walk his routine (one room → lounge walk is ~8 s). Aaron chose a longer day for now (DECISIONS.md, 28 Sept) — settle
 // before Milestone 5 adds 2×/4×. At 90 s a game hour is 3.75 real seconds.
+// Milestone 25b: 100 s (a game hour is ~4.2 real seconds; a 28-day month ~47 min, a year ~9 h 20 min at 1×), with
+// walking 10% slower (data/balance.js WALK) so everything looks calmer and care per game day stays the same.
 export const DAY = {
-  secondsPerDay: 90,
+  secondsPerDay: 100,
   daysPerMonth: 28,
   monthsPerYear: 12,
   speeds: [1, 2, 4], // only 1× (and Pause) usable until Milestone 5
   unlockedSpeeds: [1],
   startHour: 5.9, // a new facility opens just before the Morning shift starts
 };
+// Milestone 25b: the few timers counted in real seconds (a staff member's wait at a post, a stuck walk's limit) were set
+// on the 90-second day; × this keeps them the same length in game time on the longer day.
+export const TIMER_SCALE = DAY.secondsPerDay / 90;
 
 // The four simulation bands (bible §3), by hour of the day. Night wraps past midnight.
 export const BANDS = [

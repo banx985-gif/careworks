@@ -20,6 +20,7 @@ import { SHIFT_MORALE } from '../../data/shifts.js';
 import { staffById } from '../../data/staff.js';
 import { ROLES } from '../../data/roles.js';
 import { STAFF_BALANCE as B, WALK } from '../../data/balance.js';
+import { TIMER_SCALE } from '../../data/routine.js';
 import { FOUNDER_FLAG } from '../../data/setup.js';
 import { energyPct, moralePerHour, shiftPct } from './traitEffects.js';
 
@@ -51,7 +52,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       task: null, // Milestone 4: { id (care task id), type, label, room, spot, arrived }
       bandDone: state.bandDone?.[model.id] ?? 0, // tasks finished this band (the AI's workload)
     };
-    p.agent = new Agent({ id: model.id, name: model.name, speed: PERSON.speed * WALK.speedMultiplier, noPathTeleportSec: 3 }); // (Milestone 14: 5× faster)
+    p.agent = new Agent({ id: model.id, name: model.name, speed: PERSON.speed * WALK.speedMultiplier, noPathTeleportSec: 3 * TIMER_SCALE }); // (Milestone 14: 5× faster)
     const at = state.pos?.[model.id];
     if (at) {
       p.agent.x = at.x;
@@ -166,7 +167,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
           bus?.emit('staff:onShift', { id: p.id });
         }
         if (p.agent.state === 'walking') p.agent.update(g, grid);
-        else if (p.mode === 'post' && (p.stay -= g) <= 0) {
+        else if (p.mode === 'post' && (p.stay -= g / TIMER_SCALE) <= 0) {
           p.postIndex = (p.postIndex + 1) % POSTS[p.role].spots.length;
           toPost(p);
         }

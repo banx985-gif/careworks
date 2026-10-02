@@ -85,8 +85,10 @@ export const SHORT_STAFFING = {
 // screen as before — a longer, brisker hop, never frantic legs or a slide.
 // aids: a resident with a mobility aid walks at this share of everyone else's speed (still 5× faster than before);
 // aidBySupport: which aid by their primary support (bible §7), until Milestone 16 gives each resident their own.
+// Milestone 25b (Aaron, 2 Oct: "Staff move way too fast… not heaps, but 10%"): 5 → 4.5, with the day 10% longer in
+// real time to match (data/routine.js: 90 → 100 s), so the walk per game hour — and so the care per day — is unchanged.
 export const WALK = {
-  speedMultiplier: 5,
+  speedMultiplier: 4.5,
   aids: { frame: 0.8, wheelchair: 0.85 },
   aidBySupport: { 'Mobility Support': 'frame', Rehabilitation: 'frame', 'High Care': 'wheelchair' },
 };

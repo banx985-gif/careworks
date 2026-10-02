@@ -37,6 +37,7 @@ import { WALK } from '../../data/balance.js';
 import { paletteById } from '../../data/setup.js';
 import { ROOM_SHAPE, roomById } from '../../data/rooms.js';
 import { facilityById } from '../../data/facilities.js';
+import { ART_FIT } from '../../data/assets.js';
 import { bandAt, clockText } from '../systems/residentNeeds.js';
 import { TASK_TYPES } from '../../data/tasks.js';
 import { drawTaskMarker, drawBellMarker } from '../ui/taskMarkers.js';
@@ -104,7 +105,9 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       const back = iso.toWorld(plan.x, plan.y);
       camera.centerOn(back.x, back.y);
     }
-    walls = world.layout.wallTiles().map((t) => ({ kind: 'wall', col: t.col, row: t.row, wall: t.wall, dir: t.dir }));
+    // (Milestone 25b: a room or facility is a self-contained box — never a code wall across its picture's footprint)
+    const inPicture = (t) => world.placed.some(({ fp }) => t.col >= fp.col && t.col < fp.col + fp.w && t.row >= fp.row && t.row < fp.row + fp.h);
+    walls = world.layout.wallTiles().filter((t) => !inPicture(t)).map((t) => ({ kind: 'wall', col: t.col, row: t.row, wall: t.wall, dir: t.dir }));
     for (const it of [...selection.items]) if (!isPerson(it) && !world.placed.includes(it)) selection.remove(it);
     for (const it of world.placed) if (!selection.items.includes(it)) selection.add(it);
     floorLayer.invalidate();
@@ -114,9 +117,18 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   // --- where things are drawn (projected world) ----------------------------------------------------------------
   // Every placed picture at one scale: its width follows its footprint (ART_DRAW), so a 3×3 facility and a 1×1 prop
   // match the grid the same way.
+  // Milestone 25b: a room or facility picture sits on its footprint by its measured floor (data/assets.js ART_FIT): the
+  // painted floor's left and right corners on the footprint's, so its width is the footprint's, and its bottom tip on
+  // the footprint's bottom corner.
   const artRect = (it) => {
-    const look = ART_DRAW[it.kind];
     const fp = it.fp;
+    const fit = ART_FIT[it.def.art];
+    if (fit) {
+      const w = ((fp.w + fp.h) * HW) / (fit.right - fit.left);
+      const h = w / assets.aspect(it.def.art);
+      return { x: iso.corner(fp.col, fp.row + fp.h).x - fit.left * w, y: iso.corner(fp.col + fp.w, fp.row + fp.h).y - fit.tipY * h, w, h };
+    }
+    const look = ART_DRAW[it.kind];
     const w = (fp.w + fp.h) * HW * look.width;
     const h = w / assets.aspect(it.def.art);
     const cx = iso.corner(fp.col + fp.w / 2, fp.row + fp.h / 2).x;
@@ -146,12 +158,18 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   const shownPeople = () => (world.hiddenPerson ? world.people.filter((p) => !world.hiddenPerson(p)) : world.people);
   // Milestone 19: visitors (code-drawn, a name tag; tapping one opens their resident's card)
   const shownVisitors = () => world?.visitors ?? [];
-  // Draw order: plan x + y (further back first). A walk-in room is part of the floor, so it is always under people.
+  // Draw order: plan x + y (further back first).
+  // Milestone 25b: a room or facility picture paints its own back walls, so it comes after every wall and piece behind
+  // its footprint (their x + y is at most its back corner's + its longer side − 1) and before anyone standing in it or in
+  // front of it (a room's people stand on its front strip, outside the picture). Rooms used to be part of the floor,
+  // under every wall: the walls of the room behind cut across their beds.
   const depthOf = (it) => {
     if (isPerson(it) || it.kind === 'visitor') return it.agent.x + it.agent.y;
     if (it.kind === 'wall') return (it.col + it.row + 1) * CELL;
-    if (it.kind === 'room') return -1;
-    return (it.fp.col + it.fp.w / 2 + it.fp.row + it.fp.h / 2) * CELL;
+    const fp = it.fp;
+    const middle = fp.col + fp.w / 2 + fp.row + fp.h / 2;
+    if (it.kind === 'prop') return middle * CELL;
+    return Math.max(middle, fp.col + fp.row + Math.max(fp.w, fp.h) - 0.5) * CELL;
   };
   // People first when they overlap a place (they stand in front of it); among places, the nearest.
   const selection = new Selection(bus, { boundsOf: tapRect, depthOf: (it) => depthOf(it) + (isPerson(it) ? 100000 : 0), minHitSize: 90 });
@@ -498,21 +516,29 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       floorLayer.setPixelScale(floorScale());
       floorLayer.renderView(ctx, { x: camera.x, y: camera.y, w: camera.visibleW, h: camera.visibleH }); // only what is on screen
       assets.detail = detailFor(camera.zoom); // sprites cached near the size they are drawn: sharp, and a plain copy each frame
-      for (const it of world.placed) if (it.kind === 'room') assets.draw(ctx, it.def.art, ...rectArgs(artRect(it)));
       if (buildMode) drawBuildFloor(ctx);
       if (buildMode) drawWingEdges(ctx); // (Milestone 24)
       drawWalkPath(ctx); // (Milestone 17: the safe walking path — stepping stones; the loop being traced in Build Mode)
       if (buildMode) drawPicked(ctx);
       drawPersonShadows(ctx);
       drawSelectionMark(ctx);
-      const items = [...world.placed.filter((p) => p.kind !== 'room'), ...world.props, ...(world.decor ?? []), ...walls, ...shownPeople(), ...shownVisitors()].sort((a, b) => depthOf(a) - depthOf(b));
+      const items = [...world.placed, ...world.props, ...(world.decor ?? []), ...walls, ...shownPeople(), ...shownVisitors()].sort((a, b) => depthOf(a) - depthOf(b));
+      const pictures = [];
+      const people = [];
       for (const it of items) {
         if (it.kind === 'wall') drawWall(ctx, it);
-        else if (it.kind === 'station') assets.draw(ctx, it.def.art, ...rectArgs(artRect(it)));
-        else if (it.kind === 'prop') drawProp(ctx, it);
-        else if (it.kind === 'visitor') drawVisitor(ctx, it);
-        else drawPerson(ctx, it);
+        else if (it.kind === 'station' || it.kind === 'room') {
+          const r = artRect(it);
+          assets.draw(ctx, it.def.art, ...rectArgs(r));
+          pictures.push(r);
+        } else if (it.kind === 'prop') drawProp(ctx, it);
+        else {
+          if (it.kind === 'visitor') drawVisitor(ctx, it);
+          else drawPerson(ctx, it);
+          people.push({ it, after: pictures.length });
+        }
       }
+      drawHidden(ctx, people, pictures);
       if (buildMode && B.ghost) drawGhost(ctx);
       assets.detail = 1;
       camera.restore(ctx);
@@ -895,6 +921,23 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     ctx.arc(cx, y - H * 0.845, H * 0.155, Math.PI * 1.02, Math.PI * 1.98);
     ctx.closePath();
     ctx.fill();
+    ctx.restore();
+  }
+  // Milestone 25b: a room or facility picture paints tall walls, so it can stand in front of someone (a resident in their
+  // room behind the next room, a carer in the corridor behind a facility). Anyone a later picture overlaps shows faintly
+  // through it, so nobody disappears from the home.
+  function drawHidden(ctx, people, pictures) {
+    const over = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    ctx.save();
+    ctx.globalAlpha = 0.4;
+    for (const { it, after } of people) {
+      const body = it.kind === 'visitor' ? visitorRect(it) : tapRect(it);
+      let hidden = false;
+      for (let i = after; i < pictures.length && !hidden; i++) hidden = over(body, pictures[i]);
+      if (!hidden) continue;
+      if (it.kind === 'visitor') drawVisitor(ctx, it);
+      else drawPerson(ctx, it);
+    }
     ctx.restore();
   }
   // An inside wall: a low slab through the middle of its tile (two front faces and the top).

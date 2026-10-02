@@ -66,3 +66,52 @@ export const ASSETS = {
   m0Real: 'assets/branding/pwa/icon-192.png',
   m0Missing: 'assets/m0-missing-test.png',
 };
+
+// Milestone 25b: where each room / facility picture's painted floor is (measured by tools/careworks-art-fit.mjs, never
+// by eye), as fractions of the picture: left / right = the floor's left and right corners (the walls' vertical edges),
+// tipX / tipY = its bottom tip. The home sits the tip on the footprint's bottom corner and scales the picture so the
+// floor's width is the footprint's width (src/screens/HomeScreen.js artRect). Re-run the tool when art is replaced.
+export const ART_FIT = {
+  room_rm01: { left: 0.166, right: 0.832, tipX: 0.503, tipY: 0.977 }, // 30.8° / 32.6°
+  room_rm02: { left: 0.172, right: 0.826, tipX: 0.496, tipY: 0.976 }, // 30.1° / 30.2°
+  room_rm03: { left: 0.176, right: 0.824, tipX: 0.51, tipY: 0.977 }, // no floor diamond: tip = lowest point
+  room_rm04: { left: 0.189, right: 0.809, tipX: 0.517, tipY: 0.975 }, // 28.4° / 28.6°
+  room_rm05: { left: 0.209, right: 0.791, tipX: 0.479, tipY: 0.982 }, // 30.0° / 27.7°
+  room_rm06: { left: 0.131, right: 0.869, tipX: 0.472, tipY: 0.945 }, // 27.7° / 31.2°
+  room_rm07: { left: 0.115, right: 0.883, tipX: 0.479, tipY: 0.947 }, // 27.7° / 32.5°
+  facility_f01: { left: 0.104, right: 0.896, tipX: 0.588, tipY: 0.965 }, // 28.5° / 31.2°
+  facility_f02: { left: 0.086, right: 0.914, tipX: 0.623, tipY: 0.98 }, // 29.2° / 30.0°
+  facility_f03: { left: 0.152, right: 0.848, tipX: 0.522, tipY: 0.893 }, // 29.8° / 30.1°
+  facility_f04: { left: 0.176, right: 0.826, tipX: 0.506, tipY: 0.904 }, // 29.6° / 29.9°
+  facility_f05: { left: 0.146, right: 0.854, tipX: 0.538, tipY: 0.919 }, // 29.6° / 30.9°
+  facility_f06: { left: 0.188, right: 0.811, tipX: 0.434, tipY: 0.905 }, // 31.5° / 28.5°
+  facility_f07: { left: 0.158, right: 0.842, tipX: 0.478, tipY: 0.919 }, // 31.0° / 28.8°
+  facility_f08: { left: 0.168, right: 0.834, tipX: 0.46, tipY: 0.904 }, // 33.0° / 29.0°
+  facility_f09: { left: 0.174, right: 0.824, tipX: 0.486, tipY: 0.985 }, // 28.5° / 27.3°
+  facility_f10: { left: 0.184, right: 0.82, tipX: 0.523, tipY: 1.001 }, // 26.0° / 24.9°
+  facility_f11: { left: 0.178, right: 0.818, tipX: 0.493, tipY: 1 }, // 23.3° / 29.4°
+  facility_f12: { left: 0.18, right: 0.82, tipX: 0.506, tipY: 0.997 }, // 22.9° / 26.0°
+  facility_f13: { left: 0.168, right: 0.834, tipX: 0.529, tipY: 0.979 }, // 24.2° / 26.5°
+  facility_f14: { left: 0.184, right: 0.818, tipX: 0.582, tipY: 0.977 }, // no floor diamond: tip = lowest point
+  facility_f15: { left: 0.037, right: 0.963, tipX: 0.498, tipY: 1.035 }, // 35.2° / 32.4°
+  facility_f16: { left: 0.18, right: 0.818, tipX: 0.492, tipY: 0.998 }, // 32.7° / 31.7°
+  facility_f17: { left: 0.164, right: 0.836, tipX: 0.486, tipY: 0.966 }, // 30.7° / 25.2°
+  facility_f18: { left: 0.191, right: 0.809, tipX: 0.494, tipY: 0.986 }, // 29.1° / 30.0°
+  facility_f19: { left: 0.186, right: 0.814, tipX: 0.544, tipY: 0.975 }, // 28.9° / 27.3°
+  facility_f20: { left: 0.189, right: 0.811, tipX: 0.497, tipY: 0.98 }, // 28.7° / 29.2°
+  facility_f21: { left: 0.182, right: 0.818, tipX: 0.515, tipY: 0.977 }, // no floor diamond: tip = lowest point
+  facility_f22: { left: 0.166, right: 0.834, tipX: 0.518, tipY: 0.959 }, // 30.8° / 27.7°
+  facility_f23: { left: 0.172, right: 0.826, tipX: 0.49, tipY: 0.933 }, // 28.4° / 26.6°
+  facility_f24: { left: 0.17, right: 0.83, tipX: 0.502, tipY: 0.926 }, // no floor diamond: tip = lowest point
+  facility_f25: { left: 0.172, right: 0.828, tipX: 0.5, tipY: 0.994 }, // 25.4° / 26.3°
+  facility_f26: { left: 0.17, right: 0.828, tipX: 0.392, tipY: 0.975 }, // no floor diamond: tip = lowest point
+  facility_f27: { left: 0.168, right: 0.83, tipX: 0.512, tipY: 1 }, // 20.0° / 25.8°
+  facility_f28: { left: 0.17, right: 0.832, tipX: 0.491, tipY: 0.928 }, // 26.2° / 23.8°
+  facility_f29: { left: 0.164, right: 0.838, tipX: 0.463, tipY: 0.889 }, // no floor diamond: tip = lowest point
+  facility_f30: { left: 0.16, right: 0.84, tipX: 0.537, tipY: 0.938 }, // 25.5° / 27.3°
+  facility_f31: { left: 0.164, right: 0.836, tipX: 0.478, tipY: 0.927 }, // 29.0° / 26.5°
+  facility_f32: { left: 0.158, right: 0.84, tipX: 0.473, tipY: 0.887 }, // no floor diamond: tip = lowest point
+  facility_f33: { left: 0.168, right: 0.83, tipX: 0.553, tipY: 0.943 }, // no floor diamond: tip = lowest point
+  facility_f34: { left: 0.166, right: 0.836, tipX: 0.54, tipY: 0.926 }, // no floor diamond: tip = lowest point
+  facility_f35: { left: 0.17, right: 0.836, tipX: 0.505, tipY: 0.936 }, // no floor diamond: tip = lowest point
+};

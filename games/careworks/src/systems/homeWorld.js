@@ -109,7 +109,7 @@ import { roomById } from '../../data/rooms.js';
 import { facilityById } from '../../data/facilities.js';
 import { residentById, NEEDS, supportLevel, RESIDENTS, STAY_LEAVE_HOUR } from '../../data/residents.js';
 import { Rng } from '../../../../core/Rng.js';
-import { DAY, ROUTINE, WAKE, ALL_STEPS } from '../../data/routine.js';
+import { DAY, ROUTINE, WAKE, ALL_STEPS, TIMER_SCALE } from '../../data/routine.js';
 import { createActivities, feelingOf, outcomeMult, birthdayOf } from './activities.js';
 import { activityById, TIMETABLE, OUTCOME, BIRTHDAY, SCHEDULABLE } from '../../data/activities.js';
 import { BELL, FAMILIARITY, BACKUP_HELP } from '../../data/tasks.js';
@@ -359,7 +359,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (!st.memory && isMemorySupport(def)) st.memory = newMemoryState(def); // (Milestone 17; an M16 save: neutral)
     }
     // (Milestone 14: everyone walks WALK.speedMultiplier faster; Milestone 16: × their own aid's speed — the M14 numbers)
-    p.agent = new Agent({ id: def.id, name: def.name, speed: RESIDENT.speed * WALK.speedMultiplier * aidSpeed(st.mobility?.aid ?? 'none'), noPathTeleportSec: 3 });
+    p.agent = new Agent({ id: def.id, name: def.name, speed: RESIDENT.speed * WALK.speedMultiplier * aidSpeed(st.mobility?.aid ?? 'none'), noPathTeleportSec: 3 * TIMER_SCALE });
     const room = roomList().find((r) => r.id === st.room);
     if (room && !st.leaving && !st.guest) room.residentId = def.id; // the room knows its resident (not one going home)
     if (st.pos) {
@@ -1900,7 +1900,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function spawnVisitor(v, pos = null) {
     const p = byResident(v.resident);
     const c = familyOf(p).contact;
-    const x = { kind: 'visitor', id: v.id, name: c.name, resident: v.resident, relation: c.relation, gender: c.gender, agent: new Agent({ id: v.id, name: c.name, speed: RESIDENT.speed * WALK.speedMultiplier * VISIT.speed, noPathTeleportSec: 3 }), v, target: null };
+    const x = { kind: 'visitor', id: v.id, name: c.name, resident: v.resident, relation: c.relation, gender: c.gender, agent: new Agent({ id: v.id, name: c.name, speed: RESIDENT.speed * WALK.speedMultiplier * VISIT.speed, noPathTeleportSec: 3 * TIMER_SCALE }), v, target: null };
     if (pos) {
       x.agent.x = pos.x;
       x.agent.y = pos.y;

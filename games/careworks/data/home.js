@@ -25,7 +25,10 @@ export const HOME = {
   cols: 24,
   rows: 48, // (Milestone 11: the Stage 1 floor — was 16; see STAGES)
   cellSize: 100, // plan units per tile (pathing and walking speed)
-  view: { halfW: 72, halfH: 36 }, // one tile draws as a 144 × 72 diamond (2:1, the series art angle)
+  // Milestone 25b: one tile draws as a 144 × 78 diamond (28.4°), the art's own floor angle — the room and facility
+  // pictures' lower floor edges average 28.6° (tools/careworks-art-fit.mjs; it was 2:1, 26.6°). CAREWORKS only: core's
+  // IsoProjection takes it as a setting, so the other games are untouched.
+  view: { halfW: 72, halfH: 39 },
   wallH: 230, // the two outer back walls, drawn px
   innerWallH: 70, // inside walls are cut down low (dollhouse), so nobody is ever hidden behind one
   margin: 90, // empty world round the home (the camera stops at the home plus this)
