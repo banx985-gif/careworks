@@ -26,7 +26,7 @@ export const MENU_GROUPS = [
   { title: 'Quality and family', rows: [
     row('quality', 'Quality', 'Headline scores, Rank, accreditation, benchmarks and inspections', 'care_ui_28'),
     row('complaints', 'Compliments and complaints', 'Family feedback and the improvement tasks it sets', 'care_ui_04'),
-    row('memoryBook', 'Memory Book', 'Residents who lived out their days with you, kept for good', 'care_ui_25'), // (Milestone 27: Quality → Records too)
+    row('memoryBook', 'Memory Book', 'Residents who lived out their days with you, kept for good', 'memory_book_emblem'), // (Milestone 28b: its own emblem) // (Milestone 27: Quality → Records too)
     row('family', 'Family', 'The Reception / Family Desk: visits, meetings and Family Trust', 'care_ui_10'),
   ] },
   { title: 'Business', rows: [

@@ -131,7 +131,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       return { x: iso.corner(fp.col, fp.row + fp.h).x - fit.left * w, y: iso.corner(fp.col + fp.w, fp.row + fp.h).y - fit.tipY * h, w, h };
     }
     const look = ART_DRAW[it.kind];
-    const w = (fp.w + fp.h) * HW * look.width;
+    const w = (fp.w + fp.h) * HW * look.width * (it.def.scale ?? 1); // (Milestone 28b: a big set-dressing prop — the bus, the fountain)
     const h = w / assets.aspect(it.def.art);
     const cx = iso.corner(fp.col + fp.w / 2, fp.row + fp.h / 2).x;
     const base = iso.corner(fp.col + fp.w, fp.row + fp.h).y + HH * look.drop;

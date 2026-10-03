@@ -1,10 +1,13 @@
-// Main Menu (Milestone 0): the CAREWORKS name drawn in code, then Continue (the last-used slot; hidden when there is
+// Main Menu (Milestone 0): the CAREWORKS title logo (Milestone 28b: care_brand_03, Aaron's art; the name drawn in code
+// only while it loads), then Continue (the last-used slot; hidden when there is
 // no facility yet), Campaign Slots, New Game and Settings (a placeholder sheet).
 // Layout and tapping share one pass (lay out → draw and/or hit-test), so they can never disagree.
 import { THEME, font } from '../../../../core/Theme.js';
 import { drawButton, hitRect } from '../../../../core/ui/Button.js';
 import { text } from '../../../../core/ui/Kit.js';
 import { paletteById } from '../../data/setup.js';
+import { BRAND, ART_CROP } from '../../data/artMoments.js';
+import { drawArtCrop } from '../ui/careArt.js';
 
 const C = THEME.color;
 const S = THEME.size;
@@ -12,7 +15,9 @@ const BTN_H = 130;
 const GAP = 28;
 
 // continueInfo(): { n, summary } of the last-used slot, or null.
-export function createMenuScreen({ layout, continueInfo, onContinue, onSlots, onNewGame, onSettings }) {
+const TITLE_H = 640; // the logo and the line under it
+
+export function createMenuScreen({ layout, assets = null, continueInfo, onContinue, onSlots, onNewGame, onSettings }) {
   const rects = {};
 
   function pass(ctx, tap) {
@@ -27,10 +32,10 @@ export function createMenuScreen({ layout, continueInfo, onContinue, onSlots, on
       ['new', 'New Game', onNewGame, li ? C.progress : C.action],
       ['settings', 'Settings', onSettings, C.progress],
     ].filter(Boolean);
-    const blockH = 330 + 60 + rows.length * (BTN_H + GAP) + (li ? 60 : 0);
+    const blockH = TITLE_H + 60 + rows.length * (BTN_H + GAP) + (li ? 60 : 0);
     let y = sr.y + Math.max(60, (sr.h - blockH) / 2 - 40);
     if (ctx) drawTitle(ctx, cx, y, sr.w);
-    y += 330 + 60;
+    y += TITLE_H + 60;
     const bw = Math.min(sr.w - 120, 820);
     for (const [id, label, fn, accent] of rows) {
       const r = { x: cx - bw / 2, y, w: bw, h: BTN_H };
@@ -51,6 +56,11 @@ export function createMenuScreen({ layout, continueInfo, onContinue, onSlots, on
   }
 
   function drawTitle(ctx, cx, y, w) {
+    if (assets?.has(BRAND.title)) {
+      drawArtCrop(ctx, assets, BRAND.title, ART_CROP[BRAND.title], { x: cx - 300, y: y - 10, w: 600, h: TITLE_H - 80 });
+      text(ctx, 'Run a care home people are glad to call home.', cx, y + TITLE_H - 50, { size: S.body, bold: true, color: C.textMuted, align: 'center', maxWidth: w - 80 });
+      return;
+    }
     // A soft sage roof line over the name: a care home, drawn in code.
     ctx.save();
     ctx.fillStyle = '#E4EFE2';

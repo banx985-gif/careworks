@@ -132,7 +132,7 @@ export const MEMORIAL = {
   staffMorale: 5, staffRecover: 1, staffRoomMult: 2, staffRoom: 'F06', knewAt: 20,
   heldDays: 3, // the room is held for these days, then opens to admissions
   card: (w) => `${w.name} passed peacefully${w.beside ? `, with ${w.beside} beside ${w.them}` : ''}.`,
-  art: { book: 'care_ui_25', glow: 'care_vfx_10', star: 'care_reward_10' },
+  art: { book: 'memory_book_emblem', glow: 'care_vfx_10', star: 'care_reward_10' }, // (Milestone 28b: the Memory Book's own emblem — was care_ui_25)
 };
 // The "what could have been better" note (no penalty): the weakest parts, in plain words.
 export const BETTER = {

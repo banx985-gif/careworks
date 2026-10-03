@@ -130,7 +130,7 @@ export function createSetupScreen({ layout, assets, textPrompt, onBack, onStart 
       const r = { x: PAD, y, w: cw, h };
       if (ctx) {
         card(ctx, r, on ? 'selected' : 'normal');
-        drawPortrait(ctx, { x: r.x + 20, y: r.y + 20, w: 200, h: 200 }, f, on ? C.good : null);
+        drawPortrait(ctx, { x: r.x + 20, y: r.y + 20, w: 200, h: 200 }, f, on ? C.good : null, assets); // (Milestone 28b: their own portrait)
         const tx = r.x + 250;
         let ty = r.y + 24;
         text(ctx, f.name, tx, ty, { size: S.heading, bold: true, maxWidth: tw - 160 });
@@ -192,7 +192,7 @@ export function createSetupScreen({ layout, assets, textPrompt, onBack, onStart 
     drawSign(ctx, assets, { x: b.x + b.w * 0.15, y, w: b.w * 0.7, h: signH }, setup.facility, palette, palette.name);
     y += signH + 24 * k;
     const ps = 180 * k;
-    drawPortrait(ctx, { x: b.x + 40, y, w: ps, h: ps }, f, palette.hex);
+    drawPortrait(ctx, { x: b.x + 40, y, w: ps, h: ps }, f, palette.hex, assets);
     const tx = b.x + 40 + ps + 30;
     const tw = b.x + b.w - 40 - tx;
     const rows = [

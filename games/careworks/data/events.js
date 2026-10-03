@@ -21,6 +21,7 @@ import { STAGES, LOGICAL_CAP } from './home.js';
 import { wingById } from './wings.js';
 import { residentById } from './residents.js';
 import { stageById } from './endOfLife.js';
+import { FIRST_ART, FIRSTS_TEXT, REWARD_ART, PRESTIGE_RANKS } from './artMoments.js';
 
 // --- the 14 categories (§33) --------------------------------------------------------------------------------------------------
 export const CATEGORIES = [
@@ -32,12 +33,12 @@ export const CATEGORIES = [
   { id: 'staff', name: 'Staff milestones', icon: 'care_ui_02' },
   { id: 'feedback', name: 'Compliments and complaints', icon: 'care_ui_04' },
   { id: 'review', name: 'Care-plan reviews', icon: 'care_ui_01' },
-  { id: 'rehab', name: 'Rehabilitation', icon: 'care_ui_06' },
+  { id: 'rehab', name: 'Rehabilitation', icon: 'care_ui_13' }, // (Milestone 28b: the Rehabilitation icon — was Admissions)
   { id: 'facility', name: 'The home', icon: 'care_ui_03' },
   { id: 'emergency', name: 'Health and safety', icon: 'care_ui_27' },
   { id: 'recognition', name: 'Recognition', icon: 'care_ui_28' },
   { id: 'partner', name: 'Partners and grants', icon: 'care_ui_14' },
-  { id: 'memorial', name: 'In memory', icon: 'care_ui_25' },
+  { id: 'memorial', name: 'In memory', icon: 'care_ui_26' }, // (Milestone 28b: Palliative Comfort — was the Memory Book icon)
 ];
 export const CATEGORY_IDS = CATEGORIES.map((c) => c.id);
 export const categoryById = (id) => CATEGORIES.find((c) => c.id === id) ?? null;
@@ -70,8 +71,12 @@ export const INBOX = { keep: 120, shown: 6 };
 const first = (n) => String(n ?? '').split(' ')[0];
 const their = (id) => (residentById(id)?.pronoun === 'she' ? 'her' : 'his');
 const res = (id) => (id ? { type: 'resident', id } : null);
+// Milestone 28b: big beats may carry badge (a second picture in the corner: the Rehab Success Badge, the National
+// Excellence Trophy) and aura (the Prestige Aura behind the picture: Rank S / S+, the C10 award); two firsts with their
+// own pictures — the opening day (home:opened) and the first resident welcomed from the Admissions board (care:admit first).
 export const KINDS = {
-  'care:admit': { cat: 'facility', inbox: true, make: (x) => ({ weight: 'medium', text: `Welcome, ${x.name}`, good: true, opens: res(x.resident) }) },
+  'home:opened': { cat: 'facility', inbox: true, make: () => ({ weight: 'big', title: FIRSTS_TEXT.opening.title, text: FIRSTS_TEXT.opening.text('The home'), line: 'Opening day: the home opens its doors', art: FIRST_ART.opening, good: true, opens: { type: 'develop' } }) },
+  'care:admit': { cat: 'facility', inbox: true, make: (x) => (x.first ? { weight: 'big', title: FIRSTS_TEXT.welcome.title, text: FIRSTS_TEXT.welcome.text(x.name), line: `Welcome, ${x.name}`, art: FIRST_ART.welcome, good: true, opens: res(x.resident) } : { weight: 'medium', text: `Welcome, ${x.name}`, good: true, opens: res(x.resident) }) },
   'care:leaving': { cat: 'facility', inbox: true, make: (x) => (x.discharge ? null : { weight: 'medium', text: `${first(x.name)} heads home`, good: true }) },
   'care:movedOut': { cat: 'facility', inbox: true, make: (x) => ({ weight: 'inbox', text: `${first(x.name)}'s family has moved them to another home`, good: false }) },
   'staff:hired': { cat: 'staff', inbox: true, make: (x) => ({ weight: 'medium', text: `Welcome to the team, ${first(x.name)}`, good: true, opens: x.id ? { type: 'staff', id: x.id } : null }) },
@@ -84,7 +89,7 @@ export const KINDS = {
   'care:transfer': { cat: 'emergency', inbox: true, make: (x) => ({ weight: 'medium', text: `${first(x.name)} goes to the hospital service for a few days`, good: false, opens: res(x.resident) }) },
   'care:back': { cat: 'emergency', inbox: true, make: (x) => ({ weight: 'medium', text: `${first(x.name)} is back from the hospital service`, good: true, opens: res(x.resident) }) },
   'care:ready': { cat: 'rehab', inbox: false, make: (x) => ({ weight: 'medium', text: `${first(x.name)} is ready to go home`, good: true, opens: res(x.resident) }) },
-  'care:discharge': { cat: 'rehab', inbox: true, make: (x) => (x.first && x.art ? { weight: 'big', title: 'A first rehab discharge', text: `${first(x.name)} is back on ${their(x.resident)} feet and home with family`, line: `${first(x.name)} goes home with family: rehab complete`, art: x.art, good: true } : { weight: 'medium', text: `${first(x.name)} goes home with family: rehab complete`, good: true }) },
+  'care:discharge': { cat: 'rehab', inbox: true, make: (x) => (x.first && x.art ? { weight: 'big', title: 'A first rehab discharge', text: `${first(x.name)} is back on ${their(x.resident)} feet and home with family`, line: `${first(x.name)} goes home with family: rehab complete`, art: x.art, badge: REWARD_ART.rehab, good: true } : { weight: 'medium', text: `${first(x.name)} goes home with family: rehab complete`, good: true }) },
   'care:visit': { cat: 'visit', inbox: false, make: (x) => (x.first && x.art ? { weight: 'big', title: 'A first family visit', text: `${x.visitor} comes to see ${first(x.name)}`, art: x.art, good: true, opens: res(x.resident), inboxAnyway: true } : { weight: 'quiet', text: `${x.visitor} is visiting ${first(x.name)}`, good: false, opens: res(x.resident) }) },
   'care:compliment': { cat: 'feedback', inbox: true, make: (x) => (x.first && x.art ? { weight: 'big', title: 'A first compliment', text: `${first(x.name)}'s family says thank you`, line: `A compliment from ${first(x.name)}'s family`, art: x.art, good: true, opens: { type: 'complaints' } } : { weight: 'medium', text: `A compliment from ${first(x.name)}'s family`, good: true, opens: { type: 'complaints' } }) },
   'care:complaint': { cat: 'feedback', inbox: true, make: (x) => ({ weight: 'medium', text: `A complaint from ${first(x.name)}'s family: an improvement task (Quality)`, good: false, opens: { type: 'complaints' } }) },
@@ -110,10 +115,10 @@ export const KINDS = {
   'partners:ended': { cat: 'partner', inbox: true, make: (x) => ({ weight: 'inbox', text: `A partnership has ended: ${x.name ?? x.id}`, good: true, opens: { type: 'partners' } }) },
   'partners:grant': { cat: 'partner', inbox: true, make: (x) => ({ weight: x.status === 'done' ? 'medium' : 'inbox', text: x.status === 'done' ? `Grant met: ${x.name}` : x.status === 'accepted' ? `Grant taken on: ${x.name}` : `Grant closed: ${x.name}`, good: x.status !== 'expired', opens: { type: 'grants' } }) },
   'economy:offer': { cat: 'facility', inbox: true, make: (x) => ({ weight: 'blocking', title: 'A funding offer', text: 'Money is tight: an offer is waiting (Inbox)', line: 'Money is tight: a funding offer is waiting', good: false, opens: { type: 'inbox' }, choice: { kind: 'economy', id: x.kind } }) },
-  'quality:rankUp': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'big', title: `Rank ${x.rank}`, text: `Opens ${RANK_BEAT[x.rank]}`, art: QUALITY_ART.rankUp, good: true, opens: { type: 'quality' } }) },
+  'quality:rankUp': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'big', title: `Rank ${x.rank}`, text: `Opens ${RANK_BEAT[x.rank]}`, art: QUALITY_ART.rankUp, aura: PRESTIGE_RANKS.includes(x.rank), good: true, opens: { type: 'quality' } }) },
   'quality:award': { cat: 'recognition', inbox: true, make: (x) => {
     const rw = accreditationById(x.id)?.reward ?? { reputation: 0, credits: 0 };
-    return { weight: 'big', title: x.name, text: `Awarded · Reputation +${rw.reputation} · ${rw.credits.toLocaleString('en-GB')} Credits`, art: x.finale ? QUALITY_ART.finale : x.art, good: true, opens: { type: 'quality' } };
+    return { weight: 'big', title: x.name, text: `Awarded · Reputation +${rw.reputation} · ${rw.credits.toLocaleString('en-GB')} Credits`, art: x.finale ? QUALITY_ART.finale : x.art, ...(x.finale ? { badge: REWARD_ART.trophy, aura: true } : {}), good: true, opens: { type: 'quality' } };
   } },
   'quality:inspection': { cat: 'recognition', inbox: true, make: (x) => (x.kind === 'routine' ? { weight: 'medium', text: `The routine review: grade ${x.grade} (Inbox)`, good: x.grade !== 'D', opens: { type: 'quality' } } : x.pass ? { weight: 'inbox', text: `${accreditationById(x.id)?.name}: awarded`, good: true, opens: { type: 'quality' } } : { weight: 'medium', text: `${accreditationById(x.id)?.name}: the inspection fell short — see what to work on (Inbox)`, good: false, opens: { type: 'quality' } }) },
   'quality:peer': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'quiet', text: `${x.name} joins the benchmark network (Quality → Benchmark)`, good: true, opens: { type: 'quality' } }) },

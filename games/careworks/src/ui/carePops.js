@@ -2,16 +2,19 @@
 //   a task done together  → Connection Sparkle (care_vfx_01) between the helper and Arthur
 //   an activity joined    → Activity Joy (care_vfx_02) over the Activity Lounge
 //   a meal finished       → Meal Satisfaction (care_vfx_04) over the Dining Room's tables
+//   a gardening session   → Garden Sparkle (care_vfx_03) over the garden it runs in (Milestone 28b; only while fxOn():
+//                           Reduced flashes and Low graphics turn it off)
 // Routine meals and activities pop from 'care:step' (so a meal he has on his own still shows); every other finished
 // task pops from 'care:task'. Pops go through core/VfxSystem's pooled 'world' layer (the home screen draws it under its
 // camera). Never stacked: one per spot, none within NEAR of a live one, at most POPS_MAX_LIVE at once, and a gap between
 // pops of the same kind in real seconds (so a faster speed never floods the home). A pop that can't show now is skipped.
-//   createCarePops({ bus, world(), vfx, screen, isVisible() }) → { update(dt), clear(), log, live() }   clear(): a new run
+//   createCarePops({ bus, world(), vfx, screen, isVisible(), fxOn() }) → { update(dt), clear(), log, live() }   clear(): a new run
 //   opened (or the home left) — no spot or gap carried over
 //   createDayBeat() → { show(summary, dayLabel), showText(text, good), update(dt), render(ctx, x, y, w), current }
 //     the medium beat: "Day 3 — all routine care done" / "Day 3 — 2 tasks missed"; Milestone 6: "Welcome, Betty Finch"
 import { THEME, font } from '../../../../core/Theme.js';
 import { CARE_POPS, POPS_MAX_LIVE, DAY_BEAT } from '../../data/pops.js';
+import { CARE_FX } from '../../data/artMoments.js';
 import { ROUTINE } from '../../data/routine.js';
 import { HOME, PLACED } from '../../data/home.js';
 // (Milestone 10: the pieces move — the live one from the world when there is one)
@@ -28,7 +31,7 @@ const placeCentre = (id) => {
   return { x: (fp.col + fp.w / 2) * HOME.cellSize, y: (fp.row + fp.h / 2) * HOME.cellSize };
 };
 
-export function createCarePops({ bus, world: getWorld, vfx, screen, isVisible }) {
+export function createCarePops({ bus, world: getWorld, vfx, screen, isVisible, fxOn = () => true }) {
   liveWorld = getWorld;
   const pops = []; // live: { key, x, y, left }
   const since = {}; // kind → real seconds since it last showed
@@ -37,7 +40,7 @@ export function createCarePops({ bus, world: getWorld, vfx, screen, isVisible })
 
   // plan = { x, y } in plan units; spot = the key that may hold only one pop.
   function pop(kind, spot, plan, lift = LIFT.place) {
-    const cfg = CARE_POPS[kind];
+    const cfg = CARE_POPS[kind] ?? CARE_FX[kind]; // (Milestone 28b: the garden sparkle)
     if (!cfg || !plan || !isVisible()) return false;
     if (pops.length >= POPS_MAX_LIVE) return false;
     if ((since[kind] ?? Infinity) < cfg.gap) return false;
@@ -66,7 +69,16 @@ export function createCarePops({ bus, world: getWorld, vfx, screen, isVisible })
     if (status !== 'done') return;
     const kind = popKindOfStep(stepOf(step));
     if (kind === 'meal') pop('meal', 'dining', placeCentre('F03'));
-    else if (kind === 'activity') pop('activity', 'lounge', placeCentre('F05'));
+    else if (kind === 'activity') {
+      // (Milestone 28b: a gardening session sparkles over its garden — the Courtyard Garden, else the lounge it falls back to)
+      const w = getWorld();
+      const info = w?.sessionInfo?.(w.clock.totalDays, step === 'morningActivity' ? 'morning' : 'afternoon');
+      if (info?.activity?.id === 'gardening' && fxOn()) {
+        const g = w.placed.find((p) => p.defId === info.activity.where.facility);
+        if (pop('garden', 'garden', g ? { x: (g.fp.col + g.fp.w / 2) * HOME.cellSize, y: (g.fp.row + g.fp.h / 2) * HOME.cellSize } : placeCentre('F05'))) return;
+      }
+      pop('activity', 'lounge', placeCentre('F05'));
+    }
   });
   bus.on('care:task', ({ id, type, status, staff, resident }) => {
     if (status !== 'done') return;

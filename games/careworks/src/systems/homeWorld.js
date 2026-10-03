@@ -113,6 +113,7 @@ import { findPath } from '../../../../core/Pathing.js';
 import { AssignmentSystem } from '../../../../core/AssignmentSystem.js';
 import { StaffModel } from '../../../../core/StaffModel.js';
 import { HOME, RESIDENT, ENTRANCE, MAX_FLOOR, STAGES, LOGICAL_CAP } from '../../data/home.js';
+import { SET_DRESSING } from '../../data/dressing.js';
 import { createLayout } from './homeLayout.js';
 import { roomById } from '../../data/rooms.js';
 import { facilityById, scaleBonus, LEVELS, levelMultOf } from '../../data/facilities.js';
@@ -3735,6 +3736,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   }
   // A plan never reviewed on this save (a new game, or an M7-era save): reviewed as of now, not stale.
   for (const p of residents) if (p.state.review == null) markReviewed(p.state, clock.totalDays);
+  // Milestone 28b: the opening day's big beat (a new home, on its first update; an older save has had its day)
+  if (care.opened == null) care.opened = clock.totalDays > 0;
   const tickAdmissions = (day) => {
     const r = admissions.tick(day, { inHome: inHome(), roles: teamRoles(), placeable: roomTemplatesHere() });
     if (r.left.length || r.arrived.length) bus?.emit('admissions:change', { day, left: r.left.map((a) => a.id), arrived: r.arrived.map((a) => a.id) });
@@ -3761,7 +3764,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     // Milestone 18: the Medication Cart stands beside the Medication Room when no nurse has it out on a round
     const cartOut = crew.people.some((q) => world.trolleyOf(q) === ROUND.cart);
     const cartAt = !cartOut && medRoom() ? besidePiece(medRoom(), 1) : null;
-    const key = `${day}:${want.map((w) => w.art).join()}:${layout.version}:${cartAt ? `${cartAt.col},${cartAt.row}` : ''}`;
+    // Milestone 28b: the set dressing's conditions (an emergency under way; a meal service with texture-modified meals)
+    const incidentOn = !!incidents?.active;
+    const serving = MEALS.some((m) => h >= m.at - TROLLEYS.before && h <= m.at + TROLLEYS.serviceHours[m.id]);
+    const textureOn = serving && seated().some((p) => dietOf(p.state) === 'texture');
+    const key = `${day}:${want.map((w) => w.art).join()}:${layout.version}:${cartAt ? `${cartAt.col},${cartAt.row}` : ''}:${incidentOn}:${textureOn}`;
     if (decorCache.key === key) return decorCache.list;
     const used = new Set();
     const list = [];
@@ -3782,7 +3789,35 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         break;
       }
     }
-    if (cartAt) list.push({ kind: 'prop', id: 'decor:medCart', def: { art: ROUND.cart }, fp: { col: cartAt.col, row: cartAt.row, w: 1, h: 1 }, decor: true });
+    if (cartAt) {
+      list.push({ kind: 'prop', id: 'decor:medCart', def: { art: ROUND.cart }, fp: { col: cartAt.col, row: cartAt.row, w: 1, h: 1 }, decor: true });
+      used.add(`${cartAt.col},${cartAt.row}`);
+    }
+    // Milestone 28b: set dressing (data/dressing.js) — a picture beside the first piece of each listed kind: on the
+    // piece's sides first, then its front row (then the ring one tile further out); never on its seats / helper spots,
+    // never two on one tile. Pictures only:
+    // the grid and every path stay as they were.
+    for (const d of SET_DRESSING) {
+      if ((d.when === 'incident' && !incidentOn) || (d.when === 'textureMeal' && !textureOn)) continue;
+      for (const id of d.beside) {
+        const pc = layout.ofDef(id)[0];
+        if (!pc) continue;
+        const b = pc.box;
+        const spots = new Set(Object.values((facilityById(pc.defId) ?? roomById(pc.defId))?.spots ?? {}).map((t) => `${b.col + t.col},${b.row + t.row}`));
+        const cands = [];
+        for (const d of [1, 2]) { // (the next tile out, then one further when the first ring is taken)
+          for (let r = b.row + b.h - 1; r >= b.row; r--) cands.push([b.col + b.w - 1 + d, r], [b.col - d, r]);
+          for (let c = b.col + b.w - 1 + d; c >= b.col - d; c--) cands.push([c, b.row + b.h - 1 + d]);
+        }
+        for (const [col, row] of cands) {
+          const k = `${col},${row}`;
+          if (used.has(k) || spots.has(k) || !layout.isOpen(col, row) || !grid.isWalkable?.(col, row)) continue;
+          used.add(k);
+          list.push({ kind: 'prop', id: `dress:${d.art}:${id}`, def: { art: d.art, scale: d.scale ?? 1 }, fp: { col, row, w: 1, h: 1 }, decor: true });
+          break;
+        }
+      }
+    }
     decorCache = { key, list };
     return list;
   }
@@ -4160,6 +4195,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       clock.update(dt);
       const hours = (g / clock.secondsPerDay) * 24;
       while (lastDay < clock.totalDays) newDay(++lastDay);
+      if (!care.opened) {
+        care.opened = true;
+        bus?.emit('home:opened', { day: clock.totalDays });
+      }
       for (const p of residents) {
         if (p.state.away) continue; // (Milestone 18: the hospital service looks after them while they are away)
         alertHour(p, hours); // (Milestone 18: an open alert costs a little Comfort)
@@ -4878,9 +4917,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       p.agent.walkTo(grid, t.col, t.row);
       addLog(st, logDay(st), now(), `Moved in to room ${layout.roomNumber(room.id)}`);
       for (const slot of Object.keys(TIMETABLE.slots)) acts.addChoice(clock.totalDays, slot, p, friendIds); // (Milestone 14: today's sessions)
-      economy.award('firstAdmission'); // (Milestone 22: Care Tokens)
+      const firstIn = economy.award('firstAdmission') > 0; // (Milestone 22: Care Tokens; Milestone 28b: the first welcome's big beat)
       if (app.allocated) partners.record('allocatedAdmission', { resident: p.id, stay: def.stay, grant: app.allocated }); // (Milestone 23: a respite allocation / rehab pathway referral)
-      bus?.emit('care:admit', { resident: p.id, name: p.name, room: room.id });
+      bus?.emit('care:admit', { resident: p.id, name: p.name, room: room.id, first: firstIn });
       return { ok: true, reason: null, resident: p };
     },
     serialize() {

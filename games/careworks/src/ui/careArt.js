@@ -1,6 +1,10 @@
 // Code-drawn pieces for the menus, the slot cards and Facility Setup (Milestone 0). The founder portraits are
-// code-drawn placeholders for now (card); the dice and the sign come from the shared core/ui/SetupArt.
-//   drawPortrait(ctx, r, founder, ring)          head and shoulders: skin, hair, a tunic in the role colour, initials
+// the Founder's own portrait (Milestone 28b; the code-drawn head and shoulders only while it loads); the dice and the sign
+// come from the shared core/ui/SetupArt.
+//   drawPortrait(ctx, r, founder, ring, assets)  the Founder's portrait (their staff art, head and shoulders) in a framed
+//                                                card; without assets or while it loads: skin, hair, a tunic, initials
+//   drawArtCrop(ctx, assets, key, crop, box, k)  a picture's painted part (crop: fractions of the file) fitted in box,
+//                                                centred, at alpha k; returns the drawn rect (null while it loads)
 //   drawSign(ctx, assets, r, name, palette, sub) the facility sign in the palette colour (words drawn by code)
 //   diceButton(ctx, assets, r, label, opts)      a button with the Random die beside its label
 //   accentStrip(ctx, r, palette)                 the palette strip down a slot card's left edge
@@ -8,10 +12,25 @@ import { THEME, font } from '../../../../core/Theme.js';
 import { drawButton } from '../../../../core/ui/Button.js';
 import { drawDice, drawBadge } from '../../../../core/ui/SetupArt.js';
 import { ROLES } from '../../data/setup.js';
+import { PORTRAIT_CROP } from '../../data/bars.js';
+
+export function drawArtCrop(ctx, assets, key, crop, box, k = 1) {
+  const img = assets.get(key);
+  if (!img) return null;
+  const aspect = (crop.w * img.naturalWidth) / (crop.h * img.naturalHeight);
+  const w = Math.min(box.w, box.h * aspect);
+  const h = w / aspect;
+  const r = { x: box.x + (box.w - w) / 2, y: box.y + (box.h - h) / 2, w, h };
+  ctx.save();
+  ctx.globalAlpha *= k;
+  assets.drawCrop(ctx, key, crop, r);
+  ctx.restore();
+  return r;
+}
 
 const C = THEME.color;
 
-export function drawPortrait(ctx, r, founder, ring = null) {
+export function drawPortrait(ctx, r, founder, ring = null, assets = null) {
   ctx.save();
   ctx.fillStyle = C.panelAlt;
   ctx.beginPath();
@@ -23,7 +42,8 @@ export function drawPortrait(ctx, r, founder, ring = null) {
     ctx.stroke();
   }
   ctx.clip();
-  if (founder) {
+  if (founder && assets?.has(founder.art)) assets.drawCrop(ctx, founder.art, PORTRAIT_CROP, r); // (Milestone 28b: their own portrait)
+  else if (founder) {
     const s = r.w;
     const cx = r.x + s / 2;
     const role = ROLES[founder.role];

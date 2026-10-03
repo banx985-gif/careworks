@@ -94,7 +94,7 @@ import { TRAITS, STAFF, validateStaff, checkStaffArt } from '../data/staff.js';
 import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL } from '../data/balance.js';
 import { SHIFT_IDS, OFF, WINGS, AGENCY } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
-import { STAGES, LOGICAL_CAP } from '../data/home.js';
+import { STAGES, LOGICAL_CAP, HOME } from '../data/home.js';
 import { WINGS_SPECIAL, wingById } from '../data/wings.js';
 import { CHANNELS, RANK_NOW } from '../data/recruitment.js';
 import { SPECIALTIES } from '../data/training.js';
@@ -126,8 +126,11 @@ import { FACILITIES } from '../data/facilities.js';
 import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { AccountBook } from '../../../core/AccountBook.js';
 import { MajorFeedback } from '../../../core/MajorFeedback.js';
-import { BOOK, MEMORIAL, PLAN as EOL_PLAN, ACCOUNT_KEY as EOL_ACCOUNT_KEY } from '../data/endOfLife.js';
+import { BOOK, MEMORIAL, PLAN as EOL_PLAN, ACCOUNT_KEY as EOL_ACCOUNT_KEY, COMFORT } from '../data/endOfLife.js';
 import { categoryById, INBOX as INBOX_RULES } from '../data/events.js';
+import { BRAND, FIRST_ART, FIRSTS_TEXT, REWARD_ART, PLAQUES, CARE_FX, SCORE_ICONS, SECTION_ICONS, ART_CROP } from '../data/artMoments.js';
+import { drawArtCrop } from './ui/careArt.js';
+import { residentById } from '../data/residents.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
 import { createSlotsScreen } from './screens/SlotsScreen.js';
 import { createSetupScreen } from './screens/SetupScreen.js';
@@ -216,6 +219,8 @@ const govMode = () => settings.get('fpsMode') ?? 'auto';
 const governor = new FrameGovernor({ mode: govMode(), bus, capFps: true });
 loop.governor = governor;
 const lowFx = () => governor.state === 'half' && settings.get('fpsMode') !== 'high';
+// Milestone 28b: the new care effects show only with Reduced flashes off and full graphics.
+const fxOn = () => !lowFx() && !settings.get('reducedFlashes');
 const haptics = new Haptics({ enabled: () => settings.get('haptics') !== false });
 function applySettings() {
   setTextScale(TEXT_SCALE[settings.get('textSize')] ?? 1);
@@ -466,6 +471,7 @@ function setupFor(n) {
 
 const menuScreen = createMenuScreen({
   layout,
+  assets, // (Milestone 28b: the title logo)
   continueInfo: () => {
     const n = campaigns?.last;
     return n ? { n, summary: campaigns.card(n).summary } : null;
@@ -477,6 +483,7 @@ const menuScreen = createMenuScreen({
 });
 const slotsScreen = createSlotsScreen({
   layout,
+  assets, // (Milestone 28b: the art behind the slots, real Founder portraits, NG+ key art)
   cards,
   last: () => campaigns?.last ?? null,
   onBack: () => router.go('menu'),
@@ -576,7 +583,7 @@ const dayBeat = createDayBeat();
 // Milestone 25c: the next-step hint line (core/ui/HintLine; the rules are hintRules() below, first match wins)
 const hintLine = new HintLine({ rect: () => homeScreen.rectOf('hint'), rules: hintRules(), quiet: () => !open || !!spawn || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || settings.get('showHints') === false || !!bigBeat });
 const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it), onWings: () => openWings(), hint: hintLine, prefs: { nameTags: () => settings.get('nameTags') !== false, taskMarkers: () => settings.get('taskMarkers') !== false, lowFx } });
-const carePops = createCarePops({ bus, world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused && !lowFx() }); // (Milestone 25c: Low graphics — no pops)
+const carePops = createCarePops({ bus, fxOn: () => fxOn(), world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused && !lowFx() }); // (Milestone 25c: Low graphics — no pops)
 // The end of each day: the medium beat ("Day 3 — all routine care done" / "2 tasks missed").
 bus.on('care:dayEnd', (summary) => {
   if (!open || router.currentName !== 'home') return;
@@ -611,6 +618,28 @@ bus.on('staff:trained', ({ name, course }) => debug.log(`trained: ${name} · ${c
 // choice in play (a small card: Open shows the same sheet its art opens; Later leaves it in the Inbox) — or the memorial
 // moment. Asked every frame; a beat never sits over a sheet or another pop-up (the director checks).
 let shownMoment = null;
+// Milestone 28b: care effects in the home (data/artMoments.js CARE_FX, the world layer like the M5 pops): a course
+// finished (over the staff member), research done (over the Nurse Station), a compliment (over the resident). Never with
+// Reduced flashes or Low graphics, one of a kind at a time, only while the home is on screen.
+const fxSince = {};
+const fxLog = []; // (tests: what showed)
+function careFx(kind, plan, lift = 230) {
+  const cfg = CARE_FX[kind];
+  if (!cfg || !plan || !fxOn() || !open || spawn || router.currentName !== 'home') return false;
+  const t = performance.now() / 1000;
+  if (t - (fxSince[kind] ?? -1e9) < cfg.gap) return false;
+  fxSince[kind] = t;
+  const at = homeScreen.worldPointOf(plan.x, plan.y, lift);
+  vfx.sprite('world', cfg.art, at.x, at.y, { size: cfg.size, life: cfg.life, from: 0.45, to: 1, rise: 40, hold: 0.5 });
+  fxLog.push({ kind, t: +t.toFixed(2) });
+  if (fxLog.length > 40) fxLog.shift();
+  return true;
+}
+const agentAt = (a) => (a ? { x: a.agent.x, y: a.agent.y } : null);
+const pieceCentre = (pc) => (pc ? { x: (pc.fp.col + pc.fp.w / 2) * HOME.cellSize, y: (pc.fp.row + pc.fp.h / 2) * HOME.cellSize } : null);
+bus.on('staff:trained', ({ id }) => careFx('training', agentAt(open?.world?.byId(id))));
+bus.on('research:complete', () => careFx('research', pieceCentre(open?.world?.placed.find((x) => x.defId === 'F01')), 200));
+bus.on('care:compliment', ({ resident }) => careFx('compliment', agentAt(open?.world?.residentById(resident))));
 function momentUi() {
   return { home: !!open && !spawn && router.currentName === 'home', sheet: sheet.active || homeScreen.buildMode, popup: dialog.active || memorial.active || loop.paused || textPrompt.active };
 }
@@ -624,7 +653,7 @@ function tickMoments(dt) {
   if (cur) presentMoment(cur, ev);
 }
 function presentMoment(m, ev) {
-  if (m.weight === 'big') bigBeat = { uid: m.uid, title: m.title ?? '', text: m.text, art: m.art, age: 0 };
+  if (m.weight === 'big') bigBeat = { uid: m.uid, title: m.title ?? '', text: m.text, art: m.art, badge: m.badge ?? null, aura: !!m.aura, confetti: m.kind === 'quality:award', age: 0 };
   else if (m.weight === 'medium' || m.weight === 'quiet') dayBeat.showText(m.text, m.good);
   else if (m.weight === 'blocking') {
     if (m.choice?.kind === 'memorial') return showMemorial(m.payload, m.uid);
@@ -850,7 +879,7 @@ function openRoster() {
       sections: [
         { lines, lanes },
         { columns: 1, buttons: [{ id: 'recruit', label: 'Recruit', sub: `${w.staffing.board.length} candidates · Staff ${w.team.length} / ${w.staffing.cap} (Rank ${RANK_NOW})`, icon: 'care_ui_02', accent: COL.action, onTap: () => openRecruit() }] },
-        { title: 'Safe Coverage', bars, lines: detail },
+        { title: 'Safe Coverage', bars, lines: withGlyph(detail, SECTION_ICONS.coverage) },
         ...(painted.length > 1 ? [{ title: 'Wings', lines: [{ text: 'Staff in a wing care for its residents first; floats (and agency) go where a wing is short.', color: COL.textMuted }, ...wingCover], lanes: wingLanes }] : []), // (Milestone 24)
         { title: 'Team', columns: 2, buttons: teamRows },
         {
@@ -933,7 +962,7 @@ function openActivities() {
         { title: 'Today', lines: [...signupLines(w, w.sessionToday('morning')).filter(() => !!w.sessionToday('morning')), ...signupLines(w, w.sessionToday('afternoon'))] },
         { title: 'This week', lines: [{ text: 'Tap a slot to choose an activity (or free time). Declining is always fine: nobody is made to join.', color: COL.textMuted }], columns: 2, buttons: rows },
         { title: 'Outings and visitors', lines: notices.length ? notices.map((n) => ({ text: `Notice: ${n.def.name} (${dayName(w, n.day)}): answer it in the Inbox`, color: COL.actionDark })) : [{ text: 'Visitor offers arrive in the Inbox a few days ahead.', color: COL.textMuted }], columns: 1, buttons: [
-          { id: 'act:outing', label: 'Plan an outing', sub: activityById('outing').needs.text, disabled: true, accent: COL.progress },
+          { id: 'act:outing', label: 'Plan an outing', sub: activityById('outing').needs.text, icon: SECTION_ICONS.outing, disabled: true, accent: COL.progress }, // (Milestone 28b: the Outing icon)
           { id: 'act:inbox', label: 'Inbox', sub: notices.length ? `${notices.length} waiting` : 'Nothing waiting', accent: COL.progress, onTap: () => openInbox() },
         ] },
       ],
@@ -1039,7 +1068,8 @@ function inboxLog(w) {
     const lines = g.lines.slice(0, INBOX_RULES.shown);
     out.push({ title: `${g.cat.name}${g.unread ? ` · ${g.unread} new` : ''}`, titleDot: g.unread ? COL.action : null, columns: 1, buttons: lines.map((l) => {
       const [head, rest] = splitLine(l.text);
-      return { id: `inboxLine:${l.uid}`, label: head, sub: `${rest ? `${rest} · ` : ''}${agoWord(w, l.day)}`, icon: g.cat.icon, badge: l.read ? null : '•', accent: l.read ? COL.progress : COL.action, onTap: () => {
+      const face = personArt(w, l.opens);
+      return { id: `inboxLine:${l.uid}`, label: head, sub: `${rest ? `${rest} · ` : ''}${agoWord(w, l.day)}`, icon: face ?? g.cat.icon, iconCrop: face ? PORTRAIT_CROP : null, iconBadge: face ? g.cat.icon : null, badge: l.read ? null : '•', accent: l.read ? COL.progress : COL.action, onTap: () => {
         w.events.markRead(l.uid);
         autosave.request('inbox');
         openTarget(l.opens);
@@ -1047,6 +1077,12 @@ function inboxLog(w) {
     }) });
   }
   return out;
+}
+// Milestone 28b: the portrait of the resident or staff member a line is about (they may have left the home since).
+function personArt(w, o) {
+  if (o?.type === 'resident') return w.residentById(o.id)?.def.art ?? residentById(o.id)?.art ?? null;
+  if (o?.type === 'staff') return w.byId(o.id)?.art ?? STAFF.find((x) => x.id === o.id)?.art ?? null;
+  return null;
 }
 // A long line on a button: the first ~34 characters (at a word) on the label, the rest on the line under it.
 function splitLine(t) {
@@ -1439,7 +1475,7 @@ function qualityTabs(w) {
       ...(nx ? [{ text: `Rank ${nx.rank} opens: ${RANK_OPENS[nx.rank]}`, color: COL.textMuted }] : []),
       { text: 'Reputation grows from good scores held month after month, routine reviews and accreditations. It never drops below your rank.', color: COL.textMuted },
     ], bars: nx ? [{ label: `To Rank ${nx.rank}`, value: pct, color: COL.progress, text: `${Math.round(pct)}%` }] : [] },
-    ...SCORES.map((sc) => ({ lines: [{ text: `What moves this: ${sc.moves}`, color: COL.textMuted }], bars: [{ label: sc.name, value: s[sc.id], color: scoreColour(s[sc.id]), text: `${Math.round(s[sc.id])}` }] })),
+    ...SCORES.map((sc) => ({ lines: [{ text: `What moves this: ${sc.moves}`, color: COL.textMuted, glyph: artGlyph(SCORE_ICONS[sc.id]) }], bars: [{ label: sc.name, value: s[sc.id], color: scoreColour(s[sc.id]), text: `${Math.round(s[sc.id])}` }] })),
     { lines: [{ text: 'Each score is the average of the last month, so one good or bad day never swings it.', color: COL.textMuted }], columns: 1, buttons: [{ id: 'quality:parts', label: 'What makes up each score', sub: 'Every part and its weight, from the home’s own records', icon: QUALITY_ART.icon, accent: COL.progress, onTap: () => openScoreParts() }, { id: 'quality:complaints', label: 'Compliments & complaints', sub: `${w.family.open().length} open · ${w.family.compliments().length} compliments`, icon: FAMILY_ICONS.complaint, accent: COL.action, onTap: () => openComplaints() }] },
     ...(debug.enabled ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'quality:debugRank', label: `Rank up (debug): now ${Q.rank}`, sub: 'Its reputation floor at once; ranks never go down', disabled: !nx, accent: COL.progress, onTap: () => {
       Q.stepRankForDebug();
@@ -1447,7 +1483,7 @@ function qualityTabs(w) {
     } }] }] : []),
   ];
   const accSections = [
-    { lines: [{ text: 'Apply once you reach an accreditation’s Rank. An inspection comes a few days later and looks at what really happened: the last month’s scores, essential care, unsafe shifts and complaints. Nothing to fill in.', color: COL.textMuted }], columns: 1, buttons: Q.accreditations().map((a) => ({ id: `acc:${a.def.id}`, label: `${a.def.id} ${a.def.name}`, sub: `${STATUS_WORDS[a.status]} · ${accreditationSub(w, a)}`, icon: a.def.art, accent: a.status === 'won' ? COL.good : a.status === 'ready' && a.check.pass ? COL.action : COL.progress, badge: a.status === 'ready' && a.check.pass ? '!' : null, onTap: () => openAccreditation(a.def.id) })) },
+    { lines: [{ text: 'Apply once you reach an accreditation’s Rank. An inspection comes a few days later and looks at what really happened: the last month’s scores, essential care, unsafe shifts and complaints. Nothing to fill in.', color: COL.textMuted }], columns: 1, buttons: Q.accreditations().map((a) => ({ id: `acc:${a.def.id}`, label: `${a.def.id} ${a.def.name}`, sub: `${STATUS_WORDS[a.status]} · ${accreditationSub(w, a)}`, icon: a.def.art, iconBadge: a.status === 'won' ? PLAQUES[a.def.id] ?? null : null, accent: a.status === 'won' ? COL.good : a.status === 'ready' && a.check.pass ? COL.action : COL.progress, badge: a.status === 'ready' && a.check.pass ? '!' : null, onTap: () => openAccreditation(a.def.id) })) },
   ];
   const bench = Q.benchmark();
   const peers = Q.peers();
@@ -1523,9 +1559,10 @@ function openAccreditation(id) {
       title: a.def.name,
       subtitle: `${a.def.id} · Rank ${a.def.rank} · ${STATUS_WORDS[a.status]}`,
       art: a.def.art,
+      badge: a.status === 'won' ? PLAQUES[a.def.id] ?? null : null, // (Milestone 28b: the plaque / trophy once won)
       accent: a.status === 'won' ? COL.good : accentNow(),
       sections: [
-        { lines: [{ text: a.def.text, color: COL.actionDark }, { text: `Reward: ${a.def.reward.text}`, color: COL.good }, ...(accMessage ? [{ text: accMessage, color: COL.bad }] : [])] },
+        { lines: [{ text: a.def.text, color: COL.actionDark }, { text: `Reward: ${a.def.reward.text}`, color: COL.good, ...(PLAQUES[a.def.id] ? { glyph: artGlyph(PLAQUES[a.def.id]) } : {}) }, ...(accMessage ? [{ text: accMessage, color: COL.bad }] : [])] },
         { title: a.status === 'won' ? 'What the inspection found then' : 'What an inspection would find today', lines: (a.status === 'won' && past.length ? past[0].lines : a.check.lines).map((l) => ({ text: `${l.info ? '·' : l.ok ? '✓' : '✗'} ${l.text}`, color: l.info ? COL.textMuted : l.ok ? COL.good : COL.bad })) },
         ...(past.length && a.status !== 'won' ? [inspectionSection(w, past[0])] : []),
         ...(a.status === 'won' ? [] : [{ columns: 1, buttons: [{ id: `acc:apply:${id}`, label: a.status === 'applied' ? `Inspection ${aheadWord(w, a.inspectionDay)}` : 'Apply for an inspection', sub: can ? `The inspectors come in ${INSPECTION.daysOut} days and look at the home as it is then` : accreditationSub(w, a), disabled: !can, accent: COL.action, onTap: () => {
@@ -1580,7 +1617,7 @@ function openComplaints() {
         { lines: [{ text: t == null ? 'No families yet.' : `Family Trust: ${Math.round(t)} / 100, the average over ${n} famil${n === 1 ? 'y' : 'ies'}`, color: trustColour(t) }, { text: 'A complaint becomes an improvement task: fix what went wrong, then mark it done to win the family’s trust back. Complaints never cost Credits. Left past the due date, trust drifts down slowly.', color: COL.textMuted }], bars: t == null ? [] : [{ label: 'Family Trust', value: t, color: trustColour(t), text: `${Math.round(t)}` }] },
         ...(openList.length ? openList.map((c) => complaintSection(w, c, 'quality')) : [{ title: 'Open complaints', lines: [{ text: 'None open.', color: COL.good }] }]),
         { title: 'Resolved', lines: resolved.length ? resolved.flatMap((c) => [{ text: `${first(c.name)}: ${COMPLAINTS[c.kind]?.title ?? ''} · raised ${agoWord(w, c.raised)}, resolved ${agoWord(w, c.resolved)} · Family Trust ${signed1(c.drop)} then ${signed1(c.recovered)}${c.drifted ? ` (drifted ${signed1(c.drifted)})` : ''}`, color: COL.actionDark }, ...c.trail.map((x) => ({ text: `   ${agoWord(w, x.day)}  ${x.text}`, color: COL.textMuted }))]) : [{ text: 'Nothing resolved yet.', color: COL.textMuted }] },
-        { title: `Compliments${compliments.length ? ` (${w.family.compliments().length})` : ''}`, lines: compliments.length ? compliments.map((k) => ({ text: `${agoWord(w, k.day)}: ${k.text}${k.staff.length ? ` · ${k.staff.map((id) => first(w.byId(id)?.name ?? id)).join(', ')} +${k.morale} Morale` : ''} · Family Trust ${signed1(k.trust)}`, color: COL.good })) : [{ text: 'None yet. Good visits, birthdays done well and residents going home after rehab bring them.', color: COL.textMuted }] },
+        { title: `Compliments${compliments.length ? ` (${w.family.compliments().length})` : ''}`, lines: compliments.length ? compliments.map((k) => ({ glyph: artGlyph(FAMILY_ICONS.compliment), text: `${agoWord(w, k.day)}: ${k.text}${k.staff.length ? ` · ${k.staff.map((id) => first(w.byId(id)?.name ?? id)).join(', ')} +${k.morale} Morale` : ''} · Family Trust ${signed1(k.trust)}`, color: COL.good })) : [{ text: 'None yet. Good visits, birthdays done well and residents going home after rehab bring them.', color: COL.textMuted }] },
       ],
     };
   });
@@ -1667,7 +1704,7 @@ function rehabSections(w, it) {
     const f = w.fallsOf(it.id);
     const mods = (f?.parts ?? []).filter((x) => x.key !== 'level' && x.key !== 'aid').map((x) => `${x.text} ${x.value > 0 ? '+' : ''}${Math.round(x.value)}`);
     out.push({ title: 'Mobility', lines: [
-      { text: `${AIDS[m.aid].name}${m.aid === 'none' ? '' : ` · walks at ${Math.round(AIDS[m.aid].speed * 100)}% of the usual pace`}`, color: COL.actionDark },
+      { glyph: artGlyph(SECTION_ICONS.mobility), text: `${AIDS[m.aid].name}${m.aid === 'none' ? '' : ` · walks at ${Math.round(AIDS[m.aid].speed * 100)}% of the usual pace`}`, color: COL.actionDark },
       { text: `Falls risk ${f.risk} (${f.band})${mods.length ? ` · ${mods.join(' · ')}` : ''}`, color: f.band === 'High' ? COL.warn : COL.textMuted },
       { text: fallLine(w, it), color: it.state.fallRest || it.state.fallen ? COL.warn : COL.textMuted }, // (Milestone 25: falls happen now)
     ], bars: [{ label: 'Mobility level', value: m.level, color: COL.progress }] });
@@ -1681,7 +1718,7 @@ function rehabSections(w, it) {
     ];
     if (st.outcomes.mood < 40) lines.push({ text: 'Low Mood is slowing progress', color: COL.warn });
     if (st.needs.nutrition > 60) lines.push({ text: 'Not eating well: progress is slower', color: COL.warn });
-    out.push({ title: 'Rehab goals', lines, bars: GOALS.map((g) => ({ label: g.name, value: r.goals[g.id], tick: r.targets[g.id], color: r.goals[g.id] >= r.targets[g.id] ? COL.good : COL.progress, text: `${Math.round(r.goals[g.id])}/${r.targets[g.id]}` })) });
+    out.push({ title: 'Rehab goals', lines: withGlyph(lines, SECTION_ICONS.rehab), bars: GOALS.map((g) => ({ label: g.name, value: r.goals[g.id], tick: r.targets[g.id], color: r.goals[g.id] >= r.targets[g.id] ? COL.good : COL.progress, text: `${Math.round(r.goals[g.id])}/${r.targets[g.id]}` })) });
     if (r.readyDay != null && !st.leaving) out.push(readyNotice(w, { id: it.id, name: it.name, readyDay: r.readyDay, autoDay: r.readyDay + DISCHARGE.autoDays, kept: !!r.kept }, 'card'));
   }
   return out;
@@ -1822,7 +1859,7 @@ function nodeIcon(x) {
   const u = x.unlocks[0];
   if (u?.type === 'program') return VISIBLE_PROGRAMS.find((p) => p.id === u.id)?.icon ?? 'care_ui_03';
   if (u?.type === 'facility') return facilityById(u.id)?.art ?? 'care_ui_03';
-  return 'care_ui_03';
+  return branchOf(x.branch)?.icon ?? 'care_ui_03'; // (Milestone 28b: its branch's icon)
 }
 const STATE_WORD = { done: 'Done', active: 'Researching', available: 'Available', locked: 'Locked' };
 let researchPick = null;
@@ -1903,11 +1940,12 @@ function openResearch(pick = null) {
       title: 'Research',
       subtitle: `${R.rp.toLocaleString('en-GB')} Research Points · ${R.doneIds().length} of ${RESEARCH.length} done`,
       art: 'care_ui_03',
+      badge: REWARD_ART.research, // (Milestone 28b: the Research Token)
       accent: accentNow(),
       sections: [
         { title: 'Researching', lines: qLines, bars: qBars },
         ...pickSec,
-        { title: 'Branches', lines: [{ text: BRANCHES.map((b) => `${b.id} ${b.name}`).join(' · '), color: COL.textMuted }], lanes },
+        { title: 'Branches', lines: BRANCHES.map((b) => ({ text: `${b.id} ${b.name}`, color: COL.textMuted, glyph: artGlyph(b.icon) })), lanes }, // (Milestone 28b: each branch's icon)
         { lines: [{ text: 'Research Points come from good care: successful discharges, compliments, a good month, running programs and the learning rooms.', color: COL.textMuted }] },
         ...dbg,
         { columns: 1, buttons: [{ id: 'res:back', label: '‹ Back to Develop', accent: COL.progress, onTap: () => openDevelop() }] },
@@ -2142,7 +2180,18 @@ function drawBigBeat(ctx) {
   const h = w / assets.aspect(b.art);
   const x = (W - w) / 2;
   const y = H / 2 - h / 2 - 120;
+  // (Milestone 28b: the Prestige Aura behind a Rank S / S+ or C10 picture — off with Reduced flashes or Low graphics)
+  if (b.aura && fxOn()) {
+    ctx.save();
+    ctx.globalAlpha *= 0.55 + 0.25 * Math.sin(b.age * 2.4);
+    assets.drawContained(ctx, CARE_FX.prestige.art, { x: x - w * 0.15, y: y - h * 0.15, w: w * 1.3, h: h * 1.3 });
+    ctx.restore();
+  }
   assets.draw(ctx, b.art, x, y, w, h);
+  // (Milestone 28b: the Award Confetti over an award's picture, drifting down — off with Reduced flashes or Low graphics)
+  if (b.confetti && fxOn()) assets.drawContained(ctx, QUALITY_ART.confetti, { x: x - w * 0.1, y: y - h * 0.25 + b.age * 40, w: w * 1.2, h: h * 0.7 });
+  // (Milestone 28b: a second picture in the corner — the Rehab Success Badge, the National Excellence Trophy)
+  if (b.badge) assets.drawContained(ctx, b.badge, { x: x + w - w * 0.34, y: y + h - h * 0.38, w: w * 0.36, h: h * 0.36 });
   ctx.fillStyle = '#FFFFFF';
   ctx.textAlign = 'center';
   ctx.font = font(THEME.size.major, true);
@@ -2245,7 +2294,7 @@ function stageSection(w, it) {
   if (!f.eligible && f.stage.id === 'settled') lines.push({ text: 'A short stay: care stages are only for residents living here for good', color: COL.textMuted });
   if (f.stage.id !== 'settled') lines.push({ text: `${f.stage.name} for ${f.days} day${f.days === 1 ? '' : 's'}${f.slowed ? ` · good care has slowed this by ${f.slowed} day${f.slowed === 1 ? '' : 's'}` : ''}. Changes come slowly; the next one is always shown here first.`, color: COL.textMuted });
   if (f.told.length) lines.push({ text: `Family told (${agoWord(w, f.told.at(-1).day)})`, color: COL.good });
-  const sections = [{ title: 'Care stage', titleDot: f.stage.id === 'settled' ? null : COL.progress, lines }];
+  const sections = [{ title: 'Care stage', titleDot: f.stage.id === 'settled' ? null : COL.progress, lines: withGlyph(lines, SECTION_ICONS.comfort) }];
   if (debug.enabled && f.eligible) {
     sections[0].columns = 1;
     sections[0].buttons = [f.next ? { id: `eol:debugNext:${it.id}`, label: `Next stage (debug): ${f.next.name}`, sub: 'Starts it now, as in play (the forecast, the Inbox line, the family told)', accent: COL.progress, onTap: () => {
@@ -2308,11 +2357,21 @@ function openMemoryBook() {
       subtitle: pages.length ? `${pages.length} page${pages.length === 1 ? '' : 's'} · ${BOOK.subtitle}` : BOOK.subtitle,
       art: MEMORIAL.art.book,
       accent: '#B06A3E',
-      sections: pages.length
-        ? [{ lines: [{ text: 'Kept for good across every home and New Game+. Pages can be read; nothing here can be removed.', color: COL.textMuted }], columns: 1, buttons: pages.map((p) => ({ id: `book:${p.id}`, label: p.name, sub: `${p.time} at ${p.home ?? 'the home'} · ${p.passed}`, icon: p.art, iconCrop: PORTRAIT_CROP, accent: COL.progress, onTap: () => openMemoryPage(p.id) })) }]
-        : [{ lines: [{ text: BOOK.empty, color: COL.textMuted }] }],
+      sections: [...(pages.length
+        ? [{ lines: [{ text: 'Kept for good across every home and New Game+. Pages can be read; nothing here can be removed.', color: COL.textMuted }], columns: 1, buttons: pages.map((p) => ({ id: `book:${p.id}`, label: p.name, sub: `${p.time} at ${p.home ?? 'the home'} · ${p.passed}`, icon: p.art, iconCrop: PORTRAIT_CROP, iconBadge: (p.comfort ?? 0) >= COMFORT.good ? MEMORIAL.art.star : null, accent: COL.progress, onTap: () => openMemoryPage(p.id) })) }] // (Milestone 28b: the Memory Book Star on a well-supported time)
+        : [{ lines: [{ text: BOOK.empty, color: COL.textMuted }] }]), legacySection()], // (Milestone 28b: Living Legacy, locked)
     };
   });
+}
+// Milestone 28b: the Living Legacy picture at the end of the book — faded and locked until the Year-16 ending.
+function legacySection() {
+  return { title: FIRSTS_TEXT.legacy.title, columns: 1, buttons: [{ id: 'book:legacy', label: FIRSTS_TEXT.legacy.title, sub: FIRSTS_TEXT.legacy.locked, icon: FIRST_ART.legacy, locked: true, accent: COL.progress, onTap: () => {} }] };
+}
+// A face for a name on a page (pages keep names; the art is found from the home's people or the data).
+const staffArtByName = (n) => STAFF.find((x) => x.name === n)?.art ?? FOUNDERS.find((x) => x.name === n)?.art ?? null;
+const residentArtByName = (n) => RESIDENTS.find((x) => x.name === n)?.art ?? null;
+function faceButtons(prefix, names, artOf, sub) {
+  return names.map((n, i) => ({ id: `${prefix}:${i}`, label: n, sub, icon: artOf(n), iconCrop: PORTRAIT_CROP, accent: COL.progress, onTap: () => {} }));
 }
 function openMemoryPage(id) {
   sheet.open(() => {
@@ -2327,9 +2386,9 @@ function openMemoryPage(id) {
       sections: [
         { columns: 1, buttons: [{ id: 'book:back', label: '‹ Memory Book', accent: COL.progress, onTap: () => openMemoryBook() }] },
         { lines: [{ text: `${they} loved ${String(p.interest ?? 'good company').toLowerCase()}.`, color: COL.actionDark }, ...(p.beside ? [{ text: `Passed peacefully, with ${p.beside} beside ${they === 'She' ? 'her' : 'him'}.`, color: COL.actionDark }] : [])] },
-        { title: 'Friendships', lines: p.friends.length ? p.friends.map((n) => ({ text: n, color: COL.actionDark })) : [{ text: 'Friendly with everyone', color: COL.textMuted }] },
+        p.friends.length ? { title: 'Friendships', columns: 2, buttons: faceButtons('book:friend', p.friends, residentArtByName, 'Friend') } : { title: 'Friendships', lines: [{ text: 'Friendly with everyone', color: COL.textMuted }] }, // (Milestone 28b: their faces)
         { title: 'Story moments', lines: p.moments.map((m) => ({ text: `${m.when}: ${m.text}`, color: COL.actionDark })) },
-        { title: 'The staff who knew them best', lines: p.staff.length ? p.staff.map((n) => ({ text: n, color: COL.actionDark })) : [{ text: 'The whole team', color: COL.textMuted }] },
+        p.staff.length ? { title: 'The staff who knew them best', columns: 2, buttons: faceButtons('book:staff', p.staff, staffArtByName, 'Knew them well') } : { title: 'The staff who knew them best', lines: [{ text: 'The whole team', color: COL.textMuted }] },
       ],
     };
   });
@@ -2445,7 +2504,8 @@ function openSupplies() {
     return {
       title: 'Emergency supplies',
       subtitle: 'Stock for when things go wrong: part of the home’s Preparedness',
-      art: EMERGENCY_ICON,
+      art: 'care_equipment_08', // (Milestone 28b: the Emergency Supply Cart)
+      badge: EMERGENCY_ICON,
       accent: accentNow(),
       sections: [
         ...(message ? [{ lines: [{ text: message, color: COL.bad }] }] : []),
@@ -2816,7 +2876,7 @@ function openLedger() {
       { title: 'Loans and investors', lines: debtLines },
       // (Milestone 7: shifts run unsafe; Milestone 16: the care-outcome counters)
       { title: 'Care outcomes', lines: [{ text: `Successful discharges: ${w.rewards.positiveOutcomes}${w.rewards.discharges.length ? ` (last: ${first(w.rewards.discharges.at(-1).name)})` : ''}`, color: COL.actionDark }, `Reputation: ${w.rewards.reputation}`, { text: `Unsafe shifts so far: ${w.staffState.coverage.unsafe} (run under minimum with no agency cover)`, color: w.staffState.coverage.unsafe ? COL.bad : COL.textMuted }] },
-      { title: 'Other currencies', lines: [`Research Points: ${w.research.rp.toLocaleString('en-GB')} (Develop → Research)`, `Care Tokens: ${w.economy.tokens} (earned for firsts and good months; nothing to spend them on yet)`, `Prestige Tokens: ${w.economy.prestige} (account; New Game+ brings them later)`] },
+      { title: 'Other currencies', lines: [{ text: `Research Points: ${w.research.rp.toLocaleString('en-GB')} (Develop → Research)`, glyph: artGlyph(REWARD_ART.research) }, { text: `Care Tokens: ${w.economy.tokens} (earned for firsts and good months; nothing to spend them on yet)`, glyph: artGlyph(TOP_ICONS.careTokens) }, { text: `Prestige Tokens: ${w.economy.prestige} (account; New Game+ brings them later)`, ...((open.data.ngPlus ?? 0) > 0 || w.economy.prestige > 0 ? { glyph: artGlyph(REWARD_ART.prestige) } : {}) }] }, // (Milestone 28b: the tokens; the Prestige Token on New Game+ only)
       partnerLedger(w, w.monthRange()), // (Milestone 23)
       programLedger(w, w.monthRange()),
       researchLedger(w, w.monthRange()),
@@ -2833,8 +2893,22 @@ function openTopSheet(id) {
   const more = id === 'help' ? [{ columns: 2, buttons: [
     { id: 'help:settings', label: SETTINGS_TEXT.title, sub: 'Sound, graphics, text, the Menu button and hints', icon: MENU_TEXT.icon, accent: COL.progress, onTap: () => openSettings() },
     { id: 'help:menu', label: MENU_TEXT.title, sub: 'Every screen in the home', icon: MENU_TEXT.icon, accent: COL.progress, onTap: () => openNavMenu() },
+    { id: 'help:credits', label: 'Credits', sub: 'Who made CAREWORKS', icon: BRAND.title, accent: COL.progress, onTap: () => openCredits() }, // (Milestone 28b)
   ] }] : [];
-  sheet.open(() => ({ title: t.title, subtitle: t.text, accent: COL.progress, sections: open ? more : more.map((x) => ({ ...x, columns: 1, buttons: x.buttons.slice(0, 1) })) }));
+  sheet.open(() => ({ title: t.title, subtitle: t.text, accent: COL.progress, sections: open ? more : more.map((x) => ({ ...x, columns: 1, buttons: x.buttons.filter((b) => b.id !== 'help:menu') })) }));
+}
+// Milestone 28b: the Credits, closed by the series end mark (care_brand_07) as the sheet's picture.
+function openCredits() {
+  sheet.open(() => ({
+    title: 'CAREWORKS',
+    subtitle: 'A Banx Gamex game · the Canvas Management Series',
+    art: BRAND.endMark,
+    accent: COL.progress,
+    sections: [
+      { lines: [{ text: 'Made by Banx Gamex. Art by Aaron.', color: COL.actionDark }, { text: 'One of the Works games: BOTWORKS, RACEWORKS, DEVWORKS, GOALWORKS and CAREWORKS share one world and one engine.', color: COL.textMuted }, { text: 'Thank you for playing, and for looking after everyone here.', color: COL.good }] },
+      { columns: 1, buttons: [{ id: 'credits:back', label: '‹ Back', accent: COL.progress, onTap: () => openTopSheet('help') }] },
+    ],
+  }));
 }
 // A card opened from a list gets a way back to that list, and the person's ring in the home.
 function openFrom(id, list) {
@@ -3275,6 +3349,18 @@ function bellLines(w, it, they) {
 // Milestone 12: the three staff on the team who know them best (a Familiar Care record each: familiarity 0–100, tasks
 // together, when they first met), with a small bar each.
 // Milestone 13: a small heart drawn in code beside the favourite staff member's line.
+// Milestone 28b: a picture as a line's glyph (an icon, or a face with crop) — drawn as it is, scaled to the line.
+const artGlyph = (key, crop = null) => (ctx, x, y, size) => {
+  const r = { x, y: y - size * 0.1, w: size * 1.15, h: size * 1.15 };
+  if (crop) assets.drawCrop(ctx, key, crop, r);
+  else assets.drawContained(ctx, key, r);
+};
+// The first line of a section carries the picture (nothing is added when there are no lines).
+function withGlyph(lines, key) {
+  if (!lines.length) return lines;
+  const [l, ...rest] = lines;
+  return [{ ...(typeof l === 'string' ? { text: l } : l), glyph: artGlyph(key) }, ...rest];
+}
 function heartGlyph(ctx, x, y, size) {
   const s = size * 0.9;
   const cx = x + s / 2;
@@ -3298,7 +3384,7 @@ function familiarSection(w, it) {
     lines.push({ text: `Most familiar: ${w.byId(top[0].staff)?.name ?? top[0].staff}`, color: COL.actionDark });
     lines.push({ text: `Tasks together: ${top.map((r) => `${first(w.byId(r.staff)?.name ?? r.staff)} ${r.tasks}${r.firstDay != null ? ` (since day ${r.firstDay + 1})` : ''}`).join(' · ')}`, color: COL.textMuted });
   }
-  return { title: 'Familiar Care', lines, bars: top.map((r) => ({ label: w.byId(r.staff)?.name ?? r.staff, value: Math.round(r.familiarity), max: 100, color: COL.good })) };
+  return { title: 'Familiar Care', lines: withGlyph(lines, SECTION_ICONS.familiar), bars: top.map((r) => ({ label: w.byId(r.staff)?.name ?? r.staff, value: Math.round(r.familiarity), max: 100, color: COL.good })) };
 }
 // Milestone 13: their three best friends here (friendship 0–100), a bar each; friends (≥ FRIENDSHIP.friendAt) are named.
 function friendsSection(w, it) {
@@ -3465,7 +3551,7 @@ function staffMenu(w, p, accent) {
     const famLines = fam.length
       ? [...fam.filter((r) => w.mostFamiliar(r.resident) === p.id).map((r) => ({ text: `${first(w.residentById(r.resident)?.name ?? r.resident)}'s most familiar staff member`, color: COL.actionDark })), { text: `Tasks together: ${fam.map((r) => `${first(w.residentById(r.resident)?.name ?? r.resident)} ${r.tasks}`).join(' · ')}`, color: COL.textMuted }]
       : [{ text: 'Not familiar with anyone yet: it builds with every task done together.', color: COL.textMuted }];
-    sections.push({ title: 'Familiar Care', lines: famLines, bars: fam.map((r) => ({ label: w.residentById(r.resident)?.name ?? r.resident, value: Math.round(r.familiarity), max: 100, color: COL.good })) });
+    sections.push({ title: 'Familiar Care', lines: withGlyph(famLines, SECTION_ICONS.familiar), bars: fam.map((r) => ({ label: w.residentById(r.resident)?.name ?? r.resident, value: Math.round(r.familiarity), max: 100, color: COL.good })) });
   }
   // Milestone 11: specialties, training, let go
   if (!agency) {
@@ -3842,13 +3928,25 @@ function openGiveTo(staffId) {
 
 // ---------------------------------------------------------------------------
 // Boot screen: shows while the images and the saves load, then the Main Menu (or the test screen).
+// Milestone 28b: the Banx Gamex studio logo on black first (as painted, never redrawn — the same as the other Works games),
+// then the CAREWORKS key art (care_brand_02) with the loading bar. Both pictures load before everything else. A tap skips
+// the rest once everything has loaded; the studio logo is never cut short of its fade.
+const BOOT = { logoIn: 0.4, logoHold: 1.2, logoOut: 0.35, artMin: 1.1 };
+const BOOT_LOGO_END = BOOT.logoIn + BOOT.logoHold + BOOT.logoOut;
 let staffArtReport = null;
 const bootScreen = {
   progress: 0,
+  t: 0,
+  ready: false,
+  left: false,
   enter() {
     this.progress = 0;
+    this.t = 0;
+    this.ready = false;
+    this.left = false;
+    const first = Promise.all([assets.loadImage('studioLogo', ASSETS.studioLogo), assets.loadImage(BRAND.splash, ASSETS[BRAND.splash])]);
     Promise.all([
-      assets.loadImages(ASSETS, (done, total) => (this.progress = done / total)).then((r) => {
+      first.then(() => assets.loadImages(ASSETS, (done, total) => (this.progress = done / total))).then((r) => {
         debug.log(`assets: ${r.loaded} loaded, ${r.missing.length} missing`);
         // Milestone 12: every staff member's portrait and every role badge loaded, no two staff sharing art (agency aside)
         if (debug.enabled) {
@@ -3857,23 +3955,59 @@ const bootScreen = {
         }
       }),
       prepareSaves().catch((err) => console.error('[CAREWORKS] saves unavailable', err)),
-    ]).then(() => {
-      const n = START_SCREEN === 'menu' ? homeToResume() : null;
-      if (n) playSlot(n);
-      else router.go(START_SCREEN);
-    });
+    ]).then(() => (this.ready = true));
+  },
+  leave() {
+    if (this.left) return;
+    this.left = true;
+    const n = START_SCREEN === 'menu' ? homeToResume() : null;
+    if (n) playSlot(n);
+    else router.go(START_SCREEN);
+  },
+  update(dt) {
+    this.t += dt;
+    if (this.ready && this.t >= BOOT_LOGO_END + BOOT.artMin) this.leave();
+  },
+  onTap() {
+    if (this.ready && this.t >= BOOT_LOGO_END) this.leave();
   },
   render(ctx) {
     const H = renderer.height;
-    ctx.fillStyle = COL.text;
-    ctx.font = font(THEME.size.major, true);
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
-    ctx.fillText('CAREWORKS', W / 2, H / 2 - 60);
+    const t = this.t;
+    if (t < BOOT_LOGO_END) {
+      // the studio logo on black: fade in, hold, fade out
+      ctx.fillStyle = '#000000';
+      ctx.fillRect(-4000, -4000, W + 8000, H + 8000);
+      const k = t < BOOT.logoIn ? t / BOOT.logoIn : t < BOOT.logoIn + BOOT.logoHold ? 1 : Math.max(0, 1 - (t - BOOT.logoIn - BOOT.logoHold) / BOOT.logoOut);
+      const w = Math.min(W - 80, 1000);
+      ctx.save();
+      ctx.globalAlpha = k;
+      if (assets.has('studioLogo')) assets.drawContained(ctx, 'studioLogo', { x: (W - w) / 2, y: H / 2 - w / 3 - 40, w, h: (w * 2) / 3 });
+      ctx.restore();
+      return;
+    }
+    // the key art, then the loading bar under it
+    ctx.fillStyle = COL.bg;
+    ctx.fillRect(-4000, -4000, W + 8000, H + 8000);
+    const k = Math.min(1, (t - BOOT_LOGO_END) / 0.35);
+    const size = Math.min(W - 40, H - 420, 1040);
+    const r = { x: (W - size) / 2, y: Math.max(40, (H - size) / 2 - 110), w: size, h: size };
+    ctx.save();
+    ctx.globalAlpha = k;
+    if (assets.has(BRAND.splash)) drawArtCrop(ctx, assets, BRAND.splash, ART_CROP[BRAND.splash], r);
+    else {
+      ctx.fillStyle = COL.text;
+      ctx.font = font(THEME.size.major, true);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('CAREWORKS', W / 2, H / 2 - 60);
+    }
+    const by = Math.min(H - 120, r.y + r.h + 40);
     ctx.fillStyle = COL.track;
-    ctx.fillRect(W / 2 - 300, H / 2 + 20, 600, 24);
+    ctx.fillRect(W / 2 - 300, by, 600, 24);
     ctx.fillStyle = COL.progress;
-    ctx.fillRect(W / 2 - 300, H / 2 + 20, 600 * this.progress, 24);
+    ctx.fillRect(W / 2 - 300, by, 600 * this.progress, 24);
+    ctx.restore();
   },
 };
 
@@ -3903,7 +4037,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

@@ -16,12 +16,12 @@
 //       comfortScore     the end-of-life comfort score + value points (Milestone 27)
 //     later: 'Mnn'   stored and shown: its system comes in that milestone ("comes into play later")
 export const BRANCHES = [
-  { id: 'CLN', name: 'Clinical', icon: 'care_ui_03', colour: '#3E7CB1' },
-  { id: 'PER', name: 'Personal Care', icon: 'care_ui_03', colour: '#C0587E' },
-  { id: 'MOB', name: 'Mobility', icon: 'care_ui_03', colour: '#4E9A57' },
-  { id: 'MEM', name: 'Memory', icon: 'care_ui_03', colour: '#7A5BB0' },
-  { id: 'NUT', name: 'Nutrition', icon: 'care_ui_03', colour: '#D07A2B' },
-  { id: 'OPS', name: 'Operations', icon: 'care_ui_03', colour: '#5B7387' },
+  { id: 'CLN', name: 'Clinical', icon: 'care_ui_17', colour: '#3E7CB1' },
+  { id: 'PER', name: 'Personal Care', icon: 'care_ui_01', colour: '#C0587E' },
+  { id: 'MOB', name: 'Mobility', icon: 'care_ui_16', colour: '#4E9A57' },
+  { id: 'MEM', name: 'Memory', icon: 'care_ui_12', colour: '#7A5BB0' },
+  { id: 'NUT', name: 'Nutrition', icon: 'care_ui_15', colour: '#D07A2B' },
+  { id: 'OPS', name: 'Operations', icon: 'care_ui_08', colour: '#5B7387' },
 ];
 export const COSTS = [120, 220, 420, 700, 1050, 1500]; // §26, tier 1–6
 export const DAYS = [3, 5, 8, 12, 16, 21]; // research time once paid for, tier 1–6

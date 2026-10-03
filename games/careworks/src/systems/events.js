@@ -81,7 +81,7 @@ export function createEvents({ state, seed = 'careworks', now = () => 0, today =
   }
   function commit(cat, kind, m, payload = null, inbox = false) {
     const l = inbox || m.inbox || m.inboxAnyway || m.weight === 'inbox' ? line(cat, kind, m.line ?? m.text, { good: m.good, opens: m.opens ?? null }) : null;
-    const base = { cat, kind, title: m.title ?? null, text: m.text, art: m.art ?? null, good: m.good !== false, opens: m.opens ?? null, haptic: !!m.haptic, line: l?.uid ?? null };
+    const base = { cat, kind, title: m.title ?? null, text: m.text, art: m.art ?? null, good: m.good !== false, opens: m.opens ?? null, haptic: !!m.haptic, line: l?.uid ?? null, ...(m.badge ? { badge: m.badge } : {}), ...(m.aura ? { aura: true } : {}) }; // (Milestone 28b: badge, aura)
     if (m.weight === 'blocking') {
       s.waiting.push({ uid: s.nextUid++, ...base, choice: m.choice ?? null, prio: prioOf(cat), at: now(), payload: m.choice?.kind === 'memorial' ? payload : null });
       sortWaiting();

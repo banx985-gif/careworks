@@ -2,6 +2,8 @@
 // the Founder portrait (code-drawn placeholder) with name and role, the facility name, "Facility Director <name>" and
 // Year / Month and Rank (Milestone 26; NG+, grade and resident count stay hidden until those systems exist). An empty card says NEW
 // FACILITY and opens Facility Setup for that slot. A slot that will not read can only be deleted.
+// Milestone 28b: the Hero Home Promo (care_brand_05) stands faded behind the cards, the Founder's own portrait is on
+// each card, and a home on New Game+ shows the NG+ key art (care_brand_06) with its number.
 // Two modes: 'browse' (Play / Delete — Delete asks first) and 'new' (pick where the new facility goes: an empty slot,
 // or Replace on an occupied one; START FACILITY asks again before anything is overwritten).
 // Layout and tapping share one pass (lay out → draw and/or hit-test), so they can never disagree.
@@ -9,13 +11,14 @@ import { THEME } from '../../../../core/Theme.js';
 import { drawButton, hitRect } from '../../../../core/ui/Button.js';
 import { card, text } from '../../../../core/ui/Kit.js';
 import { founderById, paletteById } from '../../data/setup.js';
-import { drawPortrait, accentStrip } from '../ui/careArt.js';
+import { drawPortrait, accentStrip, drawArtCrop } from '../ui/careArt.js';
+import { BRAND, ART_CROP } from '../../data/artMoments.js';
 
 const C = THEME.color;
 const S = THEME.size;
 
 // cards(): [{ n, empty, summary, error }]; last(): the last-used slot number or null.
-export function createSlotsScreen({ layout, cards, last, onBack, onPlay, onDelete, onNewInSlot }) {
+export function createSlotsScreen({ layout, assets = null, cards, last, onBack, onPlay, onDelete, onNewInSlot }) {
   let mode = 'browse';
   let note = null;
   const rects = {};
@@ -35,6 +38,7 @@ export function createSlotsScreen({ layout, cards, last, onBack, onPlay, onDelet
     };
     const br = backRect();
     box(br, onBack, 'back');
+    if (ctx && assets) drawArtCrop(ctx, assets, BRAND.slots, ART_CROP[BRAND.slots], { x: sr.x, y: sr.y + br.h + 40, w: sr.w, h: sr.h - br.h - 60 }, 0.3);
     if (ctx) {
       drawButton(ctx, br, '‹ Back', { accent: C.progress });
       text(ctx, mode === 'new' ? 'Choose a slot' : 'Campaign Slots', sr.x + sr.w / 2 + 60, br.y + br.h / 2 - 4, { size: S.title, bold: true, align: 'center', baseline: 'middle', maxWidth: sr.w - 320 });
@@ -94,12 +98,15 @@ export function createSlotsScreen({ layout, cards, last, onBack, onPlay, onDelet
       const founder = founderById(m.founderId);
       const px = r.x + 48;
       const py = r.y + 20 * k;
-      drawPortrait(ctx, { x: px, y: py, w: ps, h: ps }, founder, palette.hex);
+      drawPortrait(ctx, { x: px, y: py, w: ps, h: ps }, founder, palette.hex, assets);
       text(ctx, m.founderName, px + ps / 2, py + ps + 6 * k, { size: S.small, bold: true, align: 'center', maxWidth: ps + 30 });
       const tx = px + ps + 30;
-      const tw = b1.x - 20 - tx;
+      const ng = m.ngPlus ?? 0;
+      const ngW = ng > 0 && assets ? Math.min(r.h * 0.5, 150) : 0; // (Milestone 28b: room for the NG+ key art beside the buttons)
+      const tw = b1.x - 20 - tx - (ngW ? ngW + 16 : 0);
       let ty = r.y + 22 * k;
-      text(ctx, `SLOT ${s.n}${isLast ? ' · LAST PLAYED' : ''}`, tx, ty, { size: S.small, bold: true, color: isLast ? C.progress : C.textMuted, maxWidth: tw });
+      if (ngW) drawArtCrop(ctx, assets, BRAND.ngPlus, ART_CROP[BRAND.ngPlus], { x: b1.x - 16 - ngW, y: r.y + 16, w: ngW, h: r.h - 32 }); // (Milestone 28b: New Game+)
+      text(ctx, `SLOT ${s.n}${isLast ? ' · LAST PLAYED' : ''}${ng > 0 ? ` · NEW GAME+ ${ng}` : ''}`, tx, ty, { size: S.small, bold: true, color: isLast ? C.progress : C.textMuted, maxWidth: tw });
       ty += 42 * k;
       text(ctx, m.facility, tx, ty, { size: S.heading, bold: true, color: palette.dark, maxWidth: tw });
       ty += 60 * k;
