@@ -161,6 +161,8 @@ export const BOOK = {
     birthday: (x) => `A birthday tea${x.age ? ` (${x.age})` : ''}`,
     cheered: (x) => `Cheered ${x.name} home`,
     event: (x) => `Joined the ${x.name}`,
+    story: (x) => x.text, // (Milestone 28: a life-story discovery)
+    friend: (x) => x.text, // (Milestone 28: a new friendship)
   },
 };
 

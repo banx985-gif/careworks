@@ -176,6 +176,7 @@ import { incidentById, FALLS_INCIDENT, INCIDENT_TASKS, PREPAREDNESS } from '../.
 import { createIncidents, ensureIncidents, fallChance } from './incidents.js';
 import { createQuality, ensureQualityState } from './quality.js';
 import { READINGS } from '../../data/quality.js';
+import { createEvents, ensureEventsState } from './events.js';
 import { stageById, EOL_STAGES, PACE, GOOD_CARE, COMFORT, SIGNAL, MEMORIAL, BOOK, PLAN as EOL_PLAN, WISHES } from '../../data/endOfLife.js';
 import { ensureEolState, ensureResidentEol, eligible as eolEligible, weeklyChance, stageLength, nextStage, newAcc, comfortOf, signalLift, familyResult, betterNote, wishesOf, timeAt } from './endOfLife.js';
 
@@ -214,12 +215,26 @@ export const theirOf = (id) => (residentById(id)?.pronoun === 'she' ? 'her' : 'h
 
 export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, residents: savedResidents = null, staff = null, care: careSaved = null, seed = 'careworks', bus = null, admissions: admissionsSaved = null, ledger: ledgerSaved = null, layout: layoutSaved = null, startCredits = ECONOMY_START.credits, shortStaffing = true } = {}) {
   clock ??= makeClock();
+  // Milestone 28: every moment the home raises also goes to the event director (src/systems/events.js), which decides how
+  // and when it is shown. Moments raised while the world is being made (a load) are never raised again.
+  const appBus = bus;
+  let director = null;
+  let directorLive = false;
+  bus = {
+    emit(name, payload) {
+      if (directorLive) director?.raise(name, payload);
+      appBus?.emit(name, payload);
+    },
+    on: (name, fn) => appBus?.on(name, fn),
+    off: (name, fn) => appBus?.off?.(name, fn),
+  };
   // --- the layout (Milestone 10) --------------------------------------------------------------------------------
   const layout = createLayout({ saved: layoutSaved, bus });
   // An older save's layout that fails the access check gets a one-time fix-up (each piece in the way moves to the
   // nearest spot where everything passes). A Milestone 1–9 save has the default layout, which passes.
   const fixedUp = layoutSaved && layout.problems().length ? layout.fixUp() : [];
   const grid = layout.buildGrid(makeGrid());
+  grid.pathCache = new Map(); // (Milestone 28: core/Pathing reuses paths on an unchanged floor — same paths, far less searching)
   // (Milestone 18: 'tile:col,row' — a free tile beside a piece, e.g. where the Medication Cart is collected)
   const spot = (ref) => {
     if (!ref.startsWith('tile:')) return layout.spotTile(ref);
@@ -2494,6 +2509,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (!why) continue;
       rec.asked = { ...(rec.asked ?? {}), meeting: day };
       fh.asks.push({ id: `m${fh.nextId++}`, resident: p.id, day, why, until: day + MEETING_ASK.expireDays });
+      bus?.emit('care:familyAsk', { id: fh.asks.at(-1).id, resident: p.id, why }); // (Milestone 28)
     }
   }
   function answerAsk(a, book, auto = false) {
@@ -3300,7 +3316,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (eol.notes.length > 30) eol.notes.shift();
     }
     log(p, s.line);
-    bus?.emit('care:stage', { resident: p.id, name: p.name, stage, stageName: s.name });
+    bus?.emit('care:stage', { resident: p.id, name: p.name, stage, stageName: s.name, offer: e.offer === 'open', line: s.inbox?.(first(p.name)) ?? null });
   }
   // One end-of-life day into the comfort record (yesterday's tasks, plan, family, familiar faces, wishes, staffing).
   function eolAccumulate(p, day) {
@@ -3488,10 +3504,68 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     st.step = null;
     delete st.joinAt;
     removeResident(p);
-    bus?.emit('care:passed', { resident: p.id, name: p.name, art: p.def.art, room, card, beside, friends, staff, page, score: res.score, good, poor, note, lift });
+    bus?.emit('care:passed', { resident: p.id, name: p.name, art: p.def.art, room, card, line: `${card}${how}`, beside, friends, staff, page, score: res.score, good, poor, note, lift });
   }
   const EOL_PLAN_IDS = Object.values(EOL_PLAN.options);
   const EOL_GARDEN = WISHES.gardenFacility;
+
+  // --- Milestone 28: the event director ------------------------------------------------------------------------------
+  // (src/systems/events.js, data/events.js) One calm place for every moment: its Inbox line, a beat when the caps allow, and
+  // one choice at a time. A choice's own system still settles it (answered, or its own default when its time runs out);
+  // the director only reads whether it has.
+  care.events = ensureEventsState(care.events, clock.totalDays); // (an M27 save: an empty queue; its systems' Inbox items kept)
+  function choiceSettled(c) {
+    if (!c) return true;
+    switch (c.kind) {
+      case 'incident': {
+        const a = incidents.active;
+        return !a || a.id !== c.id || !!a.response;
+      }
+      case 'notice':
+        return !acts.notices().some((n) => n.uid === c.id);
+      case 'request':
+        return !fh.requests.some((q) => q.id === c.id && q.status === 'open');
+      case 'ask':
+        return !fh.asks.some((a) => a.id === c.id);
+      case 'partner':
+        return !partners.offers().some((o) => o.def.id === c.id);
+      case 'economy':
+        return !economy.offers().some((o) => o.kind === c.id);
+      case 'comfort': {
+        const p = byResident(c.id);
+        return !p || eolOf(p).offer !== 'open';
+      }
+      default:
+        return true;
+    }
+  }
+  director = createEvents({ state: care.events, seed, now: () => absNow(), today: () => clock.totalDays, resolved: choiceSettled, onMoment: (id, kind, text) => addMoment(byResident(id), kind, { text }) });
+  // Each midnight: what the new categories read (life stories and who knows them, friendships, the team, yesterday's
+  // essential care, the plans due for review).
+  function eventsDay(day) {
+    const here = seated().filter((p) => joined(p));
+    const ids = team().map((q) => q.id);
+    const friends = [];
+    for (const r of Object.values(care.friendships ?? {})) {
+      if (r.friendship < FRIENDSHIP.friendAt) continue;
+      const a = byResident(r.a);
+      const b = byResident(r.b);
+      if (!a || !b || a.state.guest || b.state.guest) continue;
+      friends.push({ a: a.id, b: b.id, aName: a.name, bName: b.name, aFirst: first(a.name), bFirst: first(b.name) });
+    }
+    const firstLook = !care.events.seen.primed;
+    care.events.seen.primed = true;
+    director.daily(day, {
+      residents: here.map((p) => ({ id: p.id, first: first(p.name), story: p.def.story ?? null, tags: p.state.tags?.length ? p.state.tags : p.def.tags ?? [], familiar: ids.filter((id) => familiarityOf(care, p.id, id) >= 40).map((id) => ({ id, first: first(crew.byId(id)?.name ?? id) })) })),
+      friends,
+      firstLook,
+      team: team().map((q) => ({ id: q.id, first: first(q.name) })),
+      yearDays: clock.daysPerMonth * clock.monthsPerYear,
+      missed: care.tasks.some((t) => t.day === day - 1 && t.essential && t.status === 'missed'),
+      residentsHere: here.length,
+      stale: here.filter((p) => staleReasons(p.state, day).length).map((p) => first(p.name)),
+    });
+  }
 
   // --- quality inputs (Milestone 26) ------------------------------------------------------------------------------------
   // One day's snapshot of what really happened, for the five headline scores, inspections and accreditations
@@ -3777,6 +3851,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     incidents.daily(day); // (Milestone 25: emergency supplies; perhaps an event later today)
     fallsDay(day); // (Milestone 25: rest after a fall over — handled well gives the family's Trust back)
     eolDay(day); // (Milestone 27: care stages, the comfort record, grief easing, held rooms opening)
+    eventsDay(day); // (Milestone 28: life stories, friendships, staff milestones, care-plan reviews)
     quality.daily(day, qualityInputs(day - 1)); // (Milestone 26: yesterday into the rolling scores; inspections; peers)
     for (const p of inSession()) p.state.diet = dietOf(p.state);
     bus?.emit('care:dayEnd', world.daySummary(day - 1));
@@ -3871,6 +3946,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   clock.speedAllowed = (sp) => quality.speedAllowed(sp); // (Milestone 26: bible §3)
   let lastDay = clock.totalDays;
   const world = {
+    get events() {
+      return director; // (Milestone 28: the event director)
+    },
     items, // (Milestone 25c: care equipment)
     get quality() {
       return quality; // (Milestone 26: headline scores, Rank, accreditations, inspections, peers)
@@ -4132,6 +4210,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         if (p.state.memory) walkTick(p); // (Milestone 17: a walk of their own)
       }
       eolTick(); // (Milestone 27: a passing at the quiet hour of the last of the final days)
+      director.tick(); // (Milestone 28: a waiting choice settled on its own; stale beats)
       tickTasks(hours);
       for (const p of residents) p.agent.update(g, grid);
       for (const x of visitors) x.agent.update(g, grid); // (Milestone 19)
@@ -4553,11 +4632,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           q.room = requestRoom(p, kind, q.friend)?.id ?? roomsFor(p.def)[0]?.id ?? null;
         } else q.room = requestRoom(p, kind)?.id ?? roomsFor(p.def)[0]?.id ?? null;
         fh.requests.push(q);
+        bus?.emit('care:familyRequest', { id: q.id, resident: p.id, kind }); // (Milestone 28: as in play)
         return q;
       },
       askForTests(residentId, why = 'review') {
         const a = { id: `m${fh.nextId++}`, resident: residentId, day: clock.totalDays, why, until: clock.totalDays + MEETING_ASK.expireDays };
         fh.asks.push(a);
+        bus?.emit('care:familyAsk', { id: a.id, resident: residentId, why }); // (Milestone 28: as in play)
         return a;
       },
     },
@@ -4915,11 +4996,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // ?debug=1 "Fill to cap" (and the performance check): Stage 5 at once, a Memory and a High-Care wing with their hubs and
   // rooms, Standard Rooms up to the 70-room cap, every resident profile admitted (60: the roster has no more people), and
   // the team grown to about `staff` people across the three shifts. → a short report
-  function fillToCap({ staff: staffTarget = 40 } = {}) {
+  // (Milestone 28: `stage` stops at that stage — the M28 long run uses a full Stage 3 home)
+  function fillToCap({ staff: staffTarget = 40, stage = STAGES.length } = {}) {
     const t0 = Date.now();
     ledger.economy.add('credits', 2e7, 'Debug: fill to cap', 'debug');
     layout.setDebugUnlock(true);
-    while (layout.stage < STAGES.length) {
+    while (layout.stage < Math.min(stage, STAGES.length)) {
       layout.setBuilding(null);
       if (!world.build.upgrade().ok) break;
     }
@@ -5102,5 +5184,6 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   };
   if (fixedUp.length) relayout();
   if (qualityFresh) startQuality(); // (Milestone 26)
+  directorLive = true; // (Milestone 28: from here on, every moment goes through the director)
   return world;
 }

@@ -127,6 +127,7 @@ import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { AccountBook } from '../../../core/AccountBook.js';
 import { MajorFeedback } from '../../../core/MajorFeedback.js';
 import { BOOK, MEMORIAL, PLAN as EOL_PLAN, ACCOUNT_KEY as EOL_ACCOUNT_KEY } from '../data/endOfLife.js';
+import { categoryById, INBOX as INBOX_RULES } from '../data/events.js';
 import { createMenuScreen } from './screens/MenuScreen.js';
 import { createSlotsScreen } from './screens/SlotsScreen.js';
 import { createSetupScreen } from './screens/SetupScreen.js';
@@ -181,6 +182,7 @@ const loop = new FixedStepLoop({
     dayBeat.update(dt);
     if (bigBeat && (bigBeat.age += dt) >= BIG_BEAT_LIFE) bigBeat = null;
     memorial.update(dt); // (Milestone 27: real time — the moment waits while the game is paused)
+    tickMoments(dt); // (Milestone 28: the event director's moment on screen)
     autosave.tick(dt);
     hintLine.update(dt); // (Milestone 25c)
     dialog.update(dt);
@@ -579,128 +581,69 @@ const carePops = createCarePops({ bus, world: () => open?.world ?? null, vfx, sc
 bus.on('care:dayEnd', (summary) => {
   if (!open || router.currentName !== 'home') return;
   const d = open.world.clock.dateOf(summary.day);
-  dayBeat.show(summary, `Day ${d.day}`);
+  if (!dayBeat.current && !bigBeat && !open.world.events?.showing) dayBeat.show(summary, `Day ${d.day}`); // (Milestone 28: never over a moment)
   debug.log(`day ${summary.day}: ${summary.done} done, ${summary.missed} missed`);
 });
-// Milestone 6: a new resident moves in — the medium beat "Welcome, Betty Finch".
-bus.on('care:admit', ({ name }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`Welcome, ${name}`, true);
-  debug.log(`admitted: ${name}`);
-});
-
-// Milestone 9: a respite / short-stay resident heads home at the end of their stay — a good outcome (medium beat).
-bus.on('care:leaving', ({ name, discharge }) => {
-  if (discharge) return; // (Milestone 16: a discharge has its own beat)
-  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} heads home`, true);
-  debug.log(`went home: ${name}`);
-});
-
-// Milestone 11: a new hire walks in (medium beat); a course is finished.
-bus.on('staff:hired', ({ name }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`Welcome to the team, ${first(name)}`, true);
-  debug.log(`hired: ${name}`);
-});
-// Milestone 14: a birthday (medium beat; the first in a run also shows the First Birthday picture); a notice arriving
-// (a quiet line, only if nothing else is showing — never a stack of pop-ups)
-bus.on('care:birthday', ({ names, first: isFirst, art }) => {
-  if (!open || router.currentName !== 'home') return;
-  const who = names.map((n) => first(n)).join(' and ');
-  dayBeat.showText(`Happy birthday, ${who}!`, true);
-  if (isFirst && art) bigBeat = { title: 'A first birthday', text: `${who}'s birthday tea in the lounge`, art, age: 0 };
-});
-// Milestone 18: an alert noticed (the Inbox has the choices), a transfer to the hospital service and the return
-bus.on('care:alert', ({ name, word }) => {
-  if (open && router.currentName === 'home' && name) dayBeat.showText(`${first(name)} seems ${word}: choose what to do (Inbox)`, false);
-});
-bus.on('care:transfer', ({ name }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} goes to the hospital service for a few days`, false);
-});
-bus.on('care:back', ({ name }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} is back from the hospital service`, true);
-});
-// Milestone 16: ready to go home (an Inbox item) and a successful discharge (the big beat the first time, then medium)
-bus.on('care:ready', ({ name }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} is ready to go home`, true);
-});
-bus.on('care:discharge', ({ resident, name, first: isFirst, art }) => {
-  if (!open || router.currentName !== 'home') return;
-  dayBeat.showText(`${first(name)} goes home with family: rehab complete`, true);
-  if (isFirst && art) bigBeat = { title: 'A first rehab discharge', text: `${first(name)} is back on ${theirOf(resident)} feet and home with family`, art, age: 0 };
-});
-// Milestone 19: a first family visit (the big beat with its picture; later visits only a quiet line when nothing else
-// is showing), compliments (the first with the thank-you card), complaints, meetings held
-bus.on('care:visit', ({ name, visitor, first: isFirst, art }) => {
-  if (!open || router.currentName !== 'home') return;
-  if (isFirst && art) bigBeat = { title: 'A first family visit', text: `${visitor} comes to see ${first(name)}`, art, age: 0 };
-  else if (!dayBeat.current && !bigBeat) dayBeat.showText(`${visitor} is visiting ${first(name)}`, false);
-});
-bus.on('care:compliment', ({ name, first: isFirst, art }) => {
-  if (!open || router.currentName !== 'home') return;
-  dayBeat.showText(`A compliment from ${first(name)}'s family`, true);
-  if (isFirst && art) bigBeat = { title: 'A first compliment', text: `${first(name)}'s family says thank you`, art, age: 0 };
-});
-// Milestone 24: a stage opens (its big moment), building starts (a quiet line), a wing's first hub (the Memory Wing has
-// its own picture; the others show their hub).
-bus.on('home:stage', ({ stage, name, art, fixed }) => {
+// Milestone 28: every moment (a welcome, a birthday, a first visit, an event, a stage, an upgrade…) now goes through the
+// event director (src/systems/events.js, data/events.js): its words, category and weight are data there, and the screen
+// shows only what the director hands it (presentMoment below). Here only the saves and the logs stay.
+bus.on('care:admit', ({ name }) => debug.log(`admitted: ${name}`));
+bus.on('care:leaving', ({ name, discharge }) => !discharge && debug.log(`went home: ${name}`));
+bus.on('staff:hired', ({ name }) => debug.log(`hired: ${name}`));
+bus.on('home:stage', ({ stage, fixed }) => {
   if (!open) return;
-  const st = STAGES[stage - 1];
-  const wings = (st.wings ?? []).map((id) => wingById(id).short);
-  bigBeat = { title: name, text: `Stage ${stage}: more floor and room for ${Math.min(st.capacity, LOGICAL_CAP)} residents${wings.length ? ` · the ${wings.join(' and ')} wings can be painted` : ''}`, art: art ?? 'care_event_06', age: 0 };
   if (fixed?.length) debug.log(`Stage ${stage}: ${fixed.length} piece(s) nudged to keep every path open`);
   autosave.request('stage');
 });
-bus.on('home:building', ({ stage, name }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`Building Stage ${stage}: ${name} — the home carries on as usual`, true);
-});
-bus.on('home:wing', ({ name, art, hub, later }) => {
-  if (!open) return;
-  bigBeat = { title: `The ${name} opens`, text: later ? `${hub} placed · ${later}` : `${hub} placed: the wing is ready for its residents and staff`, art, age: 0 };
-  autosave.request('wing');
-});
-// Milestone 25: an event begins (a medium beat — never a pop-up over the home), ends (a quiet line), a fall
-bus.on('care:incident', ({ name, band }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`${name} (${SEVERITY.names[band].toLowerCase()}): choose a response (Inbox)`, false);
-  autosave.request('incident');
-});
-bus.on('care:incidentEnd', ({ name }) => {
-  if (open && router.currentName === 'home' && !dayBeat.current && !bigBeat) dayBeat.showText(`${name}: over — the after-report is in the Inbox`, true);
-  autosave.request('incident');
-});
-bus.on('care:fall', ({ name }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} had a fall: help is on the way`, false);
-});
-bus.on('care:complaint', ({ name }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`A complaint from ${first(name)}'s family: an improvement task (Quality)`, false);
-});
-bus.on('care:meeting', ({ name, change, review, first: isFirst }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(isFirst ? `A first family review: ${first(name)}'s plan` : `Family meeting for ${first(name)}: Family Trust ${signed1(change)}`, true);
-});
-// Milestone 25c: an upgrade starts / finishes (medium beats), care equipment arrives (a quiet line; the Inbox has it)
-bus.on('home:upgrading', ({ name, level }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`${name}: upgrading to Level ${LEVELS.names[level - 1]} — it carries on as usual`, true);
-  autosave.request('upgrade');
-});
-bus.on('home:levelUp', ({ name, level }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`${name} is now Level ${LEVELS.names[level - 1]}`, true);
-  haptics.medium();
-  autosave.request('levelUp');
-});
-bus.on('items:arrived', ({ item }) => {
-  if (open && router.currentName === 'home' && !dayBeat.current && !bigBeat) dayBeat.showText(item ? 'New care equipment in the store (Inbox)' : 'The equipment store is full (Inbox)', !!item);
-  autosave.request('item');
-});
-bus.on('care:notice', () => {
-  if (open && router.currentName === 'home' && !dayBeat.current && !bigBeat) dayBeat.showText('A notice in the Inbox', false);
-});
-// Milestone 12: ?debug=1 Fill roster (one beat for all of them)
+bus.on('home:wing', () => open && autosave.request('wing'));
+bus.on('care:incident', () => autosave.request('incident'));
+bus.on('care:incidentEnd', () => autosave.request('incident'));
+bus.on('home:upgrading', () => autosave.request('upgrade'));
+bus.on('home:levelUp', () => autosave.request('levelUp'));
+bus.on('items:arrived', () => autosave.request('item'));
+// Milestone 12: ?debug=1 Fill roster (one beat for all of them — a debug action, not a moment)
 bus.on('staff:filled', ({ ids }) => {
   if (open && router.currentName === 'home') dayBeat.showText(`Roster filled: ${ids.length} hired (debug)`, true);
   debug.log(`fill roster: ${ids.join(', ')}`);
 });
-bus.on('staff:trained', ({ name, course, specialty }) => {
-  if (open && router.currentName === 'home') dayBeat.showText(`${first(name)} finished ${course}${specialty ? ` · ${SPECIALTIES[specialty].name}` : ''}`, true);
-  debug.log(`trained: ${name} · ${course}`);
-});
+bus.on('staff:trained', ({ name, course }) => debug.log(`trained: ${name} · ${course}`));
+// The director's moment on screen: a big beat (the picture), a medium beat or a quiet line (the beat strip), or the one
+// choice in play (a small card: Open shows the same sheet its art opens; Later leaves it in the Inbox) — or the memorial
+// moment. Asked every frame; a beat never sits over a sheet or another pop-up (the director checks).
+let shownMoment = null;
+function momentUi() {
+  return { home: !!open && !spawn && router.currentName === 'home', sheet: sheet.active || homeScreen.buildMode, popup: dialog.active || memorial.active || loop.paused || textPrompt.active };
+}
+function tickMoments(dt) {
+  const ev = open?.world?.events;
+  if (!ev) return;
+  const cur = ev.uiTick(dt, momentUi());
+  if ((cur?.uid ?? null) === (shownMoment?.uid ?? null)) return;
+  if (shownMoment && bigBeat?.uid === shownMoment.uid) bigBeat = null; // (closed early: a sheet opened)
+  shownMoment = cur;
+  if (cur) presentMoment(cur, ev);
+}
+function presentMoment(m, ev) {
+  if (m.weight === 'big') bigBeat = { uid: m.uid, title: m.title ?? '', text: m.text, art: m.art, age: 0 };
+  else if (m.weight === 'medium' || m.weight === 'quiet') dayBeat.showText(m.text, m.good);
+  else if (m.weight === 'blocking') {
+    if (m.choice?.kind === 'memorial') return showMemorial(m.payload, m.uid);
+    dialog.confirm({ title: m.title ?? categoryById(m.cat)?.name ?? 'Inbox', body: m.text.replace(/ \(Inbox\)$/, ''), yes: 'Open', no: 'Later', onYes: () => {
+      ev.later(m.uid);
+      openTarget(m.opens);
+    }, onNo: () => ev.later(m.uid) });
+  }
+  if (m.haptic) haptics.medium();
+}
+// Where a moment or an Inbox line leads: the same sheet its art (or its Menu row) opens.
+function openTarget(o) {
+  if (!o) return openInbox();
+  if (o.type === 'resident' || o.type === 'staff') return open?.world?.byId(o.id) ? openHomeSheet(o.id) : openInbox();
+  if (o.type === 'complaints') return openComplaints();
+  if (o.type === 'wings') return openWings();
+  if (o.type === 'inbox') return openInbox();
+  return (MENU_OPEN[o.type] ?? openInbox)();
+}
 
 // Where each bottom-bar slot goes (data/bars.js).
 function openBottom(id) {
@@ -1078,8 +1021,38 @@ function openInbox() {
     const past = w.activities.history().slice(-4).reverse();
     sections.push({ title: 'Earlier', lines: past.length ? past.map((h) => ({ text: `${h.def.name}: ${h.accepted ? 'accepted' : h.auto ? 'no answer (let go)' : 'declined'}`, color: COL.textMuted })) : [{ text: notices.length ? '' : 'Nothing yet. Letters from families, partners and inspectors will arrive here too.', color: COL.textMuted }] });
     const waiting = notices.length + alertsWaiting() + familyWaiting() + w.economy.offers().length + w.partners.offers().length + emergencyWaiting() + w.endOfLife.offers().length; // (Milestone 23; Milestone 25; Milestone 27)
-    return { title: 'Inbox', subtitle: waiting ? `${waiting} waiting` : 'Nothing waiting', art: 'care_ui_01', accent: accentNow(), sections };
+    // Milestone 28: everything that happened, by category (newest first), from the event director; Mark all read
+    const unread = w.events.unread().length;
+    sections.splice(message ? 1 : 0, 0, { columns: 1, buttons: [{ id: 'inbox:readAll', label: 'Mark all read', sub: unread ? `${unread} unread` : 'Everything is read', disabled: !unread, accent: COL.progress, onTap: () => {
+      w.events.markAllRead();
+      autosave.request('inbox');
+    } }] });
+    sections.push(...inboxLog(w));
+    return { title: 'Inbox', subtitle: `${waiting ? `${waiting} waiting` : 'Nothing waiting'}${unread ? ` · ${unread} unread` : ''}`, art: 'care_ui_01', accent: accentNow(), sections };
   });
+}
+// Milestone 28: the Inbox log by category (each with its icon), newest first, at most INBOX_RULES.shown lines each; a
+// tap marks the line read and opens the same sheet its art opens (a resident, a staff member, Quality, Partners…).
+function inboxLog(w) {
+  const out = [];
+  for (const g of w.events.grouped()) {
+    const lines = g.lines.slice(0, INBOX_RULES.shown);
+    out.push({ title: `${g.cat.name}${g.unread ? ` · ${g.unread} new` : ''}`, titleDot: g.unread ? COL.action : null, columns: 1, buttons: lines.map((l) => {
+      const [head, rest] = splitLine(l.text);
+      return { id: `inboxLine:${l.uid}`, label: head, sub: `${rest ? `${rest} · ` : ''}${agoWord(w, l.day)}`, icon: g.cat.icon, badge: l.read ? null : '•', accent: l.read ? COL.progress : COL.action, onTap: () => {
+        w.events.markRead(l.uid);
+        autosave.request('inbox');
+        openTarget(l.opens);
+      } };
+    }) });
+  }
+  return out;
+}
+// A long line on a button: the first ~34 characters (at a word) on the label, the rest on the line under it.
+function splitLine(t) {
+  if (t.length <= 36) return [t, ''];
+  const i = t.lastIndexOf(' ', 34);
+  return i > 12 ? [t.slice(0, i), t.slice(i + 1)] : [t.slice(0, 34), t.slice(34)];
 }
 // The resident card's Activities section: what they enjoy, a hint when nothing they like has been on for a while, their
 // birthday.
@@ -1583,26 +1556,9 @@ function openPeer(id) {
 function qualityInbox(w, fresh) {
   return fresh.map((x) => ({ ...inspectionSection(w, x), columns: 1, buttons: [{ id: `inbox:quality:${x.uid}`, label: 'Open Quality', sub: x.kind === 'routine' ? 'Scores, Rank and inspections' : 'Accreditation', icon: QUALITY_ART.icon, accent: COL.progress, onTap: () => openQuality(x.kind === 'routine' ? 'inspections' : 'accreditation') }] }));
 }
-// Milestone 26: rank-ups and awards are big moments; a peer joining, a booked inspection, a shortfall are quiet lines.
-bus.on('quality:rankUp', ({ rank }) => {
-  if (!open) return;
-  bigBeat = { title: `Rank ${rank}`, text: `Opens ${RANK_BEAT[rank]}`, art: QUALITY_ART.rankUp, age: 0 }; // (the full list: Quality → Scores)
-  autosave.request('rank');
-});
-bus.on('quality:award', ({ id, name, art, finale }) => {
-  if (!open) return;
-  const rw = accreditationById(id).reward; // (a short line: the beat does not wrap; the full reward is on its card)
-  bigBeat = { title: name, text: `Awarded · Reputation +${rw.reputation} · ${rw.credits.toLocaleString('en-GB')} Credits`, art: finale ? QUALITY_ART.finale : art, age: 0 };
-  autosave.request('award');
-});
-bus.on('quality:inspection', ({ id, kind, pass, grade }) => {
-  if (!open || router.currentName !== 'home') return;
-  if (kind === 'routine') dayBeat.showText(`The routine review: grade ${grade} (Inbox)`, grade !== 'D');
-  else if (!pass) dayBeat.showText(`${accreditationById(id).name}: the inspection fell short — see what to work on (Inbox)`, false);
-});
-bus.on('quality:peer', ({ name }) => {
-  if (open && router.currentName === 'home' && !dayBeat.current && !bigBeat) dayBeat.showText(`${name} joins the benchmark network (Quality → Benchmark)`, true);
-});
+// Milestone 26: rank-ups and awards (Milestone 28: their beats come from the director, as Recognition).
+bus.on('quality:rankUp', () => open && autosave.request('rank'));
+bus.on('quality:award', () => open && autosave.request('award'));
 // Quality → Compliments & complaints: the home's Family Trust, open improvement tasks with their trails, the resolved ones,
 // and the compliments list.
 function openComplaints() {
@@ -2227,7 +2183,7 @@ function keepPages(pages, home) {
 }
 const memorial = new MajorFeedback({ layout, width: W, height: renderer.height, pause: () => {}, minShowSec: 1.6, hint: 'Tap to carry on' });
 let memorialResume = false;
-function showMemorial(e) {
+function showMemorial(e, uid = null) {
   const w = open?.world;
   if (!w) return;
   const pt = homeScreen.worldPointOfPlace?.(e.room);
@@ -2241,6 +2197,7 @@ function showMemorial(e) {
     accent: '#B06A3E',
     drawFn: (ctx, t) => drawMemorial(ctx, t, e, lines),
     onAck: () => {
+      if (uid != null) open?.world?.events?.ack(uid); // (Milestone 28)
       if (!memorial.active && memorialResume) open?.world?.clock.resume();
     },
   });
@@ -2276,7 +2233,7 @@ function drawMemorial(ctx, t, e, lines) {
 bus.on('care:passed', (e) => {
   keepPages([e.page], open?.data?.facility?.name);
   debug.log(`passed peacefully: ${e.name} (comfort ${e.score})`);
-  if (open && !spawn) showMemorial(e);
+  // (Milestone 28: the memorial moment is the director's choice card: one at a time, never over another pop-up)
 });
 // The resident card's Care stage section: the stage and its forecast line, their wishes, the comfort-first offer, the
 // palliative support meeting and the comfort score so far (Approaching end of life / Final days).
@@ -2321,7 +2278,7 @@ function stageSection(w, it) {
   return sections;
 }
 let eolMessage = null;
-// The Inbox: new care-stage lines (and the passing notes), and each open comfort-first offer.
+// The Inbox: each open comfort-first offer (Milestone 28: the care-stage lines are in the "In memory" group).
 function eolInbox(w, fresh) {
   const E = w.endOfLife;
   const out = [];
@@ -2339,7 +2296,7 @@ function eolInbox(w, fresh) {
       } },
     ] });
   }
-  if (fresh.length) out.push({ title: 'Care stages', lines: fresh.slice(-6).reverse().map((n) => ({ text: `${agoWord(w, n.day)}: ${n.text}`, color: n.stage === 'passed' ? COL.actionDark : COL.progress })), columns: 1, buttons: [{ id: 'eolInbox:book', label: 'Memory Book', sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} kept`, icon: MEMORIAL.art.book, accent: COL.progress, onTap: () => openMemoryBook() }] });
+  void fresh; // (Milestone 28: the care-stage lines are the Inbox's "In memory" lines now — the director's log)
   return out;
 }
 // The Memory Book (Quality → Records, and the Menu): a page per resident who passed at any of your homes, newest first.
@@ -3712,7 +3669,7 @@ function inboxBase() {
   return (open?.world?.activities?.notices().length ?? 0) + (open?.world?.readyToGoHome?.().length ?? 0) + alertsWaiting() + familyWaiting() + (open?.world?.economy?.offers().length ?? 0) + (open?.world?.partners?.offers().length ?? 0) + emergencyWaiting() + (open?.world?.endOfLife?.offers().length ?? 0); // (Milestone 27: a comfort-first offer)
 }
 function inboxCountNow() {
-  return inboxBase() + (open?.world?.items?.unseen().length ?? 0) + (open?.world?.quality?.unseen().length ?? 0) + (open?.world?.endOfLife?.unseen().length ?? 0); // (Milestone 26: inspection results; Milestone 27: care-stage lines)
+  return inboxBase() + (open?.world?.events?.unread().length ?? 0); // (Milestone 28: the waiting choices plus every unread line — equipment, results, care stages… are lines now)
 }
 
 // The next-step hint line (data/menu.js NEXT_HINTS): the first that holds is shown; tapping it opens the right sheet.

@@ -251,6 +251,7 @@ export const SAVE_MIGRATIONS = {
   25: (record) => record, // (Milestone 25c: no levels = every piece at Level I; no item state = an empty store, likes from each person's role)
   26: (record) => record, // (Milestone 26: no quality state = the scores worked out from the home as it is; Rank E, or the rank its stage / Level II–III pieces / debug partner rank already need)
   27: (record) => record, // (Milestone 27: no end-of-life state = everyone Settled, nothing held, no pages; the account's Memory Book starts empty)
+  28: (record) => record, // (Milestone 28: no director state = an empty queue and log; every system's own Inbox items are kept as they are)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).
