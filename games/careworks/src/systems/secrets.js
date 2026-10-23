@@ -25,7 +25,7 @@ import { SecretEngine, SECRET_OPS, readPath } from '../../../../core/SecretEngin
 import { UnlockRunner } from '../../../../core/UnlockActions.js';
 import { DiscoveryArchive } from '../../../../core/DiscoveryArchive.js';
 import { CLUE, EASING, TRIGGERS, FACTS, REWARD_TYPES, SECRET_RULES, factDef } from '../../data/secrets.js';
-import { createSecretFacts, ensureLog, monthRecord } from './secretFacts.js';
+import { createSecretFacts, ensureLog, monthRecord, dailyRecord } from './secretFacts.js';
 import { SCORES } from '../../data/quality.js';
 
 const OWN_TRIGGERS = ['secrets:day', 'secrets:month'];
@@ -157,7 +157,11 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
       env.addRecognition?.(); // (the Founder's history: recognitions — bible §3.5.5)
     },
     item: (a) => env.items?.grant('secret', { why: ruleName(a) }),
-    arrival: (a) => !st.flags.includes(`arrival:${a.id}`) && st.flags.push(`arrival:${a.id}`),
+    // (Milestone 30: the named person's card on the Recruit board, waiting until hired — staffing.arrive, once per person)
+    arrival: (a) => {
+      if (!st.flags.includes(`arrival:${a.id}`)) st.flags.push(`arrival:${a.id}`);
+      env.specialArrival?.(a.id);
+    },
     event: (a) => !st.flags.includes(`event:${a.id}`) && st.flags.push(`event:${a.id}`),
   };
   const runner = new UnlockRunner({ handlers });
@@ -298,6 +302,7 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
     },
     // each midnight, after the quality scores
     daily(day) {
+      dailyRecord(env, log); // (Milestone 30)
       return notify('secrets:day', { day });
     },
     // each month's close, after the ledger and the economy: the month's record, then the month's rules

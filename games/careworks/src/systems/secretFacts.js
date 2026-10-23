@@ -18,12 +18,25 @@ import { FactRegistry } from '../../../../core/SecretEngine.js';
 import { SCORE_IDS } from '../../data/quality.js';
 import { FRIENDSHIP } from '../../data/relationships.js';
 import { stayTypeOf } from './endOfLife.js';
+import { dietOf } from './dining.js';
+import { AID_LEVELS } from '../../data/mobility.js';
 
 const r1 = (x) => Math.round(x * 10) / 10;
 const avg = (list) => (list.length ? list.reduce((a, b) => a + b, 0) / list.length : null);
 const LONG_TERM = ['Long Term', 'Palliative'];
 const STORY_TAGS = ['History', 'Community'];
 const MONTHS_KEPT = 240; // 20 years of months: the whole campaign and its postgame
+// Milestone 30: the daily records (dailyRecord) —
+//   log.programBest   program id → its longest unbroken run in days (a program "run for a full month": FULL_RUN days)
+//   log.familiar90    resident id → the day their highest Familiar Care last reached FAMILIAR_HIGH (gone when it drops)
+//   log.forcedDependence  resident-days a resident who could walk with a frame or better was on a wheelchair / transfer
+//                     plan (harm: only ever in forbids)
+const FULL_RUN = 28;
+const FAMILIAR_HIGH = 90;
+const DEPENDENCE_PLANS = ['MO08', 'MO04']; // Wheelchair Mobility Plan, Transfer Assist
+const WALKS_FROM = AID_LEVELS.find((a) => a.aid === 'frame').from; // a mobility level at which a walking plan fits
+const topFamiliar = (env, residentId) => Math.max(0, ...env.team().map((q) => env.familiarityOf(residentId, q.id) ?? 0));
+const forcedNow = (env) => env.residentsHere().filter((p) => DEPENDENCE_PLANS.includes(p.state.plan?.MO) && (p.state.mobility?.level ?? 0) >= WALKS_FROM).length;
 
 // --- the counters a month's record reads (each ever-rising, so a month is the difference since the last close) -------------
 function counters(env) {
@@ -40,7 +53,22 @@ function counters(env) {
   };
 }
 export function newLog(env) {
-  return { v: 1, months: [], joined: {}, starting: [], lastLeft: null, birthdays: 0, discharges: 0, timeline: [], opened: env.today(), at: counters(env), monthStart: env.today(), rebuilt: false };
+  return { v: 1, months: [], joined: {}, starting: [], lastLeft: null, birthdays: 0, discharges: 0, timeline: [], opened: env.today(), at: counters(env), monthStart: env.today(), rebuilt: false, programBest: {}, familiar90: {}, forcedDependence: 0 };
+}
+
+// Each midnight, before the day's rules (Milestone 30): the records a day can't rebuild later.
+export function dailyRecord(env, log) {
+  const day = env.today();
+  log.programBest ??= {};
+  for (const [id, run] of Object.entries(env.care.programs?.running ?? {})) log.programBest[id] = Math.max(log.programBest[id] ?? 0, day - (run.since ?? day));
+  const here = env.residentsHere();
+  const f = (log.familiar90 ??= {});
+  for (const id of Object.keys(f)) if (!here.some((p) => p.id === id)) delete f[id];
+  for (const p of here) {
+    if (topFamiliar(env, p.id) >= FAMILIAR_HIGH) f[p.id] ??= day;
+    else delete f[p.id];
+  }
+  log.forcedDependence = (log.forcedDependence ?? 0) + forcedNow(env);
 }
 // Each staff member here: joined day 0 (a new home) / the hire's day / the Founder's days employed.
 function noteTeam(env, log) {
@@ -145,8 +173,23 @@ export function createSecretFacts({ env, log, engine, account }) {
   const residentList = () =>
     here().map((p) => {
       const o = p.state.outcomes ?? {};
-      return { id: p.id, stay: stayTypeOf(p.def, p.state), longTerm: longTerm(p), tags: tagsOf(p), mood: o.mood ?? 0, comfort: o.comfort ?? 0, independence: o.independence ?? 0, connection: o.connection ?? 0, mobility: p.state.mobility?.level ?? null, familyTrust: env.care.families?.[p.id]?.trust ?? null, daysHere: env.today() - (p.state.admittedDay ?? 0), memorySupport: !!env.isMemorySupport(p.id) };
+      const since = L().familiar90?.[p.id];
+      return {
+        id: p.id, stay: stayTypeOf(p.def, p.state), longTerm: longTerm(p), tags: tagsOf(p), mood: o.mood ?? 0, comfort: o.comfort ?? 0, independence: o.independence ?? 0, connection: o.connection ?? 0, mobility: p.state.mobility?.level ?? null, familyTrust: env.care.families?.[p.id]?.trust ?? null, daysHere: env.today() - (p.state.admittedDay ?? 0), memorySupport: !!env.isMemorySupport(p.id),
+        // (Milestone 30)
+        starting: (p.state.admittedDay ?? 0) <= (L().opened ?? 0),
+        plan: { ...(p.state.plan ?? {}) },
+        specialMenu: dietOf(p.state) !== 'standard' && !!env.dietMadeByTeam?.(p.id),
+        favouriteFood: p.state.plan?.NU === 'NU07' && p.state.optionPrefs?.NU07 !== 'refuse',
+        dining: p.state.dining?.avg ?? null,
+        familiar: topFamiliar(env, p.id),
+        familiar90Days: since == null ? 0 : env.today() - since,
+      };
     });
+  const avgOver = (key) => {
+    const v = residentList().map((x) => x[key]).filter((x) => typeof x === 'number');
+    return v.length ? r1(avg(v)) : 0;
+  };
   const friendships = () => {
     const byId = new Map(here().map((p) => [p.id, p]));
     return Object.values(env.care.friendships ?? {})
@@ -188,6 +231,9 @@ export function createSecretFacts({ env, log, engine, account }) {
     .define('run.year', () => env.year())
     .define('run.rank', () => env.quality.rankIndex)
     .define('run.residentList', residentList)
+    .define('run.community', () => avgOver('connection'))
+    .define('run.mobilityOutcome', () => avgOver('independence'))
+    .define('run.diningSatisfaction', () => avgOver('dining'))
     // consecutive months
     .define('run.months', () => L().months)
     .define('run.monthsClosed', () => L().months.length)
@@ -198,6 +244,7 @@ export function createSecretFacts({ env, log, engine, account }) {
     .define('run.programIds', programIds)
     .define('run.programsEver', () => [...new Set([...(env.care.programs?.history ?? []).filter((h) => h.what === 'started').map((h) => h.id), ...programIds()])])
     .define('run.programs', () => Object.entries(env.care.programs?.running ?? {}).map(([id, run]) => ({ id, days: Math.max(0, env.today() - (run.since ?? env.today())) })))
+    .define('run.programsCompleted', () => Object.values(L().programBest ?? {}).filter((d) => d >= FULL_RUN).length)
     // resident outcomes
     .define('run.rehabDischarges', () => L().discharges ?? 0)
     .define('run.discharges', discharges)
@@ -219,6 +266,8 @@ export function createSecretFacts({ env, log, engine, account }) {
     .define('run.startingKept', () => L().starting.filter((id) => env.team().some((q) => q.id === id) && L().joined[id] != null).length)
     .define('run.longestServing', () => Math.max(0, ...env.team().map((q) => daysEmployed(q.id))))
     .define('run.noQuitDays', () => env.today() - (L().lastLeft ?? L().opened ?? 0))
+    // (Milestone 30: who finished a course — the quality system's trainedOn record; a staff id starts with its role)
+    .define('run.trainedStaff', () => Object.keys(env.care.quality?.trainedOn ?? {}).map((id) => ({ id, role: id.slice(0, 2) })))
     // family trust
     .define('run.familyTrust', () => env.familyTrust())
     .define('run.families', () => here().map((p) => ({ resident: p.id, trust: env.care.families?.[p.id]?.trust ?? null })))
@@ -245,12 +294,15 @@ export function createSecretFacts({ env, log, engine, account }) {
     .define('run.distress', () => here().filter((p) => (p.state.outcomes?.mood ?? 100) < 20).length)
     .define('run.complaints', () => (env.care.family?.complaints ?? []).length)
     .define('run.passings', () => (env.care.eol?.passings ?? []).length)
+    .define('run.eolNotWellSupported', () => eolResults().filter((r) => !r.good).length)
+    .define('run.forcedDependence', () => L().forcedDependence ?? 0)
     // account
     .define('account.ngPlus', () => env.ngPlus())
     .define('account.memoryBook', () => account().memoryBook())
     .define('account.secretsFound', () => engine().rules.filter((r) => engine().everUnlocked(r.id)).length)
     .define('account.secretsFoundIds', () => engine().rules.filter((r) => engine().everUnlocked(r.id)).map((r) => r.id))
     .define('account.prestigeTokens', () => account().prestigeTokens())
+    .define('account.storySecretsFound', () => engine().rules.filter((r) => r.category === 'residentStory' && engine().everUnlocked(r.id)).length)
     // the moment's own payload
     .defineGroup('event', (field, ctx) => ctx?.payload?.[field]);
   return facts;

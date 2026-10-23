@@ -20,7 +20,8 @@
 //     score(id) a §5 headline score (null until Milestone 26)
 //   Standard: always. Rare: Rank D (a role milestone stands in as Rank D until M26). Elite: their Rank + a specialist
 //   facility or an excellence score. Legendary / Secret: never — not on any board, in any channel, even with a debug
-//   unlock (the secret engine brings them, Milestones 29 / 30). ?debug=1: "Open every channel" also counts as the Rank;
+//   unlock (the secret engine brings them, Milestones 29 / 30: staffing.arrive(defId) puts their special card on the
+//   board until hired). ?debug=1: "Open every channel" also counts as the Rank;
 //   "Unlock Elite staff" (staffing.setEliteUnlock) counts as the Elite condition. staffing.eligibleNow(tiers?) → defs.
 // A card: { id, channel, personId, name, role, tier, level, stats, salary, trait, shiftPref, art }.
 import { RecruitmentSystem } from '../../../../core/RecruitmentSystem.js';
@@ -33,15 +34,19 @@ import { facilityById } from '../../data/facilities.js';
 import { COURSES, courseById, SPECIALTIES, SPECIALTY_LIMIT } from '../../data/training.js';
 
 export function newStaffingState() {
-  return { recruit: null, nextFree: null, training: null, specialties: {}, departed: [], hires: [], debug: false, eliteUnlock: false };
+  return { recruit: null, nextFree: null, training: null, specialties: {}, departed: [], hires: [], debug: false, eliteUnlock: false, arrived: [], arrivalQueue: [] };
 }
 export function ensureStaffingState(saved) {
   const s = { ...newStaffingState(), ...(saved ?? {}) };
   s.specialties = Object.fromEntries(Object.entries(s.specialties ?? {}).map(([k, v]) => [k, [...v]]));
   s.departed = [...(s.departed ?? [])];
   s.hires = [...(s.hires ?? [])];
+  s.arrived = [...(s.arrived ?? [])];
+  s.arrivalQueue = [...(s.arrivalQueue ?? [])];
   return s;
 }
+// Milestone 30: a special arrival's card stays on the board until they are hired (core keeps it `days` days).
+const ARRIVAL_DAYS = 100000;
 const toCoreCourse = (c) => ({ id: c.id, name: c.name, cost: c.cost, days: c.days, requires: null, effect: c.gains ? { kind: 'stats', stats: c.gains } : { kind: 'lowest', count: c.lowest.count, min: c.lowest.min, max: c.lowest.max } });
 const cardOf = (d) => ({ personId: d.id, name: d.name, role: d.role, tier: d.tier, level: d.level, stats: { ...d.stats }, salary: d.salary, trait: namedTrait(d), traits: [...d.traits], shiftPref: d.shiftPref, art: d.art });
 
@@ -124,6 +129,17 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
   }
   if (!rs.load(st.recruit)) refreshBoard(RECRUIT.freeChannel, 'start');
   if (st.nextFree == null) st.nextFree = today() + RECRUIT.freeRefreshDays;
+  // Milestone 30: special arrivals (a staff secret found): the core board's one special card, the next one waiting in
+  // st.arrivalQueue while it is taken. Each person arrives once per run (st.arrived).
+  function nextArrival() {
+    if (rs.special) return;
+    while (st.arrivalQueue.length) {
+      const d = staffById(st.arrivalQueue.shift());
+      if (!d || employed().has(d.id)) continue;
+      rs.addSpecial(cardOf(d), { day: today(), days: ARRIVAL_DAYS, note: 'A special arrival' });
+      return;
+    }
+  }
 
   const channelState = (c) => {
     if (c.unlock.type === 'start') return { ok: true, reason: null };
@@ -181,8 +197,22 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
     recruitment: rs,
     training: ts,
     state: st,
+    // (Milestone 30: with the special arrival's card, if there is one)
     get board() {
-      return rs.board;
+      return rs.cards;
+    },
+    // Milestone 30: a staff secret found brings this named Legendary / Prestige person (never on an ordinary board): their
+    // card waits on the board until hired. Once per run: a second call (a repaired reward, a reload) does nothing.
+    arrive(defId) {
+      const d = staffById(defId);
+      if (!d || st.arrived.includes(d.id) || employed().has(d.id)) return false;
+      st.arrived.push(d.id);
+      st.arrivalQueue.push(d.id);
+      nextArrival();
+      return true;
+    },
+    get arrivals() {
+      return [...st.arrived];
     },
     card: (id) => rs.get(id),
     get nextFreeDay() {
@@ -253,6 +283,7 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
       const card = rs.take(cardId);
       st.hires.push({ id: card.personId, day: today(), channel: card.channel });
       if (st.hires.length > 40) st.hires.shift();
+      if (card.channel === 'special') nextArrival();
       return { ok: true, reason: null, card, def: staffById(card.personId) };
     },
     // Someone left the team: on record (their Familiar Care stays in the care state), and back in the pool — never

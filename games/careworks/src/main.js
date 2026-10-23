@@ -3192,7 +3192,7 @@ function openRecruit() {
     const sf = w.staffing;
     const daysToFree = Math.max(0, sf.nextFreeDay - w.clock.totalDays);
     const full = w.team.length >= sf.cap;
-    const cards = sf.board.map((c) => ({ id: `cand:${c.id}`, label: `${c.name} · ${TIERS[c.tier].name}`, sub: `${ROLES[c.role].name} · Lv ${c.level} · ${c.salary} a month · ${TRAITS[c.trait]?.name ?? ''}`, icon: c.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[c.role].badge, tag: TIER_TAG[c.tier] ?? null, accent: TIER_ACCENT[c.tier] ?? COL.progress, onTap: () => openCandidate(c.id) }));
+    const cards = sf.board.map((c) => ({ id: `cand:${c.id}`, label: `${c.name} · ${TIERS[c.tier].name}`, sub: `${c.channel === 'special' ? 'Special arrival' : ROLES[c.role].name} · Lv ${c.level} · ${c.salary} a month · ${TRAITS[c.trait]?.name ?? ''}`, icon: c.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[c.role].badge, tag: TIER_TAG[c.tier] ?? null, accent: TIER_ACCENT[c.tier] ?? COL.progress, onTap: () => openCandidate(c.id) }));
     const chans = sf.channels().map(({ channel: c, ok, reason }) => ({ id: `chan:${c.id}`, label: c.id === 'special' ? c.name : `${c.name} · ${credits(c.cost)}`, sub: ok ? c.text : `${reason} · ${c.text}`, disabled: !ok || c.id === 'special', accent: COL.progress, onTap: () => {
       const r = sf.refresh(c.id);
       message = r.ok ? { text: `A new board from ${c.name}`, good: true } : { text: r.reason, good: false };

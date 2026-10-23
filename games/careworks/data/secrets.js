@@ -49,7 +49,11 @@ export const FACTS = {
   'run.stage': { name: 'Facility stage', kind: 'number' },
   'run.year': { name: 'Campaign year', kind: 'number' },
   'run.rank': { name: 'Rank (E 0 … S 5)', kind: 'number' },
-  'run.residentList': { name: 'Each resident', kind: 'list', fields: { id: 'id', stay: 'stay type', longTerm: 'long-term stay', tags: 'life-story tags', mood: 'Mood', comfort: 'Comfort', independence: 'Independence', connection: 'Social Connection', mobility: 'mobility level', familyTrust: 'their family’s Trust', daysHere: 'days living here', memorySupport: 'memory support' } },
+  'run.residentList': { name: 'Each resident', kind: 'list', fields: { id: 'id', stay: 'stay type', longTerm: 'long-term stay', tags: 'life-story tags', mood: 'Mood', comfort: 'Comfort', independence: 'Independence', connection: 'Social Connection', mobility: 'mobility level', familyTrust: 'their family’s Trust', daysHere: 'days living here', memorySupport: 'memory support', starting: 'here since the home opened', plan: 'care plan options (plan.<domain>)', specialMenu: 'on a special menu the team can make', favouriteFood: 'Favourite-Food Boost active', dining: 'dining satisfaction', familiar: 'their highest Familiar Care', familiar90Days: 'days in a row with Familiar Care 90+' } },
+  // (Milestone 30) the home's averages over the residents here
+  'run.community': { name: 'Community (residents’ average Social Connection)', kind: 'number' },
+  'run.mobilityOutcome': { name: 'Mobility outcome (residents’ average Independence)', kind: 'number' },
+  'run.diningSatisfaction': { name: 'Dining satisfaction (residents’ average)', kind: 'number' },
   // consecutive months (written at each month's close)
   'run.months': { name: 'Each closed month', kind: 'list', fields: { m: 'month number', scores: 'headline scores (scores.<id>)', lowest: 'lowest headline score', net: 'trading net', profit: 'in profit', noMissed: 'no essential care missed', familyTrust: 'home Family Trust', nutrition: 'Nutrition', environment: 'Environment', residents: 'residents', occupancy: 'occupancy %', agencyShifts: 'agency shifts', agencyPct: 'agency shifts % of shifts', safePct: 'shifts at Safe Coverage %', essentialMissed: { name: 'essential care missed', harm: true }, falls: { name: 'falls', harm: true }, unsafeShifts: { name: 'unsafe shifts', harm: true }, medErrors: { name: 'medication-round issues', harm: true }, complaints: { name: 'complaints', harm: true }, passings: { name: 'passings', harm: true } } },
   'run.monthsClosed': { name: 'Months closed', kind: 'number' },
@@ -60,6 +64,7 @@ export const FACTS = {
   'run.programIds': { name: 'Programs running (ids)', kind: 'ids' },
   'run.programsEver': { name: 'Different programs ever run', kind: 'ids' },
   'run.programs': { name: 'Each program running', kind: 'list', fields: { id: 'id', days: 'days running' } },
+  'run.programsCompleted': { name: 'Different programs run for a full month', kind: 'number' }, // (Milestone 30)
   // resident outcomes
   'run.rehabDischarges': { name: 'Successful rehab discharges', kind: 'number' },
   'run.discharges': { name: 'Each rehab discharge', kind: 'list', fields: { id: 'resident', day: 'day', days: 'days of rehab', independence: 'Independence at discharge' } },
@@ -77,6 +82,7 @@ export const FACTS = {
   'run.startingKept': { name: 'Starting staff still here', kind: 'number' },
   'run.longestServing': { name: 'Longest continuous employment (days)', kind: 'number' },
   'run.noQuitDays': { name: 'Days since anyone left', kind: 'number' },
+  'run.trainedStaff': { name: 'Each staff member who finished a course', kind: 'list', fields: { id: 'id', role: 'role' } }, // (Milestone 30)
   // family trust
   'run.familyTrust': { name: 'Family Trust (the home)', kind: 'number' },
   'run.families': { name: 'Each family', kind: 'list', fields: { resident: 'resident', trust: 'Trust' } },
@@ -100,11 +106,14 @@ export const FACTS = {
   'run.distress': { name: 'Residents in distress (Mood under 20)', kind: 'number', harm: true },
   'run.complaints': { name: 'Complaints (ever)', kind: 'number', harm: true },
   'run.passings': { name: 'Passings', kind: 'number', harm: true },
+  'run.eolNotWellSupported': { name: 'End-of-life periods not well supported', kind: 'number', harm: true }, // (Milestone 30)
+  'run.forcedDependence': { name: 'Days a resident who could walk was kept on a wheelchair or transfer plan', kind: 'number', harm: true }, // (Milestone 30)
   // account (this device; New Game+ keeps it)
   'account.ngPlus': { name: 'New Game+ level', kind: 'number', scope: 'account' },
   'account.memoryBook': { name: 'Memory Book pages (every home)', kind: 'number', scope: 'account' },
   'account.secretsFound': { name: 'Secrets found (every run)', kind: 'number', scope: 'account' },
   'account.secretsFoundIds': { name: 'Secrets found (ids)', kind: 'ids', scope: 'account' },
+  'account.storySecretsFound': { name: 'Resident-story secrets found (every run)', kind: 'number', scope: 'account' }, // (Milestone 30)
   'account.prestigeTokens': { name: 'Prestige Tokens', kind: 'number', scope: 'account' },
   // the trigger's own payload: event.<field> (e.g. event.id on quality:award)
   event: { name: 'The moment’s own detail (event.<field>)', kind: 'object', group: true },
@@ -233,7 +242,132 @@ export const SECRET_RULES = [
     reward: 'The Heritage Home palette and 2 Prestige Tokens',
     rewardActions: [{ type: 'palette', id: 'heritageHome' }, { type: 'prestige', amount: 2 }],
   },
+  // --- Milestone 30, Batch A: the ten staff secrets (§36 SEC-STAFF-L1…L5, S1…S5) ----------------------------------------
+  // Each brings one named Legendary / Prestige person (data/staff.js, never on any board) as a special arrival: a card on
+  // the Recruit board that waits until they are hired (src/systems/staffing.js arrive). Legendary: once per run, looked at
+  // each month's close. Prestige (New Game+ 2 / 3): once per account.
+  ...staffSecrets(),
 ];
+function staffSecrets() {
+  const RANK_A = { fact: 'run.rank', op: 'gte', value: 4, kind: 'fixed', category: 'recognition', label: 'Rank A' };
+  const YEAR = 336; // (12 months of 28 days)
+  const months = (where, n, label, category = 'quality') => ({ fact: 'run.months', op: 'consecutive', where, value: n, kind: 'count', category, label, unit: 'months' });
+  const residents = (where, n, label, category = 'residents') => ({ fact: 'run.residentList', op: 'countOf', where, value: n, kind: 'count', category, label });
+  const program = (id, days, label) => ({ fact: 'run.programs', op: 'countOf', where: [{ field: 'id', op: 'eq', value: id }, { field: 'days', op: 'gte', value: days }], value: 1, kind: 'fixed', category: 'programs', label });
+  const ever = (id, label) => ({ fact: 'run.programsEver', op: 'has', value: id, kind: 'fixed', category: 'programs', label });
+  const arrival = (id, name) => [{ type: 'arrival', id, name }];
+  const legend = (id, name, staffId, person, requiresAll, clues, forbids = []) => ({ id, name, category: 'staff', oncePerRun: true, triggerEvents: ['secrets:month'], requiresAll, forbids, clueStages: stages(clues), reward: `${person} arrives (a special arrival on the Recruit board)`, rewardActions: arrival(staffId, person) });
+  const prestige = (id, name, staffId, person, ng, requiresAll, clues, forbids = []) => {
+    const { oncePerRun, ...r } = legend(id, name, staffId, person, requiresAll, clues, forbids);
+    return { ...r, ngPlusMin: ng, oncePerAccount: true };
+  };
+  return [
+    legend('SEC-STAFF-L1', 'The Golden Stethoscope', 'RN09', 'Dr. Celia Grace', [
+      RANK_A,
+      months([{ field: 'scores.clinicalSafety', op: 'gte', value: 92 }], 12, 'Clinical Safety 92+'),
+      { fact: 'run.trainedStaff', op: 'countOf', where: [{ field: 'role', op: 'eq', value: 'RN' }], value: 5, kind: 'count', category: 'staff', label: 'Registered Nurses who finished a course' },
+    ], [
+      'A famous nurse is said to visit only the very best homes.',
+      'She watches how carefully medicines and checks are handled, every day.',
+      'She cares about nurses who keep learning.',
+      'Nearly there: keep the clinical care steady, with nothing left waiting.',
+    ], [{ fact: 'run.openMedAlerts', op: 'gt', value: 0, kind: 'fixed', category: 'clinical', label: 'A clinical alert left unresolved' }]),
+    legend('SEC-STAFF-L2', 'The Heart of the Home', 'CW09', 'Joy Mercer', [
+      RANK_A,
+      { fact: 'run.familiarCare', op: 'gte', value: 85, kind: 'threshold', category: 'familiarity', label: 'Familiar Care average 85+' },
+      { fact: 'run.staff', op: 'countOf', where: [{ field: 'starting', op: 'eq', value: true }, { field: 'role', op: 'eq', value: 'CW' }, { field: 'daysEmployed', op: 'gte', value: 8 * YEAR }], value: 1, kind: 'fixed', category: 'staff', label: 'One of the starting Care Workers still here after 8 years' },
+      { fact: 'run.score.residentWellbeing', op: 'gte', value: 88, kind: 'threshold', category: 'quality', label: 'Resident Wellbeing 88+' },
+    ], [
+      'Carers talk of a home where every face is familiar.',
+      'Loyalty matters: someone who was here at the start, still here.',
+      'Residents who know their carers well are happier for it.',
+      'Very close: the home already feels like a family.',
+    ]),
+    legend('SEC-STAFF-L3', 'The Joy Bringer', 'LC09', 'Cass Melody', [
+      RANK_A,
+      { fact: 'run.programsCompleted', op: 'gte', value: 8, kind: 'count', category: 'programs', label: 'Different programs run for a full month' },
+      residents([{ field: 'mood', op: 'gte', value: 95 }], 5, 'Residents with Mood 95+'),
+      { fact: 'run.community', op: 'gte', value: 85, kind: 'threshold', category: 'residents', label: 'Community (average Social Connection) 85+' },
+    ], [
+      'A lifestyle leader is looking for a home that is never dull.',
+      'Variety is the secret: many kinds of program, each given a fair run.',
+      'Some residents are as happy as they have ever been.',
+      'Nearly there: the whole home feels connected.',
+    ]),
+    legend('SEC-STAFF-L4', 'The Golden Stride', 'AH09', 'Aurelia Step', [
+      RANK_A,
+      { fact: 'run.rehabDischarges', op: 'gte', value: 10, kind: 'count', category: 'residents', label: 'Successful rehab discharges' },
+      program('PRG04', YEAR, 'The Falls Prevention Program running for 12 months'),
+      { fact: 'run.mobilityOutcome', op: 'gte', value: 90, kind: 'threshold', category: 'residents', label: 'Mobility outcome (average Independence) 90+' },
+    ], [
+      'A renowned therapist follows the homes that send people home stronger.',
+      'Many residents have gone home on their own feet.',
+      'Steady balance classes, kept going for a long time, catch her eye.',
+      'Very close: everyone here is moving with confidence.',
+    ]),
+    legend('SEC-STAFF-L5', 'The Golden Table', 'HN09', 'Mira Harvest', [
+      RANK_A,
+      months([{ field: 'nutrition', op: 'gte', value: 92 }], 12, 'Nutrition 92+'),
+      residents([{ field: 'specialMenu', op: 'eq', value: true }, { field: 'daysHere', op: 'gte', value: 84 }], 6, 'Residents kept on a special menu the team can make, for 3 months or more', 'nutrition'),
+      { fact: 'run.diningSatisfaction', op: 'gte', value: 90, kind: 'threshold', category: 'nutrition', label: 'Dining satisfaction 90+' },
+    ], [
+      'A celebrated cook is said to be looking for a new kitchen.',
+      'Good food, every day, for a long time.',
+      'Every special menu matched, and kept up.',
+      'Nearly there: mealtimes are the best part of the day.',
+    ]),
+    prestige('SEC-STAFF-S1', 'The Night Guardian', 'RN10', 'Nora Nightingale', 2, [
+      { fact: 'run.awards', op: 'has', value: 'C11', kind: 'fixed', category: 'recognition', label: 'C11 won' }, // (C11 is built in Milestone 31: never true until then)
+      months([{ field: 'scores.clinicalSafety', op: 'gte', value: 96 }], 24, 'Clinical Safety 96+'),
+      program('PRG10', 168, 'The Palliative Comfort Program running for 6 months'),
+      residents([{ field: 'stay', op: 'eq', value: 'Palliative' }, { field: 'comfort', op: 'gte', value: 85 }], 1, 'A resident on a palliative stay with Comfort 85+', 'comfort'),
+    ], [
+      'Legend tells of a nurse who keeps watch through the quietest hours.',
+      'Only a home recognised for its clinical excellence will do.',
+      'Peace and company at the end of life matter most to her.',
+      'Very close: the calmest, safest care she has seen.',
+    ], [{ fact: 'run.eolNotWellSupported', op: 'gt', value: 0, kind: 'fixed', category: 'comfort', label: 'An end-of-life period not well supported' }]),
+    prestige('SEC-STAFF-S2', 'Never Rushed', 'CW10', 'Otis Kind', 2, [
+      residents([{ field: 'starting', op: 'eq', value: true }, { field: 'familiar90Days', op: 'gte', value: 5 * YEAR }], 1, 'A resident here since the opening with Familiar Care 90+ for 5 years', 'familiarity'),
+      { fact: 'run.score.staffWellbeing', op: 'gte', value: 85, kind: 'threshold', category: 'quality', label: 'Staff Wellbeing 85+' },
+    ], [
+      'A gentle carer only joins homes where nobody is ever hurried.',
+      'A resident from the very beginning, cared for by people who truly know them.',
+      'A happy team is a patient team.',
+      'Nearly there: the same kind faces, for a very long time.',
+    ]),
+    prestige('SEC-STAFF-S3', 'The Golden Afternoon', 'LC10', 'Sunny Day', 2, [
+      { fact: 'account.storySecretsFound', op: 'gte', value: 6, kind: 'count', category: 'residents', label: 'Resident-story secrets found' },
+      ever('PRG09', 'Intergenerational Visits run'),
+      ever('PRG03', 'Pet Therapy Visits run'),
+      ever('PRG02', 'Music & Memory run'),
+      ever('PRG01', 'Gardening & Horticulture run'),
+    ], [
+      'Someone is collecting the stories of residents from every home.',
+      'Children, animals, songs and a garden: an afternoon with everything.',
+      'The more residents’ stories you uncover, the closer she comes.',
+      'Very close: just a little more sunshine.',
+    ]),
+    prestige('SEC-STAFF-S4', 'The Perfect Path', 'AH10', 'Kestrel Move', 3, [
+      { fact: 'run.rehabDischarges', op: 'gte', value: 20, kind: 'count', category: 'residents', label: 'Successful rehab / reablement discharges' },
+      { fact: 'run.mobilityOutcome', op: 'gte', value: 95, kind: 'threshold', category: 'residents', label: 'Mobility outcome (average Independence) 95+' },
+    ], [
+      'A master of movement is watching homes where people do things for themselves.',
+      'Everyone who can walk is helped to keep walking.',
+      'So many residents have gone home stronger.',
+      'Nearly there: every path here leads forward.',
+    ], [{ fact: 'run.forcedDependence', op: 'gt', value: 0, kind: 'fixed', category: 'residents', label: 'A resident who could walk was kept on a wheelchair or transfer plan' }]),
+    prestige('SEC-STAFF-S5', 'The Home Feast', 'HN10', 'Sage Spoon', 3, [
+      months([{ field: 'nutrition', op: 'gte', value: 95 }, { field: 'scores.residentWellbeing', op: 'gte', value: 95 }], 12, 'Nutrition 95+ and Resident Wellbeing 95+ together'),
+      residents([{ field: 'favouriteFood', op: 'eq', value: true }], 10, 'Residents on the Favourite-Food Boost', 'nutrition'),
+    ], [
+      'A legendary chef is said to cook only for the happiest tables.',
+      'Favourite foods, for as many residents as love them.',
+      'Wonderful meals and contented residents, side by side for a long time.',
+      'Very close: the feast is nearly ready.',
+    ]),
+  ];
+}
 export const SECRET_IDS = SECRET_RULES.map((r) => r.id);
 
 // Every player-facing word here, for the banned-word check.
