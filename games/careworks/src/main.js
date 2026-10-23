@@ -320,7 +320,9 @@ let spawn = null; // Milestone 9: ?debug=1 "Spawn all 60" while it runs: { real 
 function openRun(n, data) {
   const clock = makeClock(bus);
   if (data.clock) clock.load(data.clock);
-  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, residents: data.residents, staff: data.staff, care: data.care, seed: data.seed, bus, admissions: data.admissions, ledger: data.ledger, layout: data.layout, startCredits: data.economy?.credits ?? ECONOMY_START.credits });
+  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, residents: data.residents, staff: data.staff, care: data.care, seed: data.seed, bus, admissions: data.admissions, ledger: data.ledger, layout: data.layout, startCredits: data.economy?.credits ?? ECONOMY_START.credits, ngPlus: data.ngPlus ?? 0, runId: data.seed, homeName: data.facility.name, secretsStrict: debug.enabled, secretsAccount }); // (Milestone 29: New Game+, the run's id, the secrets' account half; a bad secret rule stops ?debug=1)
+  world.secrets.setAccountStore({ save: (d) => saveSecretsAccount(d) });
+  world.secrets.setAccountFacts({ memoryBook: () => memoryBook.count });
   if (world.fixedUp.length) debug.log(`layout fix-up: ${world.fixedUp.map((m) => m.id).join(', ')} moved`);
   if (debug.enabled && PARAMS.get('paused') === '1') clock.speed = 0; // ?debug=1&paused=1: open exactly as saved (tests)
   data.economy ??= { ...ECONOMY_START };
@@ -343,7 +345,7 @@ function saveRun() {
 // background) plus every band change, each routine step and a pause.
 const autosave = new Autosave({
   bus,
-  triggers: ['clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left', 'care:birthday', 'care:ready', 'care:discharge', 'care:aid', 'care:walk', 'care:walkEnd', 'care:lifeStory', 'home:walkPath', 'care:alert', 'care:alertAction', 'care:alertEnd', 'care:transfer', 'care:back', 'care:roundIssue', 'care:stage', 'care:passed'],
+  triggers: ['secret:found', 'secret:clue', 'clock:day', 'care:band', 'care:step', 'care:task', 'care:bell', 'care:plan', 'clock:speed', 'staff:onShift', 'staff:offShift', 'care:admit', 'care:joined', 'admissions:change', 'ledger:close', 'admissions:action', 'care:review', 'coverage:shift', 'coverage:warning', 'staff:agencyLeft', 'care:leaving', 'care:left', 'home:layout', 'home:stage', 'staff:hired', 'staff:letGo', 'staff:training', 'staff:trained', 'staff:left', 'care:birthday', 'care:ready', 'care:discharge', 'care:aid', 'care:walk', 'care:walkEnd', 'care:lifeStory', 'home:walkPath', 'care:alert', 'care:alertAction', 'care:alertEnd', 'care:transfer', 'care:back', 'care:roundIssue', 'care:stage', 'care:passed'],
   save: () => saveRun(),
   stamp: () => (open && !spawn ? JSON.stringify(open.world.serialize()) : null),
   running: () => !!open && !spawn && router.currentName === 'home' && !open.world.clock.paused,
@@ -360,6 +362,7 @@ async function prepareSaves() {
   if (debug.enabled && PARAMS.get('reset') === '1') for (const n of campaigns.slots.numbers()) await campaigns.slots.remove(n);
   await campaigns.refresh();
   await loadMemoryBook(); // (Milestone 27: the account's Memory Book)
+  await loadSecretsAccount(); // (Milestone 29: secrets found in any run, Prestige Tokens, records)
   if (debug.enabled) {
     const r = validateResidents(new DataValidator(), RESIDENTS, ROUTINE.map((x) => x.id)).report();
     debug.log(r.ok ? `residents: ${RESIDENTS.length} checked` : `resident data: ${r.errors.join('; ')}`);
@@ -1514,7 +1517,7 @@ function qualityTabs(w) {
 function recordSections(w) {
   const results = [...w.endOfLife.results()].reverse().slice(0, 6);
   return [
-    { lines: [{ text: 'Your records across every home. A resident passing is never scored: only their comfort, the plan, the family’s support and their wishes are.', color: COL.textMuted }], columns: 1, buttons: [{ id: 'records:book', label: BOOK.title, sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} · ${BOOK.subtitle.toLowerCase()}`, icon: MEMORIAL.art.book, accent: COL.progress, onTap: () => openMemoryBook() }] },
+    { lines: [{ text: 'Your records across every home. A resident passing is never scored: only their comfort, the plan, the family’s support and their wishes are.', color: COL.textMuted }], columns: 1, buttons: [{ id: 'records:book', label: BOOK.title, sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} · ${BOOK.subtitle.toLowerCase()}`, icon: MEMORIAL.art.book, accent: COL.progress, onTap: () => openMemoryBook() }, { id: 'records:secrets', label: 'Secrets', sub: secretsSub(w), icon: SECRETS_ICON, accent: COL.progress, onTap: () => openSecrets() }] }, // (Milestone 29: Records → Secrets)
     { title: 'End-of-life care in this home', lines: results.length ? results.flatMap((r) => [{ text: `${dateWord(w, r.day)} · ${r.name}: comfort ${r.score}${r.good ? ' · a well-supported time' : ''}`, color: r.good ? COL.good : COL.actionDark }, ...(r.note ? [{ text: `What could have been better: ${r.note}`, color: COL.textMuted }] : [])]) : [{ text: 'Nothing yet.', color: COL.textMuted }] },
   ];
 }
@@ -2367,6 +2370,72 @@ function openMemoryBook() {
 function legacySection() {
   return { title: FIRSTS_TEXT.legacy.title, columns: 1, buttons: [{ id: 'book:legacy', label: FIRSTS_TEXT.legacy.title, sub: FIRSTS_TEXT.legacy.locked, icon: FIRST_ART.legacy, locked: true, accent: COL.progress, onTap: () => {} }] };
 }
+// --- Milestone 29: secrets (Records → Secrets, core/DiscoveryArchive through src/systems/secrets.js) ------------------------
+// Found secrets show their name and reward; a secret with a clue shows "???" and its newest clue line; nothing ever shows the
+// condition. The account half (found in any run, Prestige Tokens, records, palettes) is kept in the account store.
+const SECRETS_ICON = 'care_ui_28';
+let secretsAccount = null; // the account store's secrets record (read at boot; every world starts from it)
+let secretsSaving = Promise.resolve();
+async function loadSecretsAccount() {
+  try {
+    const acc = await campaigns.slots.loadAccount();
+    secretsAccount = acc?.secrets ?? null;
+  } catch (err) {
+    debug.log(`secrets account: ${err?.message ?? err}`);
+  }
+}
+function saveSecretsAccount(data) {
+  secretsAccount = data;
+  if (!campaigns) return secretsSaving;
+  secretsSaving = secretsSaving
+    .then(async () => {
+      const acc = await campaigns.slots.loadAccount();
+      await campaigns.slots.saveAccount({ ...acc, secrets: data });
+    })
+    .catch((err) => debug.log(`secrets not saved: ${err?.message ?? err}`));
+  return secretsSaving;
+}
+function secretsSub(w) {
+  const rows = w.secrets.archive();
+  const found = rows.filter((r) => r.state === 'found' || r.state === 'known').length;
+  const clues = rows.filter((r) => r.state === 'clue').length;
+  return `${found} found${clues ? ` · ${clues} rumour${clues === 1 ? '' : 's'}` : ''} · hidden things that reward thoughtful care`;
+}
+function openSecrets() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: 'Secrets', sections: [] };
+    const rows = w.secrets.archive();
+    const found = rows.filter((r) => r.state === 'found' || r.state === 'known');
+    const clues = rows.filter((r) => r.state === 'clue');
+    const hidden = rows.filter((r) => r.state !== 'clue' && r.state !== 'found' && r.state !== 'known').length;
+    const sections = [
+      { lines: [{ text: 'Secrets reward thoughtful, steady care: friendships, continuity, a balanced home. Never neglect, never harm. A rumour comes as you get close; what it needs stays a mystery.', color: COL.textMuted }] },
+      { title: 'Found', lines: found.length ? found.flatMap((r) => [{ text: `${r.name}${r.state === 'known' ? ' (found in an earlier home)' : r.day != null ? ` · ${dateWord(w, r.day)}` : ''}`, color: COL.good }, { text: `Reward: ${r.reward}`, color: COL.textMuted }]) : [{ text: 'None yet.', color: COL.textMuted }] },
+      { title: 'Rumours', lines: clues.length ? clues.flatMap((r) => [{ text: `??? · clue ${r.stage} of ${r.of}`, color: COL.actionDark }, { text: `“${r.clue}”`, color: COL.textMuted }]) : [{ text: 'No rumours yet.', color: COL.textMuted }] },
+      ...(hidden ? [{ lines: [{ text: `${hidden} more secret${hidden === 1 ? '' : 's'} not yet hinted at.`, color: COL.textMuted }] }] : []),
+    ];
+    if (w.secrets.prestigeTokens) sections.push({ lines: [{ text: `Prestige Tokens from secrets: ${w.secrets.prestigeTokens} (kept for every home)`, glyph: artGlyph(REWARD_ART.prestige) }] });
+    if (debug.enabled) sections.push({ title: 'Debug', columns: 1, buttons: [{ id: 'secrets:debug', label: 'Secrets debug: why not yet?', sub: 'Every rule, each condition met / not met with its value now', accent: COL.progress, onTap: () => openSecretsDebug() }] });
+    return { title: 'Secrets', subtitle: secretsSub(w), art: SECRETS_ICON, accent: accentNow(), sections };
+  });
+}
+// ?debug=1: the why-false inspector — every rule, each condition ✓ / ✗ with its value against what it needs.
+function openSecretsDebug() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: 'Secrets debug', sections: [] };
+    const all = w.secrets.whyFalseAll();
+    const sections = all.map((r) => ({
+      title: `${r.id} · ${r.name}`,
+      titleDot: r.found ? COL.good : r.ok ? COL.good : COL.warn,
+      lines: [{ text: `${r.found ? 'Found' : r.ok ? 'All met: unlocks at its next trigger' : `${r.met} of ${r.total} met`} · clue stage ${r.stage} · once per ${r.scope} · checked on ${r.triggers.join(', ')}`, color: COL.textMuted }, ...r.rows.map((x) => ({ text: `${x.met ? '✓' : '✗'} ${x.kind === 'forbid' ? 'Never: ' : ''}${x.text}`, color: x.met ? COL.good : COL.bad }))],
+      buttons: r.found ? [] : [{ id: `secrets:force:${r.id}`, label: 'Force (debug)', sub: 'As if its conditions held: rewards once', accent: COL.progress, onTap: () => w.secrets.debugForce(r.id) }],
+    }));
+    if (w.secrets.dropped.length) sections.unshift({ title: 'Refused by the forbid-harm guard', lines: w.secrets.dropped.map((t) => ({ text: t, color: COL.bad })) });
+    return { title: 'Secrets debug', subtitle: `${all.length} rules · ${all.filter((r) => r.found).length} found`, art: SECRETS_ICON, accent: accentNow(), sections };
+  });
+}
 // A face for a name on a page (pages keep names; the art is found from the home's people or the data).
 const staffArtByName = (n) => STAFF.find((x) => x.name === n)?.art ?? FOUNDERS.find((x) => x.name === n)?.art ?? null;
 const residentArtByName = (n) => RESIDENTS.find((x) => x.name === n)?.art ?? null;
@@ -2876,7 +2945,7 @@ function openLedger() {
       { title: 'Loans and investors', lines: debtLines },
       // (Milestone 7: shifts run unsafe; Milestone 16: the care-outcome counters)
       { title: 'Care outcomes', lines: [{ text: `Successful discharges: ${w.rewards.positiveOutcomes}${w.rewards.discharges.length ? ` (last: ${first(w.rewards.discharges.at(-1).name)})` : ''}`, color: COL.actionDark }, `Reputation: ${w.rewards.reputation}`, { text: `Unsafe shifts so far: ${w.staffState.coverage.unsafe} (run under minimum with no agency cover)`, color: w.staffState.coverage.unsafe ? COL.bad : COL.textMuted }] },
-      { title: 'Other currencies', lines: [{ text: `Research Points: ${w.research.rp.toLocaleString('en-GB')} (Develop → Research)`, glyph: artGlyph(REWARD_ART.research) }, { text: `Care Tokens: ${w.economy.tokens} (earned for firsts and good months; nothing to spend them on yet)`, glyph: artGlyph(TOP_ICONS.careTokens) }, { text: `Prestige Tokens: ${w.economy.prestige} (account; New Game+ brings them later)`, ...((open.data.ngPlus ?? 0) > 0 || w.economy.prestige > 0 ? { glyph: artGlyph(REWARD_ART.prestige) } : {}) }] }, // (Milestone 28b: the tokens; the Prestige Token on New Game+ only)
+      { title: 'Other currencies', lines: [{ text: `Research Points: ${w.research.rp.toLocaleString('en-GB')} (Develop → Research)`, glyph: artGlyph(REWARD_ART.research) }, { text: `Care Tokens: ${w.economy.tokens} (earned for firsts and good months; nothing to spend them on yet)`, glyph: artGlyph(TOP_ICONS.careTokens) }, { text: `Prestige Tokens: ${w.economy.prestige + w.secrets.prestigeTokens} (account: from secrets; New Game+ brings more later)`, ...((open.data.ngPlus ?? 0) > 0 || w.economy.prestige + w.secrets.prestigeTokens > 0 ? { glyph: artGlyph(REWARD_ART.prestige) } : {}) }] }, // (Milestone 28b: the tokens; the Prestige Token on New Game+ only)
       partnerLedger(w, w.monthRange()), // (Milestone 23)
       programLedger(w, w.monthRange()),
       researchLedger(w, w.monthRange()),
@@ -2901,11 +2970,11 @@ function openTopSheet(id) {
 function openCredits() {
   sheet.open(() => ({
     title: 'CAREWORKS',
-    subtitle: 'A Banx Gamex game · the Canvas Management Series',
+    subtitle: 'A Banx Games game · the Canvas Management Series',
     art: BRAND.endMark,
     accent: COL.progress,
     sections: [
-      { lines: [{ text: 'Made by Banx Gamex. Art by Aaron.', color: COL.actionDark }, { text: 'One of the Works games: BOTWORKS, RACEWORKS, DEVWORKS, GOALWORKS and CAREWORKS share one world and one engine.', color: COL.textMuted }, { text: 'Thank you for playing, and for looking after everyone here.', color: COL.good }] },
+      { lines: [{ text: 'Made by Banx Games. Art by Aaron.', color: COL.actionDark }, { text: 'One of the Works games: BOTWORKS, RACEWORKS, DEVWORKS, GOALWORKS and CAREWORKS share one world and one engine.', color: COL.textMuted }, { text: 'Thank you for playing, and for looking after everyone here.', color: COL.good }] },
       { columns: 1, buttons: [{ id: 'credits:back', label: '‹ Back', accent: COL.progress, onTap: () => openTopSheet('help') }] },
     ],
   }));
@@ -3696,6 +3765,7 @@ const MENU_OPEN = {
   quality: () => openQuality(),
   complaints: () => openComplaints(), // (Milestone 26: Quality is the hub now)
   memoryBook: () => openMemoryBook(), // (Milestone 27: account-wide)
+  secrets: () => openSecrets(), // (Milestone 29: Records → Secrets)
   family: () => placedOf('F09') && openHomeSheet(placedOf('F09').id),
   business: () => openBusiness(),
   partners: () => openPartners(),
@@ -4037,7 +4107,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

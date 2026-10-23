@@ -88,6 +88,7 @@ export const ITEM_SOURCES = {
   wellWisher: { text: 'A well-wisher from the community', monthlyChance: 0.12 },
   grant: { text: 'A grant goal met', chance: 1 },
   achievement: { text: 'An achievement', chance: 0 }, // hook only (achievements come in Milestone 31)
+  secret: { text: 'A secret found', chance: 1, weights: { common: 10, rare: 45, elite: 35, legendary: 10 } }, // (Milestone 29: a secret's item reward)
 };
 // Never: the test fails if any source says it is bought or paid for.
 export const NEVER_SOURCES = ['shop', 'store purchase', 'Care Tokens', 'real money', 'purchase', 'buy'];

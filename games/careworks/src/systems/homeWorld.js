@@ -127,7 +127,7 @@ import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK } from '../../data/balance.
 import { AGENCY } from '../../data/shifts.js';
 import { ensureResidentState, newResidentState, newStay, stayDaysLeft, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog, routineFor } from './residentNeeds.js';
 import { bandOfHour, ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, addTask, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar, topFamiliar, noteLeft, noteBack, familiarityOf, fadeFamiliarity } from './careTasks.js';
-import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkPct } from './staffTeam.js';
+import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkPct, openingTeam } from './staffTeam.js';
 import { createRoster } from './roster.js';
 import { createCoverage } from './coverage.js';
 import { eligibilityOf, optionPrefOf, staleReasons, markReviewed, noteDay, admissionPlan } from './carePlanRules.js';
@@ -178,6 +178,7 @@ import { createIncidents, ensureIncidents, fallChance } from './incidents.js';
 import { createQuality, ensureQualityState } from './quality.js';
 import { READINGS } from '../../data/quality.js';
 import { createEvents, ensureEventsState } from './events.js';
+import { createSecrets, ensureSecretsState } from './secrets.js'; // (Milestone 29)
 import { stageById, EOL_STAGES, PACE, GOOD_CARE, COMFORT, SIGNAL, MEMORIAL, BOOK, PLAN as EOL_PLAN, WISHES } from '../../data/endOfLife.js';
 import { ensureEolState, ensureResidentEol, eligible as eolEligible, weeklyChance, stageLength, nextStage, newAcc, comfortOf, signalLift, familyResult, betterNote, wishesOf, timeAt } from './endOfLife.js';
 
@@ -214,16 +215,18 @@ const ARTHUR = RESIDENT.id;
 // A resident's pronoun for the card lines (Milestone 9: story data on each row, data/lifeStories.js).
 export const theirOf = (id) => (residentById(id)?.pronoun === 'she' ? 'her' : 'his');
 
-export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, residents: savedResidents = null, staff = null, care: careSaved = null, seed = 'careworks', bus = null, admissions: admissionsSaved = null, ledger: ledgerSaved = null, layout: layoutSaved = null, startCredits = ECONOMY_START.credits, shortStaffing = true } = {}) {
+export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, residents: savedResidents = null, staff = null, care: careSaved = null, seed = 'careworks', bus = null, admissions: admissionsSaved = null, ledger: ledgerSaved = null, layout: layoutSaved = null, startCredits = ECONOMY_START.credits, shortStaffing = true, ngPlus = 0, runId = null, homeName = null, secretsStrict = false, secretsAccount = null, secretRules = null } = {}) {
   clock ??= makeClock();
   // Milestone 28: every moment the home raises also goes to the event director (src/systems/events.js), which decides how
   // and when it is shown. Moments raised while the world is being made (a load) are never raised again.
   const appBus = bus;
   let director = null;
   let directorLive = false;
+  let secrets = null; // (Milestone 29: the secrets read every moment too, once the world is made)
   bus = {
     emit(name, payload) {
       if (directorLive) director?.raise(name, payload);
+      if (directorLive) secrets?.onEmit(name, payload);
       appBus?.emit(name, payload);
     },
     on: (name, fn) => appBus?.on(name, fn),
@@ -3917,8 +3920,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       partners.monthClosed(day);
       if (monthRp(`Month ${d.month}, Year ${d.year}`) > 0) economy.award('goodMonth'); // (Milestone 21; Milestone 22: a Care Token)
       economy.monthClosed({ month: `Month ${d.month}, Year ${d.year}` }); // (Milestone 22: loan, investor, history, offers)
+      secrets?.monthClosed(); // (Milestone 29: the month's record for the secrets, then the month's secret rules)
       for (const p of residents) delete p.state.moodMonth; // (a new month's Mood)
     }
+    secrets?.daily(day); // (Milestone 29: each midnight, after the quality scores and any month close: the day's secret rules)
   }
 
   // --- rostering and Safe Coverage (Milestone 7) -----------------------------------------------------------------
@@ -3985,6 +3990,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return director; // (Milestone 28: the event director)
     },
     items, // (Milestone 25c: care equipment)
+    get secrets() {
+      return secrets; // (Milestone 29: the secret engine, its clue stages, rewards and why-false inspector)
+    },
     get quality() {
       return quality; // (Milestone 26: headline scores, Rank, accreditations, inspections, peers)
     },
@@ -4693,7 +4701,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       r.reputation += R.reputation;
       r.research += R.research;
       r.positiveOutcomes += 1;
-      r.discharges.push({ id: p.id, name: p.name, day: clock.totalDays, auto, days: clock.totalDays - (p.state.admittedDay ?? p.state.rehab.startDay) });
+      r.discharges.push({ id: p.id, name: p.name, day: clock.totalDays, auto, days: clock.totalDays - (p.state.admittedDay ?? p.state.rehab.startDay), independence: Math.round(p.state.outcomes?.independence ?? 0) }); // (Milestone 29: Independence at discharge, for the secrets)
       if (r.discharges.length > 40) r.discharges.shift();
       // (Milestone 19: the family's thank-you is a compliment carrying M16's Family Trust reward)
       compliment(p, 'discharge', { amount: R.familyTrust });
@@ -4938,6 +4946,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       research.serialize(); // (Milestone 21: the tree, its slots and progress, into care.research)
       partners.serialize(); // (Milestone 23: deals, tiers, history, the grant board and active grants, into care.partners)
       quality.serialize(); // (Milestone 26: the rolling scores, rank, accreditations, inspections, peers, into care.quality)
+      secrets?.serialize(); // (Milestone 29: the secrets' run records, clue stages, found and fired rewards, into care.secrets)
       staffState.pos = crew.positions();
       staffState.modes = crew.modes();
       staffState.bandDone = Object.fromEntries(crew.people.map((q) => [q.id, q.bandDone ?? 0]));
@@ -5223,6 +5232,35 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   };
   if (fixedUp.length) relayout();
   if (qualityFresh) startQuality(); // (Milestone 26)
+  // Milestone 29: the secrets (src/systems/secrets.js on core/SecretEngine): they only read the home (secretEnv) and give a
+  // found secret's reward through a system that already exists. An older save: nothing found, its records from its history.
+  care.secrets = ensureSecretsState(care.secrets);
+  const secretEnv = {
+    care,
+    staffState,
+    quality,
+    economy,
+    items,
+    staffing,
+    today: () => clock.totalDays,
+    year: () => clock.year,
+    daysPerMonth: clock.daysPerMonth,
+    residentsHere: () => seated().filter((p) => joined(p)),
+    team: () => team(),
+    startingIds: () => openingTeam(staffState.founder.id),
+    familiarityOf: (residentId, staffId) => familiarityOf(care, residentId, staffId),
+    isMemorySupport: (residentId) => !!byResident(residentId) && isMemorySupport(byResident(residentId).def),
+    familyTrust: () => homeTrust(care.families, seated().map((p) => p.id)),
+    environment: () => environmentNow().score,
+    capacity: () => seated().length + placesLeft(),
+    stage: () => layout.stage,
+    birthdaysHeld: () => acts.state.birthdays?.held ?? {},
+    birthdayFirst: () => acts.state.birthdays?.first ?? null,
+    ngPlus: () => ngPlus ?? 0,
+    homeName: () => homeName ?? null,
+    addRecognition: () => (staffState.founder.history.recognitions = (staffState.founder.history.recognitions ?? 0) + 1),
+  };
+  secrets = createSecrets({ env: secretEnv, state: care.secrets, rules: secretRules ?? undefined, bus, strict: secretsStrict, runId: runId ?? seed, account: secretsAccount });
   directorLive = true; // (Milestone 28: from here on, every moment goes through the director)
   return world;
 }
