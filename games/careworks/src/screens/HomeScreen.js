@@ -45,6 +45,18 @@ import { VISITOR_LOOK } from '../../data/family.js';
 import { findPath } from '../../../../core/Pathing.js';
 import { MEMORIAL } from '../../data/endOfLife.js';
 const MEMORIAL_GLOW = MEMORIAL.art.glow; // (Milestone 27: a room held after a passing)
+// Milestone 30b: a soft gold glow behind a Works God (code-drawn: a radial gradient, so no art is needed)
+function drawGodGlow(ctx, x, y, rad) {
+  const g = ctx.createRadialGradient(x, y, rad * 0.15, x, y, rad);
+  g.addColorStop(0, 'rgba(255, 214, 92, 0.55)');
+  g.addColorStop(1, 'rgba(255, 214, 92, 0)');
+  ctx.save();
+  ctx.fillStyle = g;
+  ctx.beginPath();
+  ctx.arc(x, y, rad, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.restore();
+}
 
 const C = THEME.color;
 const S = THEME.size;
@@ -893,6 +905,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     const aw = aid ? ah * assets.aspect(aid) : 0;
     const ax = f.x + (m.flip ? 1 : -1) * r.w * 0.5 - aw / 2;
     if (aid) assets.draw(ctx, aid, ax, f.y - ah, aw, ah);
+    if (p.kind === 'staff' && p.model?.tier === 'divine') drawGodGlow(ctx, f.x, f.y - r.h * 0.5, r.h * 0.62); // (Milestone 30b: a Works God's small gold glow)
     drawCharacter(ctx, assets, p.art, f.x, f.y, r.w, r.h, pose);
     if (cart) assets.draw(ctx, cart, cx, f.y - ch, cw, ch);
   }

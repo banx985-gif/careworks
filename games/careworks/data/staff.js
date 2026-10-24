@@ -115,7 +115,50 @@ export const STAFF = [
   row('HN09', 'Mira Harvest', 'HN', 'legendary', 21, '336/343/350/326/418', 4200, ['kitchenMentor', 'goldenTable'], RULES.secret('SEC-STAFF-L5'), 'morning'),
   row('HN10', 'Sage Spoon', 'HN', 'secret', 24, '449/425/432/439/531', 5900, ['kitchenMentor', 'nutritionLead', 'homeFeast'], RULES.secret('SEC-STAFF-S5'), 'afternoon'),
 ];
-export const staffById = (id) => STAFF.find((s) => s.id === id) ?? null;
+// --- Milestone 30b: the Works Gods (SERIES_WORKS_GODS.md, docs/M30b_WORKS_GODS.md) -----------------------------------------
+// Five Divine staff above Secret / Prestige. Never on a board, never bought: each arrives through their own secret
+// (data/secrets.js SEC-GOD-1…5) as a special card on the Recruit board. Their ids follow the role (the game reads a staff
+// id's role from its first two letters); `god` names them; their art is assets/images/staff/staff_god_<god>.png. Three
+// ordinary traits from their role, then their blessing (a live signature, BLESSINGS below). Kept out of STAFF (the §12 50).
+const god = (id, god, name, role, s, traits, secret, shiftPref) => ({ ...row(id, name, role, 'divine', 1, s, BLESSING_SALARY, traits, RULES.secret(secret), shiftPref), god, art: `staff_god_${god}` });
+const BLESSING_SALARY = 6500; // (a little above the Secret staff's 5,900)
+export const GODS = [
+  god('AH11', 'bolt', 'Bolt, God of Tinkering', 'AH', '452/446/568/440/458', ['mobilityMentor', 'reablementLead', 'safeTransfers', 'blessingTinkering'], 'SEC-GOD-1', 'morning'),
+  god('LC11', 'jinx', 'Jinx, Goddess of Luck', 'LC', '441/455/448/566/450', ['eventLeader', 'memoryMaker', 'communityLink', 'blessingLuck'], 'SEC-GOD-2', 'afternoon'),
+  god('RN11', 'zip', 'Zip, God of Speed', 'RN', '570/458/452/444/446', ['clinicalMentor', 'complexCareLead', 'medicationFocus', 'blessingSpeed'], 'SEC-GOD-3', 'morning'),
+  god('HN11', 'kaching', 'Kaching, God of Fortune', 'HN', '446/452/440/458/566', ['kitchenMentor', 'nutritionLead', 'diningHost', 'blessingFortune'], 'SEC-GOD-4', 'afternoon'),
+  god('LC12', 'havoc', 'Havoc, God of Chaos', 'LC', '448/440/456/572/444', ['eventLeader', 'creativeClub', 'musicMaker', 'blessingChaos'], 'SEC-GOD-5', 'afternoon'),
+];
+export const GOD_IDS = GODS.map((g) => g.id);
+export const godOf = (id) => GODS.find((g) => g.id === id || g.god === id) ?? null;
+// The blessings' numbers (Cowork's starting picks, tuned in M30b: docs/DECISIONS.md). src/systems/blessings.js reads them.
+//   bolt     while on the team: facility builds, level-ups and stage builds cost buildCostPct% less and level-ups / stages
+//            take buildDaysPct% fewer days; Environment & Compliance +environment
+//   jinx     while on the team: the good surprises (a family's thank-you gift, a well-wisher, a family birthday party
+//            asked for) come surprisePct% more often; a program session while she is on shift: luckyChance of a lucky
+//            day, Mood +luckyMood for everyone there
+//   zip      his tasks take taskTimePct% less time (the same care, the same checks); while he is on shift, call bells
+//            are answered first (bellFirst on the task AI's score)
+//   kaching  while on the team: partner support and grant goals pay partnerPct% more; accommodation fees feePct% more.
+//            Never touches care spending (wages, supplies, equipment, agency)
+//   havoc    each program session, community event or birthday tea while he is on shift: joyChance of a big joy boost
+//            (Mood +joyMood, Social Connection +joyConnection for everyone there), else a harmless mishap (MISHAPS: a
+//            small clean-up cost in Credits, or a funny line) — never anything to do with care, safety or health
+export const BLESSINGS = {
+  bolt: { buildCostPct: 15, buildDaysPct: 50, environment: 5 },
+  jinx: { surprisePct: 50, luckyChance: 0.15, luckyMood: 6 },
+  zip: { taskTimePct: 20, bellFirst: 1000 },
+  kaching: { partnerPct: 15, feePct: 10 },
+  havoc: { joyChance: 0.7, joyMood: 12, joyConnection: 8 },
+};
+export const MISHAPS = [
+  { id: 'cake', text: 'The cake fell over', cost: 120 },
+  { id: 'streamers', text: 'Streamers everywhere', cost: 80 },
+  { id: 'confetti', text: 'Confetti in the teapot', cost: 60 },
+  { id: 'late', text: 'It started a little late: someone hid the music', cost: 0 },
+];
+export const ALL_STAFF = [...STAFF, ...GODS];
+export const staffById = (id) => ALL_STAFF.find((s) => s.id === id) ?? null;
 // The trait the §12 table names for this person (a Legendary / Secret person's signature, else their first).
 export const namedTrait = (def) => def.traits.find((t) => TRAITS[t]?.signature) ?? def.traits[0];
 
@@ -150,6 +193,9 @@ export const namedTrait = (def) => def.traits.find((t) => TRAITS[t]?.signature) 
 const live = (name, text, ...fx) => ({ name, text, live: fx });
 const later = (name, text, pendingSystem, effects = {}) => ({ name, text, pendingSystem, effects });
 const sig = (name, text, pendingSystem, hook, params) => ({ name, text, pendingSystem, signature: { hook, params } });
+// (Milestone 30b) a Works God's blessing: a signature that is live from the day they join (no hook in core/StaffSystem;
+// src/systems/blessings.js reads the god's BLESSINGS numbers where each one lands)
+const blessing = (godKey, name, text) => ({ name, text, live: [], blessing: godKey, signature: { hook: `blessing:${godKey}`, params: {} } });
 const task = (types, pct) => ({ kind: 'task', types, pct });
 const match = (types) => ({ kind: 'match', types });
 
@@ -211,12 +257,18 @@ export const TRAITS = {
   goldenAfternoon: sig('Golden Afternoon', 'Afternoons become the best part of the day', 'M14', 'goldenAfternoon', { afternoonMoodPct: 20 }),
   perfectPath: sig('Perfect Path', 'Every resident walks a little further', 'M16', 'perfectPath', { independencePct: 20 }),
   homeFeast: sig('Home Feast', 'A monthly feast lifts the whole home', 'M15', 'homeFeast', { feastMood: 10 }),
+  // (Milestone 30b) the Works Gods' blessings: live signatures (src/systems/blessings.js), their numbers in BLESSINGS
+  blessingTinkering: blessing('bolt', 'Blessing of Tinkering', 'Builds and upgrades cost 15% less and level-ups finish twice as fast; Environment & Compliance +5 while he is on the team'),
+  blessingLuck: blessing('jinx', 'Blessing of Luck', 'Good surprises (thank-you gifts, well-wishers, family birthday parties) come 50% more often; a program session on her shift may become a lucky day: Mood +6 for everyone there'),
+  blessingSpeed: blessing('zip', 'Blessing of Speed', 'His tasks take 20% less time with the same care and checks; call bells are answered first while he is on shift'),
+  blessingFortune: blessing('kaching', 'Blessing of Fortune', 'Partner support and grants pay 15% more and accommodation fees bring 10% more; care spending is never touched'),
+  blessingChaos: blessing('havoc', 'Blessing of Chaos', 'Every program, community event or birthday tea on his shift: usually a big joy boost for everyone there, sometimes a harmless funny mishap (a small clean-up cost). Never a care, safety or health setback'),
 };
 export const TRAIT_KINDS = ['task', 'match', 'energy', 'morale', 'familiar', 'shift', 'diet', 'dining', 'rehab', 'memory', 'clinical', 'family', 'activity'];
 
 // Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator; taskTypes = data/tasks.js
 // TASK_TYPES ids (optional: the trait task checks).
-export function validateStaff(v, list = STAFF, { taskTypes = null } = {}) {
+export function validateStaff(v, list = ALL_STAFF, { taskTypes = null } = {}) {
   v.staffRoster('staff', list, { roles: ROLES, tiers: TIERS, traits: TRAITS, statKeys: STAT_IDS });
   for (const s of list) {
     const who = `staff ${s.id}`;
@@ -224,12 +276,13 @@ export function validateStaff(v, list = STAFF, { taskTypes = null } = {}) {
     v.check(Number.isInteger(s.level) && s.level >= 1, `${who}: level`);
     v.check(Number.isInteger(s.salary) && s.salary > 0, `${who}: salary`);
     v.check(RULE_TYPES.includes(s.eligibility) && s.rule?.type === s.eligibility && !!s.rule.text, `${who}: eligibility "${s.eligibility}"`);
-    const tierRules = { standard: ['start', 'candidate'], rare: ['rank', 'milestone'], elite: ['facility', 'excellence'], legendary: ['secret'], secret: ['secret'] };
+    const tierRules = { standard: ['start', 'candidate'], rare: ['rank', 'milestone'], elite: ['facility', 'excellence'], legendary: ['secret'], secret: ['secret'], divine: ['secret'] };
     v.check(tierRules[s.tier]?.includes(s.eligibility), `${who}: tier ${s.tier} with eligibility ${s.eligibility}`);
     if (s.rule?.rank) v.check(['E', 'D', 'C', 'B', 'A', 'S'].includes(s.rule.rank), `${who}: rule rank ${s.rule.rank}`);
     if (s.eligibility === 'excellence') v.check(!!QUALITY_SCORES[s.rule.score] && s.rule.min > 0 && s.rule.min <= 100, `${who}: excellence score`);
-    if (s.eligibility === 'secret') v.check(/^SEC-STAFF-[LS][1-5]$/.test(s.rule.secret) && s.rule.secret[10] === (s.tier === 'legendary' ? 'L' : 'S'), `${who}: secret id ${s.rule.secret}`);
-    v.check(s.art === `staff_${s.id.toLowerCase()}`, `${who}: art key`);
+    if (s.eligibility === 'secret' && s.tier === 'divine') v.check(/^SEC-GOD-[1-5]$/.test(s.rule.secret) && !!BLESSINGS[s.god] && s.traits.some((t) => TRAITS[t]?.blessing === s.god), `${who}: a Works God needs SEC-GOD-n and their own blessing`);
+    else if (s.eligibility === 'secret') v.check(/^SEC-STAFF-[LS][1-5]$/.test(s.rule.secret) && s.rule.secret[10] === (s.tier === 'legendary' ? 'L' : 'S'), `${who}: secret id ${s.rule.secret}`);
+    v.check(s.art === artKeyOf(s), `${who}: art key`);
     v.check(['morning', 'afternoon', 'night'].includes(s.shiftPref), `${who}: shift preference "${s.shiftPref}"`);
     // the role's primary stat is their best
     const best = STAT_IDS.reduce((a, k) => (s.stats[k] > s.stats[a] ? k : a), STAT_IDS[0]);
@@ -240,7 +293,8 @@ export function validateStaff(v, list = STAFF, { taskTypes = null } = {}) {
     v.check(!!t.name && !!t.text, `${who}: name and line`);
     v.check(!!t.live !== !!t.pendingSystem, `${who}: live effects or pendingSystem (one of them)`);
     if (t.pendingSystem) v.check(/^M\d+$/.test(t.pendingSystem) && Number(t.pendingSystem.slice(1)) > 12, `${who}: pendingSystem "${t.pendingSystem}"`);
-    if (t.signature) v.check(!!t.pendingSystem && !!t.signature.hook, `${who}: a signature is stored and pending`);
+    if (t.signature && !t.blessing) v.check(!!t.pendingSystem && !!t.signature.hook, `${who}: a signature is stored and pending`);
+    if (t.blessing) v.check(!!BLESSINGS[t.blessing] && !!t.signature?.hook, `${who}: a blessing names its god`); // (Milestone 30b: live)
     for (const fx of t.live ?? []) {
       v.check(TRAIT_KINDS.includes(fx.kind), `${who}: effect kind "${fx.kind}"`);
       if (fx.types && taskTypes) for (const ty of fx.types) v.check(taskTypes.includes(ty), `${who}: task type "${ty}"`);
@@ -250,21 +304,23 @@ export function validateStaff(v, list = STAFF, { taskTypes = null } = {}) {
     }
   }
   // every trait is someone's (§12 names them all), and every §12 trait column is one of them
-  const used = new Set(list.flatMap((s) => s.traits));
+  const used = new Set([...list, ...GODS].flatMap((s) => s.traits));
   for (const id of Object.keys(TRAITS)) v.check(used.has(id), `trait ${id}: nobody has it`);
   return v;
 }
+// A person's portrait key: staff_<id>, or (Milestone 30b) staff_god_<god> for a Works God.
+const artKeyOf = (s) => (s.tier === 'divine' ? `staff_god_${s.god}` : `staff_${s.id.toLowerCase()}`);
 
 // Art mapping (Milestone 12): every staff id → its portrait file, every role → its badge file, and no two staff share
 // a portrait. The M7 agency workers reuse the Start candidates' portraits (staff_rn02 / staff_cw02) on purpose and are
 // tagged AGENCY, so they are left out of the "no two share" check. exists(relPath) → boolean (a file check in Node, an
 // AssetManager lookup in the browser). Returns { problems: [text], checked: { portraits, badges, agency } }.
-export function checkStaffArt(exists, { list = STAFF, agency = {} } = {}) {
+export function checkStaffArt(exists, { list = ALL_STAFF, agency = {} } = {}) {
   const problems = [];
   const path = (key) => `assets/images/staff/${key}.png`;
   const seen = new Map();
   for (const s of list) {
-    if (s.art !== `staff_${s.id.toLowerCase()}`) problems.push(`${s.id}: art key ${s.art}`);
+    if (s.art !== artKeyOf(s)) problems.push(`${s.id}: art key ${s.art}`);
     if (!exists(path(s.art))) problems.push(`${s.id}: missing ${path(s.art)}`);
     if (seen.has(s.art)) problems.push(`${s.id} shares ${s.art} with ${seen.get(s.art)}`);
     seen.set(s.art, s.id);

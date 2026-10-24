@@ -16,7 +16,7 @@ export const CHANNELS = [
 ];
 export const channelById = (id) => CHANNELS.find((c) => c.id === id) ?? null;
 // Tiers that never appear on a board (bible §12, §13).
-export const NEVER_TIERS = ['legendary', 'secret'];
+export const NEVER_TIERS = ['legendary', 'secret', 'divine']; // (Milestone 30b: the Works Gods too)
 // When a tier has nobody left to offer, the next one down (Elite → Rare → Standard) fills the card.
 export const TIER_FALLBACK = { elite: 'rare', rare: 'standard', standard: null };
 

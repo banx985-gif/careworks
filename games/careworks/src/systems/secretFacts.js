@@ -75,6 +75,9 @@ export function ageNow(p, day, birthdayOf) {
 //                     Safety since, and the day they had gained INDEPENDENCE_GAIN with Safety never below SAFETY_FLOOR
 //   log.emergencies   each incident handled: { kind, prep (Preparedness), band, calm: nobody fell or passed during it }
 //   log.legendaryHired  a Legendary / Prestige person joined the team (ever, this run)
+// (Milestone 30b) a call bell answered within this many minutes; the windows the gods' forbids look back over
+const BELL_FAST = 10;
+const SIX_MONTHS = 168;
 const INDEPENDENCE_GAIN = 15;
 const SAFETY_FLOOR = 80;
 const PEER_RIVAL = 'R07'; // Crown Haven (data/peers.js)
@@ -104,7 +107,7 @@ function counters(env) {
   };
 }
 export function newLog(env) {
-  return { v: 1, months: [], joined: {}, starting: [], lastLeft: null, birthdays: 0, discharges: 0, timeline: [], opened: env.today(), at: counters(env), monthStart: env.today(), rebuilt: false, programBest: {}, familiar90: {}, forcedDependence: 0, gardener: {}, trust95: {}, quietSessions: {}, sessionsSeen: {}, community: { pending: [], good: 0 }, dayAt: null, night: { shifts: 0, safe: 0 }, centenarians: [], majorBirthdays: [], pilotDone: false, shiftsAll: { shifts: 0, safe: 0, agency: 0 }, hydration: null, indStart: {}, safetyMin: {}, indImproved: {}, emergencies: [], legendaryHired: false };
+  return { v: 1, months: [], joined: {}, starting: [], lastLeft: null, birthdays: 0, discharges: 0, timeline: [], opened: env.today(), at: counters(env), monthStart: env.today(), rebuilt: false, programBest: {}, familiar90: {}, forcedDependence: 0, gardener: {}, trust95: {}, quietSessions: {}, sessionsSeen: {}, community: { pending: [], good: 0 }, dayAt: null, night: { shifts: 0, safe: 0 }, centenarians: [], majorBirthdays: [], pilotDone: false, shiftsAll: { shifts: 0, safe: 0, agency: 0 }, hydration: null, indStart: {}, safetyMin: {}, indImproved: {}, emergencies: [], legendaryHired: false, goodSurprises: 0, bells: { n: 0, fast: 0 } };
 }
 
 // Each midnight, before the day's rules (Milestone 30): the records a day can't rebuild later.
@@ -182,6 +185,14 @@ export function noteMoment(env, log, name, payload = {}) {
     if ((payload.agency ?? 0) > 0) a.agency++;
   }
   if (name === 'staff:hired' && ['legendary', 'secret'].includes(staffById(payload.id)?.tier)) log.legendaryHired = true;
+  // (Milestone 30b) the good surprises (a family's thank-you gift, a well-wisher, a family birthday party) and this month's
+  // call bells answered (how many within ten minutes)
+  if (name === 'care:surprise') log.goodSurprises = (log.goodSurprises ?? 0) + 1;
+  if (name === 'care:bell' && payload.status === 'answered') {
+    const b = (log.bells ??= { n: 0, fast: 0 });
+    b.n++;
+    if ((payload.minutes ?? 0) <= BELL_FAST) b.fast++;
+  }
   if (name === 'care:incidentEnd') {
     const rec = (env.care.incidents?.history ?? []).at(-1);
     if (rec) {
@@ -285,6 +296,8 @@ export function monthRecord(env, log) {
     falls: Math.max(0, now.falls - was.falls),
     passings: Math.max(0, now.passings - was.passings),
     // (Milestone 30 Batch B) this month's Night shifts and the share at Safe Coverage
+    // (Milestone 30b) this month's call bells answered within ten minutes (no bell rang: 100)
+    bells10Pct: log.bells?.n ? r1((100 * log.bells.fast) / log.bells.n) : 100,
     nightShifts: log.night?.shifts ?? 0,
     nightSafePct: log.night?.shifts ? r1((100 * log.night.safe) / log.night.shifts) : 0,
     // (Milestone 30 Batch C) every shift this month (from each shift's moment), Familiar Care and Choice at the close
@@ -297,6 +310,7 @@ export function monthRecord(env, log) {
       return v.length ? r1(avg(v)) : null;
     })(),
   };
+  log.bells = { n: 0, fast: 0 }; // (Milestone 30b)
   log.night = { shifts: 0, safe: 0 };
   log.shiftsAll = { shifts: 0, safe: 0, agency: 0 };
   log.months.push(rec);
@@ -440,7 +454,7 @@ export function createSecretFacts({ env, log, engine, account }) {
     .define('run.awardCount', () => env.quality.wonIds().length)
     .define('run.partners', partnersList)
     .define('run.partnerTopTier', () => Math.max(0, ...partnersList().map((p) => p.tier)))
-    .define('run.secretsFound', () => engine().rules.filter((r) => engine().unlockedInRun(r.id)).length)
+    .define('run.secretsFound', () => engine().rules.filter((r) => r.category !== 'divine' && engine().unlockedInRun(r.id)).length) // (Milestone 30b: the gods' own secrets don't count)
     // harm (§35): only ever in forbids
     .define('run.essentialMissedMonth', () => month().essentialMissed)
     .define('run.essentialMissed', () => env.care.counts?.essentialMissed ?? 0)
@@ -482,13 +496,21 @@ export function createSecretFacts({ env, log, engine, account }) {
       return SCORE_IDS.filter((id, i) => s[id] > peer.scores[i]).length;
     })
     .define('run.legacyMentored', () => 0) // (no New Game+ Legacy Staff or promotion to Elite yet: never true)
+    // (Milestone 30b: the Works Gods' secrets)
+    .define('run.facilitiesLevel3', () => env.facilitiesAtLevel?.(3) ?? 0)
+    .define('run.goodSurprises', () => L().goodSurprises ?? 0)
+    .define('run.falls6m', () => (env.care.incidents?.falls ?? []).filter((x) => x.day > env.today() - SIX_MONTHS).length)
+    .define('run.essentialMissed12m', () => L().months.slice(-11).reduce((t, m) => t + (m.essentialMissed ?? 0), 0) + month().essentialMissed)
+    .define('run.unsafeShifts12m', () => L().months.slice(-11).reduce((t, m) => t + (m.unsafeShifts ?? 0), 0) + month().unsafe)
+    .define('account.godsHired', () => account().godsHired?.() ?? [])
+    .define('account.fourGodsHired', () => ['bolt', 'jinx', 'zip', 'kaching'].filter((g) => (account().godsHired?.() ?? []).includes(g)).length)
     .define('account.legacyStaffLevels', () => 0) // (no New Game+ Legacy Staff carry-over yet — staffTeam legacyCarryover: never true)
     .define('run.eolNotWellSupported', () => eolResults().filter((r) => !r.good).length)
     .define('run.forcedDependence', () => L().forcedDependence ?? 0)
     // account
     .define('account.ngPlus', () => env.ngPlus())
     .define('account.memoryBook', () => account().memoryBook())
-    .define('account.secretsFound', () => engine().rules.filter((r) => engine().everUnlocked(r.id)).length)
+    .define('account.secretsFound', () => engine().rules.filter((r) => r.category !== 'divine' && engine().everUnlocked(r.id)).length) // (Milestone 30b: the gods' own secrets don't count)
     .define('account.secretsFoundIds', () => engine().rules.filter((r) => engine().everUnlocked(r.id)).map((r) => r.id))
     .define('account.prestigeTokens', () => account().prestigeTokens())
     .define('account.storySecretsFound', () => engine().rules.filter((r) => r.category === 'residentStory' && engine().everUnlocked(r.id)).length)

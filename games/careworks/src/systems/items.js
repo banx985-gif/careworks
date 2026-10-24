@@ -83,7 +83,8 @@ export function createItems({ state, seed = 'careworks', bus = null, person, pay
   function rollSource(sourceId, opts = {}) {
     const src = ITEM_SOURCES[sourceId];
     if (!src || !(src.chance > 0)) return null;
-    if (src.chance < 1 && rng.next() >= src.chance) return null;
+    const ch = Math.min(1, src.chance * (opts.chanceMult ?? 1)); // (Milestone 30b: Jinx's blessing raises a good surprise's chance)
+    if (ch < 1 && rng.next() >= ch) return null;
     return grant(sourceId, opts);
   }
 

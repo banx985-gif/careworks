@@ -253,6 +253,7 @@ export const SAVE_MIGRATIONS = {
   27: (record) => record, // (Milestone 27: no end-of-life state = everyone Settled, nothing held, no pages; the account's Memory Book starts empty)
   28: (record) => record, // (Milestone 28: no director state = an empty queue and log; every system's own Inbox items are kept as they are)
   29: (record) => record, // (Milestone 29: no secrets state = nothing found, no clues; the facts' records rebuilt from the history the save has)
+  30: (record) => record, // (Milestone 30b: no Works Gods yet — no god arrived or hired, no god secret found; the new records (good surprises, this month's call bells) start at 0)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

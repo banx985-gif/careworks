@@ -25,7 +25,8 @@ export const daysHere = (r, fromDay, toDay) => Math.max(0, Math.min(toDay, r.lef
 // Milestone 22: each resident's fee by their room (r.room, a template id; none: a Standard Room's), respite funding for a
 // respite stay (r.respite), their level's supplies (a day here) and equipment wear (a month); home: { upkeep: [{ name,
 // amount }], utilities } — the rooms and facilities upkeep and the utilities, once a month (none: left out).
-export function monthLinesFor({ fromDay, toDay, residents, staff, home = null, len = toDay - fromDay }) {
+// (Milestone 30b) feeMult: Kaching on the team brings 10% more from accommodation fees (nothing else changes).
+export function monthLinesFor({ fromDay, toDay, residents, staff, home = null, len = toDay - fromDay, feeMult = 1 }) {
   const out = [];
   for (const r of residents) {
     const d = daysHere(r, fromDay, toDay);
@@ -33,7 +34,7 @@ export function monthLinesFor({ fromDay, toDay, residents, staff, home = null, l
     const fee = r.room ? ROOM_FEES[r.room] ?? ROOM_FEES.default : FEES.accommodationPerMonth;
     // (Milestone 22: the family negotiates the fee down when their average Mood this month was low — r.moodAvg)
     const cut = r.moodAvg != null && r.moodAvg < FEE_MOOD.line ? Math.min(FEE_MOOD.capPct, Math.round((FEE_MOOD.line - r.moodAvg) * FEE_MOOD.perPoint)) : 0;
-    out.push({ category: 'fees', amount: Math.round((fee * d * (1 - cut / 100)) / len), reason: `${CAT.fees}: ${r.name}${d < len ? ` (${d} days)` : ''}${cut ? ` (−${cut}%: the family is unhappy — Mood ${Math.round(r.moodAvg)} this month)` : ''}` });
+    out.push({ category: 'fees', amount: Math.round((fee * d * (1 - cut / 100) * feeMult) / len), reason: `${CAT.fees}: ${r.name}${d < len ? ` (${d} days)` : ''}${cut ? ` (−${cut}%: the family is unhappy — Mood ${Math.round(r.moodAvg)} this month)` : ''}` });
     // Milestone 16: a rehab resident ready to go home brings the "ready" rate of funding for those days, and rehab
     // funding (§27) only for the days they were working on their goals
     const ready = r.readyDay != null ? daysHere({ admittedDay: Math.max(r.admittedDay ?? fromDay, r.readyDay), leftDay: r.leftDay }, fromDay, toDay) : 0;
@@ -82,8 +83,8 @@ export function createLedger({ saved = null, bus = null, now = () => 0, startCre
       return closes[closes.length - 1] ?? null;
     },
     closes,
-    closeMonth({ month, fromDay, toDay, residents, staff, home = null }) {
-      const lines = monthLinesFor({ fromDay, toDay, residents, staff, home }).map((l) => eco.add('credits', l.amount, l.reason, l.category)).filter(Boolean);
+    closeMonth({ month, fromDay, toDay, residents, staff, home = null, feeMult = 1 }) {
+      const lines = monthLinesFor({ fromDay, toDay, residents, staff, home, feeMult }).map((l) => eco.add('credits', l.amount, l.reason, l.category)).filter(Boolean);
       closes.push({ month, day: toDay, lines: lines.map((l) => ({ reason: l.reason, amount: l.amount, category: l.category })) });
       if (closes.length > 12) closes.shift();
       bus?.emit('ledger:close', { month, lines: lines.length, balance: eco.balance('credits') });
@@ -91,8 +92,8 @@ export function createLedger({ saved = null, bus = null, now = () => 0, startCre
     },
     // This month so far: what the close would bring if the month ended today (residents' days so far, full wages).
     // income: earned for the days so far; wages: the full month (they are due at the close either way).
-    forecast({ fromDay, toDay, day, residents, staff, home = null }) {
-      return monthLinesFor({ fromDay, toDay: Math.max(fromDay, day), residents, staff, home, len: toDay - fromDay });
+    forecast({ fromDay, toDay, day, residents, staff, home = null, feeMult = 1 }) {
+      return monthLinesFor({ fromDay, toDay: Math.max(fromDay, day), residents, staff, home, len: toDay - fromDay, feeMult });
     },
     totals: (lines) => ({
       income: lines.filter((l) => l.amount > 0).reduce((t, l) => t + l.amount, 0),

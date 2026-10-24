@@ -35,7 +35,7 @@ export const SPECIALTIES = {
   crossRole: { name: 'Cross-Role', tasks: ['hydration', 'visit', 'roomCheck'], standsInFor: null },
 };
 // How many specialties someone can hold, by tier.
-export const SPECIALTY_LIMIT = { standard: 1, rare: 2, elite: 3, legendary: 4, secret: 5 };
+export const SPECIALTY_LIMIT = { standard: 1, rare: 2, elite: 3, legendary: 4, secret: 5, divine: 5 };
 // The task AI's bonus when a helper's specialty matches the task type (bible §15 order: far below urgency 1000 and
 // resident assignment 100 — like Familiar Care, it only tips a close choice).
 export const SPECIALTY_SCORE = 8;

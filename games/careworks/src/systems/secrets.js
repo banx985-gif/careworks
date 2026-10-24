@@ -24,7 +24,11 @@
 import { SecretEngine, SECRET_OPS, readPath } from '../../../../core/SecretEngine.js';
 import { UnlockRunner } from '../../../../core/UnlockActions.js';
 import { DiscoveryArchive } from '../../../../core/DiscoveryArchive.js';
-import { CLUE, EASING, TRIGGERS, FACTS, REWARD_TYPES, SECRET_RULES, factDef } from '../../data/secrets.js';
+import { CLUE, EASING, TRIGGERS, FACTS, REWARD_TYPES, SECRET_RULES, RECORDS, factDef } from '../../data/secrets.js';
+import { GODS } from '../../data/staff.js';
+import { godKeyOf } from './blessings.js';
+
+const GOD_KEYS = GODS.map((g) => g.god); // (Milestone 30b)
 import { createSecretFacts, ensureLog, monthRecord, dailyRecord, noteMoment } from './secretFacts.js';
 import { SCORES } from '../../data/quality.js';
 
@@ -153,6 +157,7 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
     f.rewards ||= {};
     f.records ||= {};
     f.palettes ||= {};
+    f.godsHired ||= {}; // (Milestone 30b: god key → { day, runId } the first time each Works God joined a team)
     return f;
   };
   const ruleName = (a) => byId[a.secret]?.name ?? a.secret;
@@ -185,7 +190,7 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
     unlock: (a) => !st.flags.includes(`unlock:${a.id}`) && st.flags.push(`unlock:${a.id}`),
   };
   const runner = new UnlockRunner({ handlers });
-  const facts = createSecretFacts({ env, log: () => log, engine: () => engine, account: () => ({ memoryBook: () => accountFacts.memoryBook(), prestigeTokens: () => api.prestigeTokens }) });
+  const facts = createSecretFacts({ env, log: () => log, engine: () => engine, account: () => ({ memoryBook: () => accountFacts.memoryBook(), prestigeTokens: () => api.prestigeTokens, godsHired: () => Object.keys(acct().godsHired) }) });
   const engine = new CareSecretEngine({ bus: engineBus, rules: live, facts, runner, ngPlus: () => env.ngPlus(), currencyTypes: CURRENCY, easing: EASING, now, discoveredStage: CLUE.found });
   const archive = new DiscoveryArchive({});
 
@@ -244,6 +249,20 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
 
   // --- triggers ----------------------------------------------------------------------------------------------------------
   const notify = (trigger, payload = {}) => engine.notify(trigger, payload);
+  // Milestone 30b: a Works God joined the team — the account remembers it (Havoc's secret reads it), and all five hired at
+  // least once (every run) gives the Pantheon record once. → true when this was the fifth
+  function godHired(staffId) {
+    const key = godKeyOf(staffId);
+    if (!key) return false;
+    const g = acct().godsHired;
+    if (g[key]) return false;
+    g[key] = { day: env.today(), runId };
+    const all = GOD_KEYS.every((k) => g[k]);
+    if (all) handlers.record({ id: 'pantheon', secret: 'pantheon' });
+    saveAccount();
+    if (all) bus?.emit('secret:pantheon', { name: RECORDS.pantheon.name, text: RECORDS.pantheon.text });
+    return all;
+  }
   // Every moment the home emits: the records the facts read, then any rule indexed under it.
   function onEmit(name, payload = {}) {
     if (name === 'care:birthday') log.birthdays = (log.birthdays ?? 0) + (payload.residents?.length ?? 1);
@@ -252,6 +271,7 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
     const key = FIRST_KEYS[name]?.(payload);
     if (key && !(log.timeline ??= []).some((x) => x.key === key)) log.timeline.push({ key, day: env.today() });
     if (name === 'staff:hired' && payload.id && log.joined[payload.id] == null) log.joined[payload.id] = env.today();
+    if (name === 'staff:hired') godHired(payload.id); // (Milestone 30b)
     if (name === 'staff:left' && payload.id) {
       delete log.joined[payload.id];
       log.lastLeft = env.today();
@@ -357,6 +377,12 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
     },
     records: () => ({ ...acct().records }),
     palettes: () => ({ ...acct().palettes }),
+    // (Milestone 30b) the Works Gods hired at least once on this device (god key → { day, runId }); Pantheon: all five
+    godsHired: () => ({ ...acct().godsHired }),
+    get pantheon() {
+      return !!acct().records.pantheon;
+    },
+    godHired,
     get flags() {
       return [...st.flags];
     },

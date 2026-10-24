@@ -90,7 +90,7 @@ import { NEEDS, OUTCOMES, RESIDENTS, validateResidents, supportLevel, ROOM_TEMPL
 import { DataValidator } from '../../../core/DataValidator.js';
 import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
 import { ROLES, STATS, TIERS } from '../data/roles.js';
-import { TRAITS, STAFF, validateStaff, checkStaffArt } from '../data/staff.js';
+import { TRAITS, STAFF, ALL_STAFF, GODS, staffById, validateStaff, checkStaffArt } from '../data/staff.js';
 import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL } from '../data/balance.js';
 import { SHIFT_IDS, OFF, WINGS, AGENCY } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
@@ -367,7 +367,7 @@ async function prepareSaves() {
     const r = validateResidents(new DataValidator(), RESIDENTS, ROUTINE.map((x) => x.id)).report();
     debug.log(r.ok ? `residents: ${RESIDENTS.length} checked` : `resident data: ${r.errors.join('; ')}`);
     if (!r.ok) console.error('[CAREWORKS] resident data', r.errors);
-    const s = validateStaff(new DataValidator(), STAFF, { taskTypes: Object.keys(TASK_TYPES) }).report();
+    const s = validateStaff(new DataValidator(), ALL_STAFF, { taskTypes: Object.keys(TASK_TYPES) }).report();
     debug.log(s.ok ? `staff: ${STAFF.length} checked` : `staff data: ${s.errors.join('; ')}`);
     if (!s.ok) console.error('[CAREWORKS] staff data', s.errors);
     const known = { taskTypes: Object.keys(TASK_TYPES), steps: ROUTINE.map((x) => x.id), bands: BANDS.map((b) => b.id), needs: NEEDS.map((n) => n.id), outcomes: OUTCOMES.map((o) => o.id), roles: Object.keys(ROLES) };
@@ -692,7 +692,7 @@ function openBottom(id) {
 }
 let lastRoute = null;
 const accentNow = () => (open ? paletteById(open.data.facility.palette).hex : COL.progress);
-const first = (name) => name.split(' ')[0];
+const first = (name) => name.split(' ')[0].replace(/,$/, ''); // (Milestone 30b: a Works God's name → Bolt)
 const needName = (id) => NEEDS.find((n) => n.id === id)?.name ?? id;
 const stepName = (id) => ROUTINE.find((s) => s.id === id)?.name ?? id;
 // Care: every resident (portrait; the call-bell icon while theirs rings) and the Admissions row (Milestone 6).
@@ -863,7 +863,7 @@ function openRoster() {
     const teamRows = [];
     for (const p of w.team) {
       const m = p.model;
-      const pref = STAFF.find((d) => d.id === p.id)?.shiftPref;
+      const pref = staffById(p.id)?.shiftPref;
       const shift = r.shiftOf(p.id);
       teamRows.push({ id: `staff:${p.id}`, label: p.name, sub: `${shift ? shift.name : 'Off'} · likes ${PREF_WORD[pref] ?? '—'} · E ${Math.round(m.energy)} · M ${Math.round(m.morale)}`, icon: p.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[m.role].badge, accent: m.status.tired || m.status.stressed ? COL.action : COL.progress, onTap: () => openFrom(p.id, 'roster') });
       const float = r.isFloat(p.id);
@@ -1084,7 +1084,7 @@ function inboxLog(w) {
 // Milestone 28b: the portrait of the resident or staff member a line is about (they may have left the home since).
 function personArt(w, o) {
   if (o?.type === 'resident') return w.residentById(o.id)?.def.art ?? residentById(o.id)?.art ?? null;
-  if (o?.type === 'staff') return w.byId(o.id)?.art ?? STAFF.find((x) => x.id === o.id)?.art ?? null;
+  if (o?.type === 'staff') return w.byId(o.id)?.art ?? staffById(o.id)?.art ?? null;
   return null;
 }
 // A long line on a button: the first ~34 characters (at a word) on the label, the rest on the line under it.
@@ -2113,11 +2113,12 @@ function openBuildList() {
     if (!w) return { title: '', sections: [] };
     const row = (d, kind) => {
       const u = w.layout.unlock(d.id);
-      const afford = w.ledger.balance >= d.cost;
+      const cost = w.build.costOf?.(d.id) ?? d.cost; // (Milestone 30b: Bolt on the team builds for less)
+      const afford = w.ledger.balance >= cost;
       const full = kind === 'room' && w.rooms.length >= w.stage.capacity;
       const why = !u.ok ? u.reason : full ? `Stage ${w.stage.n} holds ${w.stage.capacity} residents` : !afford ? 'Not enough Credits' : null;
       const what = kind === 'room' ? `${d.bestFor} · ${d.effect.text}` : d.effect.text;
-      return { id: `buy:${d.id}`, label: `${d.name} · ${credits(d.cost)}`, sub: why ? `${why} · ${what}` : what, icon: d.art, disabled: !!why, accent: kind === 'room' ? COL.action : COL.progress, onTap: () => {
+      return { id: `buy:${d.id}`, label: `${d.name} · ${credits(cost)}`, sub: why ? `${why} · ${what}` : what, icon: d.art, disabled: !!why, accent: kind === 'room' ? COL.action : COL.progress, onTap: () => {
         sheet.close();
         homeScreen.startPlacing(d.id);
       } };
@@ -2416,6 +2417,9 @@ function openSecrets() {
       ...(hidden ? [{ lines: [{ text: `${hidden} more secret${hidden === 1 ? '' : 's'} not yet hinted at.`, color: COL.textMuted }] }] : []),
     ];
     if (w.secrets.prestigeTokens) sections.push({ lines: [{ text: `Prestige Tokens from secrets: ${w.secrets.prestigeTokens} (kept for every home)`, glyph: artGlyph(REWARD_ART.prestige) }] });
+    // (Milestone 30b) the Works Gods who have worked here (every home), and the Pantheon achievement — only once one has come
+    const gods = w.secrets.godsHired();
+    if (Object.keys(gods).length) sections.push({ title: 'The Works Gods', lines: [{ text: `Welcomed so far: ${GODS.filter((g) => gods[g.god]).map((g) => g.name.split(',')[0]).join(', ')} (${Object.keys(gods).length} of ${GODS.length})`, color: COL.actionDark }, w.secrets.pantheon ? { text: 'Pantheon: all five Works Gods have worked in your homes', color: COL.good } : { text: 'Pantheon: welcome all five Works Gods to your home', color: COL.textMuted }] });
     if (debug.enabled) sections.push({ title: 'Debug', columns: 1, buttons: [{ id: 'secrets:debug', label: 'Secrets debug: why not yet?', sub: 'Every rule, each condition met / not met with its value now', accent: COL.progress, onTap: () => openSecretsDebug() }] });
     return { title: 'Secrets', subtitle: secretsSub(w), art: SECRETS_ICON, accent: accentNow(), sections };
   });
@@ -2437,7 +2441,7 @@ function openSecretsDebug() {
   });
 }
 // A face for a name on a page (pages keep names; the art is found from the home's people or the data).
-const staffArtByName = (n) => STAFF.find((x) => x.name === n)?.art ?? FOUNDERS.find((x) => x.name === n)?.art ?? null;
+const staffArtByName = (n) => ALL_STAFF.find((x) => x.name === n)?.art ?? FOUNDERS.find((x) => x.name === n)?.art ?? null;
 const residentArtByName = (n) => RESIDENTS.find((x) => x.name === n)?.art ?? null;
 function faceButtons(prefix, names, artOf, sub) {
   return names.map((n, i) => ({ id: `${prefix}:${i}`, label: n, sub, icon: artOf(n), iconCrop: PORTRAIT_CROP, accent: COL.progress, onTap: () => {} }));
@@ -2841,7 +2845,7 @@ function ledgerMonth(w) {
   const range = w.monthRange();
   const sum = {};
   for (const l of w.ledger.economy.ledger) if (l.currency === 'credits' && l.day >= range.fromDay && !['opening', 't', 'test', 'debug'].includes(l.category) && !(l.day === range.fromDay && CLOSE_CATS.includes(l.category))) sum[l.category] = (sum[l.category] ?? 0) + l.amount;
-  for (const l of w.ledger.forecast({ ...range, day: w.clock.totalDays, residents: w.payers(), staff: w.payroll(), home: w.homeCosts() })) sum[l.category] = (sum[l.category] ?? 0) + l.amount;
+  for (const l of w.ledger.forecast({ ...range, day: w.clock.totalDays, residents: w.payers(), staff: w.payroll(), home: w.homeCosts(), feeMult: w.blessings?.feeMult() ?? 1 })) sum[l.category] = (sum[l.category] ?? 0) + l.amount;
   return sum;
 }
 const signedCredits = (v) => `${v < 0 ? '−' : v > 0 ? '+' : ''}${credits(Math.abs(v))}`;
@@ -2974,7 +2978,7 @@ function openCredits() {
     art: BRAND.endMark,
     accent: COL.progress,
     sections: [
-      { lines: [{ text: 'Made by Banx Games. Art by Aaron.', color: COL.actionDark }, { text: 'One of the Works games: BOTWORKS, RACEWORKS, DEVWORKS, GOALWORKS and CAREWORKS share one world and one engine.', color: COL.textMuted }, { text: 'Thank you for playing, and for looking after everyone here.', color: COL.good }] },
+      { lines: [{ text: 'Made by Banx Games. Art by Aaron.', color: COL.actionDark }, { text: 'The Works Gods: Bolt, Jinx, Zip, Kaching and Havoc, the series’ recurring cast.', color: COL.textMuted }, { text: 'One of the Works games: BOTWORKS, RACEWORKS, DEVWORKS, GOALWORKS and CAREWORKS share one world and one engine.', color: COL.textMuted }, { text: 'Thank you for playing, and for looking after everyone here.', color: COL.good }] },
       { columns: 1, buttons: [{ id: 'credits:back', label: '‹ Back', accent: COL.progress, onTap: () => openTopSheet('help') }] },
     ],
   }));
@@ -3224,10 +3228,36 @@ function openRecruit() {
 }
 // Milestone 12: the tier's tag and accent on a candidate, and every trait as lines (a pending one says it comes later;
 // a signature is marked).
-const TIER_TAG = { rare: 'RARE', elite: 'ELITE', legendary: 'LEGENDARY', secret: 'PRESTIGE' };
-const TIER_ACCENT = { rare: COL.gold, elite: COL.action, legendary: COL.gold, secret: COL.gold };
+const TIER_TAG = { rare: 'RARE', elite: 'ELITE', legendary: 'LEGENDARY', secret: 'PRESTIGE', divine: 'DIVINE' }; // (Milestone 30b: the Works Gods)
+const TIER_ACCENT = { rare: COL.gold, elite: COL.action, legendary: COL.gold, secret: COL.gold, divine: COL.gold };
+// Milestone 30b: a Works God's portrait with a small gold glow behind it — a canvas made once from the loaded file, under
+// its own key (made again after a lost canvas: AssetManager drops made images). The file itself is never changed.
+function godArt(key) {
+  const glow = `${key}__glow`;
+  if (assets.has(glow)) return glow;
+  const img = assets.get(key);
+  if (!img || typeof document === 'undefined' || !img.naturalWidth) return key;
+  const pad = Math.round(img.naturalHeight * 0.1);
+  const c = document.createElement('canvas');
+  c.width = img.naturalWidth + pad * 2;
+  c.height = img.naturalHeight + pad * 2;
+  const x = c.getContext('2d');
+  const r = Math.max(c.width, c.height) * 0.5;
+  const g = x.createRadialGradient(c.width / 2, c.height / 2, r * 0.2, c.width / 2, c.height / 2, r);
+  g.addColorStop(0, 'rgba(255, 214, 92, 0.6)');
+  g.addColorStop(1, 'rgba(255, 214, 92, 0)');
+  x.fillStyle = g;
+  x.fillRect(0, 0, c.width, c.height);
+  x.drawImage(img, pad, pad);
+  c.naturalWidth = c.width; // (AssetManager reads an image's natural size)
+  c.naturalHeight = c.height;
+  assets.images.set(glow, c);
+  return glow;
+}
 function traitLines(ids) {
-  return ids.map((id) => TRAITS[id]).filter(Boolean).map((t) => (t.pendingSystem
+  return ids.map((id) => TRAITS[id]).filter(Boolean).map((t) => (t.blessing
+    ? { text: `Blessing · ${t.name}: ${t.text}`, color: COL.actionDark } // (Milestone 30b: a Works God's blessing, live from the day they join)
+    : t.pendingSystem
     ? { text: `${t.signature ? 'Signature · ' : ''}${t.name}: ${t.text} (comes into play in a later update)`, color: COL.textMuted }
     : `${t.name}: ${t.text}`));
 }
@@ -3240,11 +3270,11 @@ function openCandidate(cardId) {
     if (!c) return { title: 'No longer on the board', subtitle: 'They took another job.', accent: COL.progress, sections: [{ columns: 1, buttons: [{ id: 'cand:back', label: '‹ Back to Recruit', accent: COL.progress, onTap: () => openRecruit() }] }] };
     const can = w.staffing.canHire(cardId);
     const cap = TIERS[c.tier].statCap;
-    const def = STAFF.find((d) => d.id === c.personId);
+    const def = staffById(c.personId);
     return {
       title: c.name,
       subtitle: `${ROLES[c.role].name} · ${TIERS[c.tier].name} · Lv ${c.level}`,
-      art: c.art,
+      art: c.tier === 'divine' ? godArt(c.art) : c.art, // (Milestone 30b: a Works God's gold glow)
       badge: ROLES[c.role].badge,
       tag: TIER_TAG[c.tier] ? { text: TIER_TAG[c.tier] } : null,
       accent: accentNow(),
@@ -3601,7 +3631,7 @@ function staffMenu(w, p, accent) {
   const isFounder = w.staffState.founder.id === p.id && !w.staffState.founder.ended;
   const h = w.staffState.founder.history;
   const agency = w.roster.isAgency(p.id);
-  const pref = STAFF.find((d) => d.id === p.id)?.shiftPref;
+  const pref = staffById(p.id)?.shiftPref;
   const wing = w.roster.wingOf(p.id);
   const shiftLines = agency
     ? [w.roster.label(p.id), 'Agency worker: booked for this shift only; builds no Familiar Care and is never on records.']
@@ -3658,7 +3688,7 @@ function staffMenu(w, p, accent) {
     const f = FOUNDERS.find((x) => x.id === p.id);
     sections.push({ title: 'Founding Staff', lines: [`${f.perk.name}: ${f.perk.text}`, `With you since Day 1 · ${h.daysEmployed} days (${yearsEmployed(h)} years) · ${h.careTasks} care tasks`] });
   }
-  return { title: p.name, subtitle: `${ROLES[m.role].name} · ${agency ? 'Agency cover' : `${TIERS[m.tier]?.name ?? m.tier} · Lv ${m.level}`}`, art: p.art, badge: ROLES[m.role].badge, tag: isFounder ? { text: 'FOUNDER' } : agency ? { text: 'AGENCY' } : null, accent, sections };
+  return { title: p.name, subtitle: `${ROLES[m.role].name} · ${agency ? 'Agency cover' : `${TIERS[m.tier]?.name ?? m.tier} · Lv ${m.level}`}`, art: m.tier === 'divine' ? godArt(p.art) : p.art, badge: ROLES[m.role].badge, tag: isFounder ? { text: 'FOUNDER' } : agency ? { text: 'AGENCY' } : TIER_TAG[m.tier] === 'DIVINE' ? { text: 'DIVINE' } : null, accent, sections }; // (Milestone 30b: a Works God's gold glow and tag)
 }
 // from: 'residents' / 'roster' when opened from a bottom-bar list (Milestone 5) — the card then has a way back to it.
 const BACK_TO = { residents: { label: '‹ Back to residents', open: () => openResidents() }, roster: { label: '‹ Back to the roster', open: () => openRoster() } };

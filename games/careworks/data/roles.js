@@ -28,4 +28,7 @@ export const TIERS = {
   elite: { name: 'Elite', statCap: 400, traitSlots: 2 },
   legendary: { name: 'Legendary', statCap: 520, traitSlots: 2, signature: true },
   secret: { name: 'Secret/Prestige', statCap: 650, traitSlots: 3, signature: true },
+  // Milestone 30b: the Works Gods (SERIES_WORKS_GODS.md) — a tier above Secret, never on a board, never bought; their
+  // signature is their blessing (data/staff.js GODS)
+  divine: { name: 'Divine', statCap: 650, traitSlots: 3, signature: true },
 };

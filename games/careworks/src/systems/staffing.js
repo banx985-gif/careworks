@@ -136,7 +136,7 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
     while (st.arrivalQueue.length) {
       const d = staffById(st.arrivalQueue.shift());
       if (!d || employed().has(d.id)) continue;
-      rs.addSpecial(cardOf(d), { day: today(), days: ARRIVAL_DAYS, note: 'A special arrival' });
+      rs.addSpecial(cardOf(d), { day: today(), days: ARRIVAL_DAYS, note: d.tier === 'divine' ? (d.god === 'havoc' ? 'Someone’s brought far too many streamers…' : 'A divine arrival') : 'A special arrival' }); // (Milestone 30b: a Works God)
       return;
     }
   }

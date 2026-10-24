@@ -68,7 +68,7 @@ export const INBOX = { keep: 120, shown: 6 };
 // --- every existing moment (bus event → category, weight, words) --------------------------------------------------------------
 // Words are what the home already said before Milestone 28 (moved here, not changed). x = the event's payload; the
 // result: { weight, title?, text, art?, good, line? (the Inbox line, else text), opens? { type, id } } or null (no moment).
-const first = (n) => String(n ?? '').split(' ')[0];
+const first = (n) => String(n ?? '').split(' ')[0].replace(/,$/, ''); // (Milestone 30b: "Bolt, God of Tinkering" → Bolt)
 const their = (id) => (residentById(id)?.pronoun === 'she' ? 'her' : 'his');
 const res = (id) => (id ? { type: 'resident', id } : null);
 // Milestone 28b: big beats may carry badge (a second picture in the corner: the Rehab Success Badge, the National
@@ -125,8 +125,10 @@ export const KINDS = {
   'care:stage': { cat: 'memorial', inbox: true, make: (x) => (x.stage === 'approaching' && x.offer ? { weight: 'blocking', title: `${first(x.name)}: comfort care offered`, text: `${first(x.name)} is approaching the end of life: comfort care is offered, never forced`, line: x.line, good: true, opens: { type: 'inbox' }, choice: { kind: 'comfort', id: x.resident } } : { weight: 'quiet', text: `${first(x.name)}: ${stageById(x.stage).name.toLowerCase()}`, line: x.line, good: true, opens: res(x.resident) }) },
   // Milestone 29: secrets — a quiet Inbox line when a clue stage is reached (only the clue, never the condition), a big beat
   // when one is found (its name and reward)
+  'care:blessing': { cat: 'staff', inbox: true, make: (x) => ({ weight: 'quiet', text: x.text, good: true }) }, // (Milestone 30b: a Works God's lucky day, joy boost or harmless mishap)
   'secret:clue': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'inbox', text: `A rumour: ${x.text}`, good: true, opens: { type: 'secrets' } }) },
   'secret:found': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'big', title: `Secret found: ${x.name}`, text: x.reward, line: `Secret found: ${x.name} · ${x.reward}`, art: REWARD_ART.prestige, aura: true, good: true, opens: { type: 'secrets' } }) },
+  'secret:pantheon': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'big', title: x.name, text: x.text, line: `${x.name}: all five Works Gods have worked here`, art: REWARD_ART.prestige, aura: true, good: true, opens: { type: 'secrets' } }) }, // (Milestone 30b)
   'care:passed': { cat: 'memorial', inbox: true, make: (x) => ({ weight: 'blocking', title: x.name, text: x.card, line: x.line ?? x.card, good: true, opens: { type: 'memoryBook' }, choice: { kind: 'memorial', id: x.page?.id ?? x.resident } }) },
 };
 

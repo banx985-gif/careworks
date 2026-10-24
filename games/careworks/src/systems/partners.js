@@ -175,7 +175,7 @@ export function createPartners({ care, ledger, bus = null, today = () => 0, seed
     const T = TIERS[a.tier ?? tierOf(id)];
     const days = Math.max(0, day - (a.paidTo ?? a.startDay));
     a.paidTo = day;
-    add((T.supportPerMonth * days) / 28, `${LEDGER_CATS.partnerSupport}: ${partnerById(id).name} (${T.name}, ${days} day${days === 1 ? '' : 's'})`, 'partnerSupport');
+    add((T.supportPerMonth * days * (hooks.payMult?.() ?? 1)) / 28, `${LEDGER_CATS.partnerSupport}: ${partnerById(id).name} (${T.name}, ${days} day${days === 1 ? '' : 's'})`, 'partnerSupport');
   }
   // The perk's value now (every active deal's, × its tier).
   function perk(key) {
@@ -237,7 +237,7 @@ export function createPartners({ care, ledger, bus = null, today = () => 0, seed
         return { ok: p.met, failures: p.met ? [] : [`${p.count} / ${p.min}`] };
       },
       onSuccess(c) {
-        add(c.payOnComplete, `${LEDGER_CATS.grants}: ${c.name} (goal met)`, 'grants');
+        add(c.payOnComplete * (hooks.payMult?.() ?? 1), `${LEDGER_CATS.grants}: ${c.name} (goal met)`, 'grants'); // (Milestone 30b: Kaching's blessing — the advance on acceptance stays as it is, so handing it back matches)
         stopPilot(`grant:${c.id}`);
         bus?.emit('partners:grant', { id: c.id, name: c.name, status: 'done' });
         hooks.reward?.('grant', { id: c.id, name: c.name }); // (Milestone 25c: a grant goal met brings a piece of care equipment)

@@ -438,7 +438,12 @@ export function createLayout({ saved = null, bus = null } = {}) {
   let reachCache = null;
   let reachV = null;
 
+  // (Milestone 30b) the home world may make level-ups cheaper / quicker (Bolt's blessing): cost(c) and days(d)
+  let upgradeMods = { cost: (c) => c, days: (d) => d };
   const layout = {
+    setUpgradeMods(m) {
+      upgradeMods = { cost: m?.cost ?? ((c) => c), days: m?.days ?? ((d) => d) };
+    },
     fs,
     wings,
     LOGICAL_CAP,
@@ -506,7 +511,8 @@ export function createLayout({ saved = null, bus = null } = {}) {
       if (!it) return null;
       const level = fs.level(uid) + 1;
       if (level > LEVELS.max) return null;
-      return { level, cost: upgradeCost(defs[it.def].cost, level), days: LEVELS.days[level - 1], rank: LEVELS.rank[level - 1] };
+      // (Milestone 30b: the home world's upgrade mods — Bolt's blessing, cheaper and quicker)
+      return { level, cost: upgradeMods.cost(upgradeCost(defs[it.def].cost, level)), days: upgradeMods.days(LEVELS.days[level - 1]), rank: LEVELS.rank[level - 1] };
     },
     startUpgrade(uid, { today = 0 } = {}) {
       const nx = layout.nextUpgrade(uid);

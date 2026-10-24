@@ -30,7 +30,7 @@ export const EASING = { countFactor: 1, thresholdPct: 0 };
 // --- triggers: the moments a rule may be looked at ---------------------------------------------------------------------------
 // 'secrets:day' (each midnight, after the quality scores) and 'secrets:month' (each month's close, after its history is
 // written) are the engine's own; the rest are the home's own bus moments, read as they happen.
-export const TRIGGERS = ['secrets:day', 'secrets:month', 'care:discharge', 'care:birthday', 'quality:award', 'quality:rankUp', 'partners:signed', 'staff:trained', 'home:stage'];
+export const TRIGGERS = ['secrets:day', 'secrets:month', 'care:discharge', 'care:birthday', 'quality:award', 'quality:rankUp', 'partners:signed', 'staff:trained', 'home:stage', 'care:celebration']; // (Milestone 30b: a community event or a family birthday party — Havoc's arrival moment)
 
 // --- the facts (src/systems/secretFacts.js answers each one) -------------------------------------------------------------------
 // scope: run (this campaign: its save) or account (this device: the account store; New Game+ keeps it).
@@ -55,7 +55,7 @@ export const FACTS = {
   'run.mobilityOutcome': { name: 'Mobility outcome (residents’ average Independence)', kind: 'number' },
   'run.diningSatisfaction': { name: 'Dining satisfaction (residents’ average)', kind: 'number' },
   // consecutive months (written at each month's close)
-  'run.months': { name: 'Each closed month', kind: 'list', fields: { nightShifts: 'Night shifts', nightSafePct: 'Night shifts at Safe Coverage %', shiftsAll: 'shifts', safeAllPct: 'shifts at Safe Coverage % (every shift)', agencyAllPct: 'shifts with agency cover % (every shift)', familiarCare: 'Familiar Care average', choice: 'Choice / preference adherence (Doing something they like)', m: 'month number', scores: 'headline scores (scores.<id>)', lowest: 'lowest headline score', net: 'trading net', profit: 'in profit', noMissed: 'no essential care missed', familyTrust: 'home Family Trust', nutrition: 'Nutrition', environment: 'Environment', residents: 'residents', occupancy: 'occupancy %', agencyShifts: 'agency shifts', agencyPct: 'agency shifts % of shifts', safePct: 'shifts at Safe Coverage %', essentialMissed: { name: 'essential care missed', harm: true }, falls: { name: 'falls', harm: true }, unsafeShifts: { name: 'unsafe shifts', harm: true }, medErrors: { name: 'medication-round issues', harm: true }, complaints: { name: 'complaints', harm: true }, passings: { name: 'passings', harm: true } } },
+  'run.months': { name: 'Each closed month', kind: 'list', fields: { bells10Pct: 'call bells answered within ten minutes %', nightShifts: 'Night shifts', nightSafePct: 'Night shifts at Safe Coverage %', shiftsAll: 'shifts', safeAllPct: 'shifts at Safe Coverage % (every shift)', agencyAllPct: 'shifts with agency cover % (every shift)', familiarCare: 'Familiar Care average', choice: 'Choice / preference adherence (Doing something they like)', m: 'month number', scores: 'headline scores (scores.<id>)', lowest: 'lowest headline score', net: 'trading net', profit: 'in profit', noMissed: 'no essential care missed', familyTrust: 'home Family Trust', nutrition: 'Nutrition', environment: 'Environment', residents: 'residents', occupancy: 'occupancy %', agencyShifts: 'agency shifts', agencyPct: 'agency shifts % of shifts', safePct: 'shifts at Safe Coverage %', essentialMissed: { name: 'essential care missed', harm: true }, falls: { name: 'falls', harm: true }, unsafeShifts: { name: 'unsafe shifts', harm: true }, medErrors: { name: 'medication-round issues', harm: true }, complaints: { name: 'complaints', harm: true }, passings: { name: 'passings', harm: true } } },
   'run.monthsClosed': { name: 'Months closed', kind: 'number' },
   // history: the firsts in the order they happened (for sequence / ever-happened rules)
   'run.timeline': { name: 'Firsts, in order (rank:D, award:C01, birthday, discharge, compliment, course, stage:2, partner:<id>)', kind: 'ids' },
@@ -113,11 +113,19 @@ export const FACTS = {
   'run.legendaryHired': { name: 'A Legendary or Prestige person joined the team', kind: 'flag' },
   'run.aheadOfCrownHaven': { name: 'Headline scores ahead of Crown Haven (benchmark)', kind: 'number' },
   'run.legacyMentored': { name: 'Staff a Legacy Staff member mentored to Elite (no system yet)', kind: 'number' },
+  // (Milestone 30b: the Works Gods' secrets)
+  'run.facilitiesLevel3': { name: 'Facilities at Level III (now)', kind: 'number' },
+  'run.goodSurprises': { name: 'Good surprises (thank-you gifts, well-wishers, family birthday parties)', kind: 'number' },
+  'account.godsHired': { name: 'Works Gods hired at least once (every run)', kind: 'ids', scope: 'account' },
+  'account.fourGodsHired': { name: 'Of Bolt, Jinx, Zip and Kaching: how many were hired at least once (every run)', kind: 'number', scope: 'account' },
   'account.legacyStaffLevels': { name: 'New Game+ levels one Legacy Staff member was carried through (no system yet)', kind: 'number', scope: 'account' },
   // harm (§35) — only ever in forbids
   'run.essentialMissedMonth': { name: 'Essential care missed this month', kind: 'number', harm: true },
   'run.essentialMissed': { name: 'Essential care missed (ever)', kind: 'number', harm: true },
   'run.falls28': { name: 'Falls in the last 28 days', kind: 'number', harm: true },
+  'run.falls6m': { name: 'Falls in the last six months', kind: 'number', harm: true }, // (Milestone 30b)
+  'run.essentialMissed12m': { name: 'Essential care missed in the last twelve months', kind: 'number', harm: true }, // (Milestone 30b)
+  'run.unsafeShifts12m': { name: 'Unsafe shifts in the last twelve months', kind: 'number', harm: true }, // (Milestone 30b)
   'run.unsafeShiftsMonth': { name: 'Unsafe shifts this month', kind: 'number', harm: true },
   'run.unsafeShifts': { name: 'Unsafe shifts (ever)', kind: 'number', harm: true },
   'run.medErrors': { name: 'Medication-round issues (ever)', kind: 'number', harm: true },
@@ -161,6 +169,8 @@ export const REWARD_TYPES = {
 export const RECORDS = {
   fiveStarBalance: { name: 'Five-Star Balance', text: 'All five headline scores 90+ together for six months' },
   reablementChampion: { name: 'Reablement Champion', text: 'Five residents home again, steady and independent' },
+  // (Milestone 30b) the series achievement (Milestone 32 will list it with the other achievements)
+  pantheon: { name: 'Pantheon', text: 'Welcome all five Works Gods to your home.', achievement: true },
 };
 // (Milestone 30) What an unlock flag opens. `builtIn`: the milestone that builds the thing itself (until then only the flag).
 export const UNLOCKS = {
@@ -310,7 +320,71 @@ export const SECRET_RULES = [
   // behaviour (SEC-BEH-01…04) and New Game+ (SEC-NGP-02, 03). Once per run, except New Game+ and anything counted across
   // every run (secrets found): once per account.
   ...practiceAndLegacySecrets(),
+  // --- Milestone 30b: the Works Gods (SEC-GOD-1…5, docs/M30b_WORKS_GODS.md) — the hardest secrets in the game. Each brings
+  // one god (data/staff.js GODS) as a special arrival. Category 'divine': they never count toward "secrets found" (FAC-02,
+  // COMP-02, RIVAL-01 keep their numbers based on the 40). No rumour until Rank A; Havoc's not until the other four have
+  // each been hired at least once (every run).
+  ...godSecrets(),
 ];
+function godSecrets() {
+  const RANK_A = { fact: 'run.rank', op: 'gte', value: 4, kind: 'fixed', category: 'recognition', label: 'Rank A' };
+  const RANK_A_GATE = { ...RANK_A, label: 'Rank A (before any rumour)' };
+  const FOUR = { fact: 'account.fourGodsHired', op: 'gte', value: 4, kind: 'fixed', category: 'staff', label: 'Bolt, Jinx, Zip and Kaching each hired at least once (every run)' };
+  const months = (where, n, label, category = 'quality') => ({ fact: 'run.months', op: 'consecutive', where, value: n, kind: 'count', category, label, unit: 'months' });
+  const god = (n, name, staffId, person, requiresAll, clues, forbids = [], extra = {}) => ({ id: `SEC-GOD-${n}`, name, category: 'divine', oncePerRun: true, triggerEvents: ['secrets:month'], requiresAll, forbids, clueGate: [RANK_A_GATE], clueStages: stages(clues), reward: `${person} arrives (a special arrival on the Recruit board)`, rewardActions: [{ type: 'arrival', id: staffId, name: person }], ...extra });
+  return [
+    god(1, 'The Tinker in the Shed', 'AH11', 'Bolt, God of Tinkering', [
+      RANK_A,
+      { fact: 'run.facilitiesLevel3', op: 'gte', value: 12, kind: 'count', category: 'facility', label: 'Facilities at Level III at once' },
+      months([{ field: 'scores.environment', op: 'gte', value: 90 }], 6, 'Environment & Compliance 90+'),
+    ], [
+      'A cheerful whistling from the workshop.',
+      'Someone keeps tightening every loose screw.',
+      'Residents swear they saw a golden cog float past the shed.',
+      'The old handyman of the heavens is checking your toolbox.',
+    ], [{ fact: 'run.falls6m', op: 'gt', value: 0, kind: 'fixed', category: 'residents', label: 'A fall in the last six months' }]),
+    god(2, 'The Lucky Cat', 'LC11', 'Jinx, Goddess of Luck', [
+      RANK_A,
+      { fact: 'run.goodSurprises', op: 'gte', value: 12, kind: 'count', category: 'residents', label: 'Good surprises in this home (thank-you gifts, well-wishers, family birthday parties)' },
+      { fact: 'account.storySecretsFound', op: 'gte', value: 6, kind: 'count', category: 'residents', label: 'Resident-story secrets found (every run)' },
+      { fact: 'run.wishesHonoured', op: 'gte', value: 10, kind: 'count', category: 'comfort', label: 'Residents whose last wishes were honoured' },
+    ], [
+      'A lucky cat statue appeared on the front desk.',
+      'Bingo seems to go everyone’s way lately.',
+      'A tiny glowing dice rolled under the lounge chair.',
+      'Lady Luck is thinking of moving in.',
+    ]),
+    god(3, 'The Blur in the Corridor', 'RN11', 'Zip, God of Speed', [
+      RANK_A,
+      months([{ field: 'bells10Pct', op: 'gte', value: 98 }, { field: 'shiftsAll', op: 'gt', value: 0 }, { field: 'safeAllPct', op: 'gte', value: 100 }], 12, '98% of call bells answered within ten minutes, with every shift at Safe Coverage', 'care'),
+      { fact: 'run.score.clinicalSafety', op: 'gte', value: 92, kind: 'threshold', category: 'quality', label: 'Clinical Safety 92+' },
+    ], [
+      'A blur went past the nurses’ station.',
+      'Call bells are barely ringing before they stop.',
+      'Little sparks on the corridor carpet at night.',
+      'Someone very fast wants to work night shift.',
+    ], [{ fact: 'run.essentialMissed12m', op: 'gt', value: 0, kind: 'fixed', category: 'care', label: 'Essential care missed in the last twelve months' }]),
+    god(4, 'The Jolly Benefactor', 'HN11', 'Kaching, God of Fortune', [
+      RANK_A,
+      months([{ field: 'profit', op: 'eq', value: true }], 12, 'A profit every month', 'economy'),
+      { fact: 'run.partners', op: 'countOf', where: [{ field: 'tier', op: 'gte', value: 3 }, { field: 'active', op: 'eq', value: true }], value: 4, kind: 'count', category: 'partners', label: 'Partners at Strategic tier at once' },
+      { fact: 'run.familyTrust', op: 'gte', value: 85, kind: 'threshold', category: 'family', label: 'Family Trust 85+' },
+    ], [
+      'A bunch of flowers arrived with no card.',
+      'The accounts book smells faintly of gold.',
+      'Coins keep turning up in the garden.',
+      'A very jolly benefactor is asking about your home.',
+    ], [{ fact: 'run.unsafeShifts12m', op: 'gt', value: 0, kind: 'fixed', category: 'staff', label: 'An unsafe shift in the last twelve months' }]),
+    // Havoc: New Game+ 1, after the other four were each hired once (every run). Looked at only at a celebration (a
+    // birthday tea, a family birthday party or a community event), so that is when he turns up.
+    god(5, 'Far Too Many Streamers', 'LC12', 'Havoc, God of Chaos', [FOUR], [
+      'Streamers on the ceiling. Nobody put them there.',
+      'The party hats have gone missing again.',
+      'Purple sparks in the activities cupboard.',
+      'Something mischievous is waiting for the next big party.',
+    ], [], { ngPlusMin: 1, triggerEvents: ['care:birthday', 'care:celebration'], clueGate: [RANK_A_GATE, { ...FOUR, label: 'The other four Works Gods each hired once (before any rumour)' }], reward: 'Someone’s brought far too many streamers… Havoc, God of Chaos arrives (a special arrival on the Recruit board)' }),
+  ];
+}
 function practiceAndLegacySecrets() {
   const YEAR = 336;
   const MONTH = ['secrets:month'];

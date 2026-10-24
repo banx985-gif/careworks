@@ -141,7 +141,7 @@ import { SPECIALTIES, TRAINING, COURSES } from '../../data/training.js';
 import { createItems, newItemsState } from './items.js';
 import { ITEM_SOURCES, ITEM_RULES } from '../../data/items.js';
 const ITEM_RULES_SEASON = ITEM_RULES.seasonMonths;
-import { staffById } from '../../data/staff.js';
+import { staffById, BLESSINGS, MISHAPS } from '../../data/staff.js';
 import { rankAtLeast } from '../../data/recruitment.js';
 import { taskPct, matchesTask, familiarPct } from './traitEffects.js';
 import { compatibility, addFriendship, areFriends, topFriends, groupMembers, favouriteOf, familiarEffects, friendshipOf } from './relationships.js';
@@ -165,6 +165,7 @@ import { WINGS_SPECIAL, wingById, wingForSupport } from '../../data/wings.js';
 import { PROGRAMS, VISIBLE_PROGRAMS, programById, visibleProgram, EFFECT_TEXT, LEDGER_CATEGORY, PROGRAM_RULES } from '../../data/programs.js';
 import { ensureProgramState, newRun, unlockOf, hoursFor, vetoOf, weeksDue, daysUnpaid, countFor } from './programs.js';
 import { activityPct } from './traitEffects.js';
+import { createBlessings } from './blessings.js'; // (Milestone 30b: the Works Gods)
 import { createResearch } from './research.js';
 import { createEconomy, levelOfNeeds } from './economy.js';
 import { UPKEEP, UTILITIES, MOVE_OUT } from '../../data/economy.js';
@@ -491,6 +492,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const hasOffice = () => layout.ofDef(DIET_OFFICE).length > 0;
   const specialtiesOf = (id) => staffing?.specialtiesOf(id) ?? [];
   const onShiftNow = () => crew.people.filter((q) => !q.leftTeam && roster.onShift(q.id));
+  // Milestone 30b: the Works Gods' blessings (src/systems/blessings.js) — who is on the team, who is on shift now
+  const blessings = createBlessings({ team: () => crew.people.filter((q) => !q.agency && !q.leftTeam), onShift: (id) => roster.onShift(id), seed });
+  const boltCost = (cost) => (cost && blessings.has('bolt') ? Math.round((cost * blessings.buildCostMult()) / 50) * 50 : cost); // (Bolt: 15% less, in 50-Credit steps)
+  const boltDays = (days) => (days && blessings.has('bolt') ? Math.max(1, Math.ceil(days * blessings.buildDaysMult())) : days); // (Bolt: half the days, at least one)
   // Who on shift could cook a special menu (a Hospitality worker, or anyone with the Nutrition specialty or a diet trait)
   const cooksOnShift = () => onShiftNow().map((q) => ({ id: q.id, role: q.role, skills: skillsOf({ traits: q.model.traits, specialties: specialtiesOf(q.id) }) }));
   const hospitalityOn = () => cooksOnShift().some((c) => c.role === 'HN' || c.skills.size > 0);
@@ -650,7 +655,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const p = byResident(t.resident) ?? arthur;
     // "Is this resident assigned to me" (bible §15): their key worker, or (Milestone 7) staff on the resident's wing
     const assigned = assignedTo(q.id, p);
-    return scorePair({
+    const s = scorePair({
       task: { ...t, pinned: pin },
       person: { id: q.id, role: q.role, energy: q.model.energy },
       tiles: tilesBetween(q, helpPool(p, taskPlace(t))[0]),
@@ -663,6 +668,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       specialty: (staffing?.specialtiesOf(q.id) ?? []).some((sp) => SPECIALTIES[sp]?.tasks.includes(t.type)) || matchesTask(q.model.traits, t.type) || (!!memoryOf(p) && specialtiesOf(q.id).includes('memoryCare')),
       continuity: inGroup(q.id, t.resident) ? (memoryOf(p) ? CONTINUITY_MULT : 1) : 0, // Milestone 13: their continuity group (bible §14); Milestone 17: × 2 for memory support
     });
+    // (Milestone 30b: Zip's blessing — while he is on shift, a call bell comes before any other task)
+    return s != null && t.type === 'bell' ? s + blessings.bellFirst() : s;
   }
   function claim(t, q) {
     t.status = 'claimed'; // first, so core/AssignmentSystem counts it as a job when it marks them assigned
@@ -1521,6 +1528,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const on = onShiftNow().filter((q) => !q.agency);
     const traitMult = (o) => 1 + Math.max(0, ...on.map((q) => activityPct(q.model.traits, act.id, { event: !!s.event || !!s.program, outcome: o }))) / 100;
     for (const [o, v] of Object.entries(act.lifts)) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v * m * traitMult(o));
+    godSession(p, s, day, step.slot, act); // (Milestone 30b: Jinx's lucky day, Havoc's chaos roll)
     if (s.program) programSessionDone(p, s); // (Milestone 20: the program's own lift)
     // (Milestone 23: the session counts for partners and grants once someone who chose to come is there)
     if (!s.counted) {
@@ -1531,6 +1539,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       // (Milestone 25c: a partner-hosted event held — the partner leaves a piece of care equipment)
       const pev = s.event ? COMMUNITY_EVENTS.find((e) => e.id === s.event && e.partner) : null;
       if (pev) items.rollSource('partnerEvent', { why: pev.name });
+      if (s.event) bus?.emit('care:celebration', { event: s.event }); // (Milestone 30b: a big community event — Havoc's arrival moment)
     }
     if (s.event && !s.joined.includes(p.id)) addMoment(p, 'event', { name: COMMUNITY_EVENTS.find((e) => e.id === s.event)?.name ?? act.name }); // (Milestone 27: the Memory Book)
     if (!s.joined.includes(p.id)) s.joined.push(p.id);
@@ -1545,6 +1554,31 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       ms.sessions = (ms.sessions ?? 0) + 1;
       ms.lastSession = { day, theme: themeOf(p.def, p.state), with: null, kind: 'group' };
       log(p, `Life-story time: ${themeOf(p.def, p.state)}`);
+    }
+  }
+  // Milestone 30b: the Works Gods on a session (src/systems/blessings.js), rolled once per session. Jinx (a program
+  // session on her shift): a lucky day lifts Mood for everyone there. Havoc (a program, community event or birthday tea on
+  // his shift): a big joy boost (Mood and Social Connection) for everyone there, or a harmless mishap — a small clean-up
+  // cost once, or only a funny line. Neither ever touches care, safety, health or any task.
+  function godSession(p, s, day, slot, act) {
+    const roll = blessings.session(s, `${day}:${slot}`, { program: !!s.program, event: !!s.event, birthday: !!s.birthday });
+    if (!roll.lucky && !roll.chaos) return;
+    const B = BLESSINGS;
+    const o = p.state.outcomes;
+    if (roll.lucky) o.mood = clamp(o.mood + B.jinx.luckyMood);
+    if (roll.chaos === 'joy') {
+      o.mood = clamp(o.mood + B.havoc.joyMood);
+      o.connection = clamp(o.connection + B.havoc.joyConnection);
+    }
+    if (s.blessingSaid) return; // (the line, and a mishap's clean-up, once per session)
+    s.blessingSaid = true;
+    const name = s.program ? programById(s.program)?.name ?? act.name : s.event ? COMMUNITY_EVENTS.find((e) => e.id === s.event)?.name ?? act.name : act.name;
+    if (roll.lucky) bus?.emit('care:blessing', { god: 'jinx', kind: 'lucky', text: `A lucky day at ${name}: everyone there is smiling` });
+    if (roll.chaos === 'joy') bus?.emit('care:blessing', { god: 'havoc', kind: 'joy', text: `Havoc livened up ${name}: everyone there loved it` });
+    if (roll.chaos === 'mishap') {
+      const mh = MISHAPS.find((x) => x.id === roll.mishap) ?? MISHAPS[0];
+      if (mh.cost) pay(-mh.cost, `Clean-up after ${name} (${mh.text.toLowerCase()})`, 'upkeep');
+      bus?.emit('care:blessing', { god: 'havoc', kind: 'mishap', mishap: mh.id, cost: mh.cost, text: `${mh.text} at ${name}${mh.cost ? `: a small clean-up (${mh.cost} Credits)` : ''}` });
     }
   }
   // Milestone 14: on a birthday the resident's most familiar staff on shift drop by (a short visit each, pinned to them).
@@ -1880,7 +1914,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       // Milestone 13: a familiar helper works a little faster (communication / routine efficiency, bible §6)
       // (Milestone 15: a Care Worker preps more slowly than a Hospitality worker)
       const rate = kitchenTask ? (q.role === 'HN' || specialtiesOf(q.id).includes('nutrition') ? 1 : PREP.careWorkerRate) : 1 + familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, q.id)).speedUp;
-      t.workLeft -= (hours * rate) / incidentSlow(t); // (Milestone 25: the hoist out, or the water low)
+      t.workLeft -= (hours * rate * blessings.taskRate(q.id)) / incidentSlow(t); // (Milestone 25: the hoist out, or the water low; Milestone 30b: Zip's own work 20% quicker, the same care)
       if (t.workLeft <= 1e-9) completeTask(t, q);
     }
     // free staff pick their next task (bible §15 order: src/systems/careTasks.js scorePair)
@@ -2047,7 +2081,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     tryFamilyRoom(v, p);
     if (v.meeting) openMeeting(v, p);
     bus?.emit('care:visit', { resident: p.id, name: p.name, visitor: x.name, from: fromWord(p), first, art: first ? FIRSTS.visitArt : null });
-    if ((familyOf(p)?.trust ?? 0) >= ITEM_SOURCES.family.minTrust) items.rollSource('family', { why: `${x.name}, visiting ${p.name}` }); // (Milestone 25c)
+    // (Milestone 25c; Milestone 30b: Jinx's blessing makes a thank-you gift more likely, and it counts as a good surprise)
+    if ((familyOf(p)?.trust ?? 0) >= ITEM_SOURCES.family.minTrust && items.rollSource('family', { why: `${x.name}, visiting ${p.name}`, chanceMult: blessings.surpriseMult() })) bus?.emit('care:surprise', { kind: 'gift', resident: p.id });
   }
   // The visit ends: what they noticed moves Trust (each part a fixed amount), a line in the log, perhaps a compliment or
   // a complaint, then the visitor walks out.
@@ -2067,6 +2102,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     log(p, `${fromWord(p)} visited — ${visitWords(parts, call)} (Family Trust ${signedN(change)})`);
     st.outcomes.connection = clamp(st.outcomes.connection + VISIT.connection);
     if (v.party) st.outcomes.mood = clamp(st.outcomes.mood + REQUESTS.birthdayParty.partyTrust);
+    if (v.party) {
+      bus?.emit('care:surprise', { kind: 'party', resident: p.id }); // (Milestone 30b: a family birthday party held — a good surprise,
+      bus?.emit('care:celebration', { party: p.id }); // and a celebration: Havoc's arrival moment)
+    }
     const ms = memoryOf(p);
     if (ms?.family) ms.family.connection = clamp(ms.family.connection + VISIT.memoryConnection); // (Milestone 17's stored connection)
     rec.lastVisit = clock.totalDays;
@@ -2464,7 +2503,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           q.room = requestRoom(p, kind)?.id ?? null;
           if (!q.room) continue;
         }
-        if (new Rng(`${seed}:request:${kind}:${p.id}:${day}`).next() >= R.chance) continue;
+        if (new Rng(`${seed}:request:${kind}:${p.id}:${day}`).next() >= (kind === 'birthdayParty' ? Math.min(1, R.chance * blessings.surpriseMult()) : R.chance)) continue; // (Milestone 30b: Jinx makes a family birthday party more likely)
         fh.nextId++;
         fh.requests.push(q);
         bus?.emit('care:familyRequest', { id: q.id, resident: p.id, kind });
@@ -2855,7 +2894,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const ts = care.tasks.filter((t) => t.type === 'roomCheck' && t.day === day);
     return [ts.filter((t) => t.status === 'done').length, ts.filter((t) => t.status === 'missed').length];
   };
-  const environmentNow = () => environmentScore({ rooms: roomList().map((r) => r.defId), facilities: [...facilityIds()], checks: partners.roomChecks() });
+  // (Milestone 30b: Bolt on the team adds his blessing to Environment & Compliance, never past 100)
+  const environmentNow = () => {
+    const e = environmentScore({ rooms: roomList().map((r) => r.defId), facilities: [...facilityIds()], checks: partners.roomChecks() });
+    const b = blessings.environmentBonus();
+    return b ? { ...e, score: Math.min(100, e.score + b), blessing: b } : e;
+  };
   partners = createPartners({
     care,
     ledger,
@@ -2864,6 +2908,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     today: () => clock.totalDays,
     hooks: {
       reward: (kind, info) => items.rollSource(kind, { why: info.name }), // (Milestone 25c)
+      payMult: () => blessings.partnerMult(), // (Milestone 30b: Kaching on the team — partner support and grant goals pay more)
       rank: () => rankNow(),
       score: (name) => (name === 'nutrition' ? nutritionOutcome() : name === 'environment' ? environmentNow().score : null),
       buildable: (id) => hasPiece(id) || layout.unlock(id).ok,
@@ -3905,9 +3950,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       const missedThisMonth = (care.counts?.essentialMissed ?? 0) - (it.essentialAtClose ?? 0);
       it.essentialAtClose = care.counts?.essentialMissed ?? 0;
       if (missedThisMonth === 0 && seated().length > 0) items.rollSource('calmMonth');
-      if (items.chance(ITEM_SOURCES.wellWisher.monthlyChance)) items.grant('wellWisher');
+      if (items.chance(Math.min(1, ITEM_SOURCES.wellWisher.monthlyChance * blessings.surpriseMult())) && items.grant('wellWisher')) bus?.emit('care:surprise', { kind: 'wellWisher' }); // (Milestone 30b: Jinx's blessing; a good surprise)
       const d = clock.dateOf(day - 1);
-      const closed = ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll(), home: homeCosts() });
+      const closed = ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll(), home: homeCosts(), feeMult: blessings.feeMult() }); // (Milestone 30b: Kaching)
       // (Milestone 23: the partners' savings on this close — GoldenStep on equipment, BOTWORKS on upkeep and utilities —
       // their month checks, and a new grant board)
       const closeSum = (cats) => (closed ?? []).filter((l) => cats.includes(l.category)).reduce((t, l) => t + l.amount, 0);
@@ -3990,6 +4035,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return director; // (Milestone 28: the event director)
     },
     items, // (Milestone 25c: care equipment)
+    blessings, // (Milestone 30b: the Works Gods' blessings — src/systems/blessings.js)
     get secrets() {
       return secrets; // (Milestone 29: the secret engine, its clue stages, rewards and why-false inspector)
     },
@@ -5015,7 +5061,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (next.unlock.accreditation) parts.push({ text: `The ${next.unlock.accreditationName} (${next.unlock.accreditation})`, ok: quality.won(next.unlock.accreditation) });
     if (next.unlock.check === 'program') parts.push({ text: 'A specialist program running', ok: Object.keys(progState.running).length > 0 });
     if (next.unlock.check === 'year') parts.push({ text: `Year ${next.unlock.year} or later (now Year ${clock.year})`, ok: clock.year >= next.unlock.year });
-    return { next, parts, ok: parts.every((x) => x.ok), cost: next.cost ?? 0, days: next.buildDays ?? 0 };
+    // (Milestone 30b: Bolt's blessing — cheaper and quicker)
+    return { next, parts, ok: parts.every((x) => x.ok), cost: boltCost(next.cost ?? 0), days: boltDays(next.buildDays ?? 0) };
   }
   // After a stage opens: the access check again; anything that fails (it shouldn't — the floor only grows) gets the M10
   // nudge fix-up, and the move is logged. → the moved pieces
@@ -5115,13 +5162,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const p = residents.find((x) => x.state.room === pieceId && !x.state.guest && !x.state.leaving);
     return p ? p.name : null;
   };
+  layout.setUpgradeMods({ cost: boltCost, days: boltDays }); // (Milestone 30b: Bolt's blessing on level-ups)
   world.build = {
+    // (Milestone 30b) what building this costs now (Bolt on the team: 15% less)
+    costOf: (defId) => boltCost(layout.costOf(defId)),
     // Can this go here? (plus the money and the lock) → { ok, reason }
     check(defId, col, row, uid = null) {
       if (uid == null) {
         const u = layout.unlock(defId);
         if (!u.ok) return u;
-        const cost = layout.costOf(defId);
+        const cost = boltCost(layout.costOf(defId));
         if (ledger.balance < cost) return { ok: false, reason: `Not enough Credits: it costs ${cost.toLocaleString('en-GB')}` };
       }
       return layout.check(defId, col, row, uid);
@@ -5131,7 +5181,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (!c.ok) return c;
       const r = layout.place(defId, col, row);
       if (!r.ok) return r;
-      const cost = layout.costOf(defId);
+      const cost = boltCost(layout.costOf(defId));
       pay(-cost, `Build: ${r.piece.name}`, 'build');
       // (Milestone 23: BrightHome's saving on a new room; a facility built counts for the equipment grant)
       if (roomById(defId)) partners?.noteSaving('roomBuildPct', cost, 'now');
@@ -5257,6 +5307,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     birthdaysHeld: () => acts.state.birthdays?.held ?? {},
     birthdayFirst: () => acts.state.birthdays?.first ?? null,
     ngPlus: () => ngPlus ?? 0,
+    facilitiesAtLevel: (n) => layout.pieces.filter((pc) => facilityById(pc.defId) && !roomById(pc.defId) && (layout.levelOf(pc.uid) ?? 1) >= n).length, // (Milestone 30b: Bolt's secret)
     homeName: () => homeName ?? null,
     addRecognition: () => (staffState.founder.history.recognitions = (staffState.founder.history.recognitions ?? 0) + 1),
     // (Milestone 30: a special menu the team can make; a staff secret's named person arrives on the Recruit board)
