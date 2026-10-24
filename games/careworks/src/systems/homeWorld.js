@@ -5262,6 +5262,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     // (Milestone 30: a special menu the team can make; a staff secret's named person arrives on the Recruit board)
     dietMadeByTeam: (residentId) => world.dietMadeByTeam(residentId),
     specialArrival: (staffId) => staffing.arrive(staffId),
+    // (Milestone 30 Batch B: a resident's birthday — their age now — and the quiet group activities)
+    birthdayOf: (residentId) => birthdayOf(residentId),
+    isQuietActivity: (activityId) => !!activityById(activityId)?.quiet,
   };
   secrets = createSecrets({ env: secretEnv, state: care.secrets, rules: secretRules ?? undefined, bus, strict: secretsStrict, runId: runId ?? seed, account: secretsAccount });
   directorLive = true; // (Milestone 28: from here on, every moment goes through the director)

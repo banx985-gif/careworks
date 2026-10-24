@@ -25,7 +25,7 @@ import { SecretEngine, SECRET_OPS, readPath } from '../../../../core/SecretEngin
 import { UnlockRunner } from '../../../../core/UnlockActions.js';
 import { DiscoveryArchive } from '../../../../core/DiscoveryArchive.js';
 import { CLUE, EASING, TRIGGERS, FACTS, REWARD_TYPES, SECRET_RULES, factDef } from '../../data/secrets.js';
-import { createSecretFacts, ensureLog, monthRecord, dailyRecord } from './secretFacts.js';
+import { createSecretFacts, ensureLog, monthRecord, dailyRecord, noteMoment } from './secretFacts.js';
 import { SCORES } from '../../data/quality.js';
 
 const OWN_TRIGGERS = ['secrets:day', 'secrets:month'];
@@ -93,10 +93,28 @@ export function validateSecretRules(rules = SECRET_RULES, { triggers = TRIGGERS,
     };
     for (const c of [...(r?.requiresAll ?? []), ...(r?.requiresAny ?? [])]) walk(c, 'requires');
     for (const c of r?.forbids ?? []) walk(c, 'forbids');
+    for (const c of r?.clueGate ?? []) walk(c, 'requires'); // (Milestone 30: a clue gate may never wait for harm either)
     if (bad.length) errors.push(...bad);
     else good.push(r);
   }
   return { ok: !errors.length, errors, good };
+}
+
+// --- the clue gate (Milestone 30 Batch B) -------------------------------------------------------------------------------------
+// A rule's optional `clueGate: [cond]`: no rumour (no clue stage, no Inbox line, nothing on the Secrets page) until every one
+// holds — the Legendary staff secrets wait for Rank B. The core engine as it is, with its clue step wrapped here.
+class CareSecretEngine extends SecretEngine {
+  gateOpen(rule) {
+    return (rule.clueGate ?? []).every((c) => this.evalCond(c, { event: 'gate', payload: {} }, false).ok);
+  }
+  _clues(rule, res) {
+    if (this.gateOpen(rule)) super._clues(rule, res);
+  }
+  clueStage(id) {
+    const rule = this.byId[id];
+    if (rule && !this.unlockedInRun(id) && !this.account.history[id] && !this.gateOpen(rule)) return 0;
+    return super.clueStage(id);
+  }
 }
 
 // --- the system ------------------------------------------------------------------------------------------------------------
@@ -163,10 +181,12 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
       env.specialArrival?.(a.id);
     },
     event: (a) => !st.flags.includes(`event:${a.id}`) && st.flags.push(`event:${a.id}`),
+    // (Milestone 30 Batch B: an unlock flag — a facility, program, plan or boost a later milestone builds and reads)
+    unlock: (a) => !st.flags.includes(`unlock:${a.id}`) && st.flags.push(`unlock:${a.id}`),
   };
   const runner = new UnlockRunner({ handlers });
   const facts = createSecretFacts({ env, log: () => log, engine: () => engine, account: () => ({ memoryBook: () => accountFacts.memoryBook(), prestigeTokens: () => api.prestigeTokens }) });
-  const engine = new SecretEngine({ bus: engineBus, rules: live, facts, runner, ngPlus: () => env.ngPlus(), currencyTypes: CURRENCY, easing: EASING, now, discoveredStage: CLUE.found });
+  const engine = new CareSecretEngine({ bus: engineBus, rules: live, facts, runner, ngPlus: () => env.ngPlus(), currencyTypes: CURRENCY, easing: EASING, now, discoveredStage: CLUE.found });
   const archive = new DiscoveryArchive({});
 
   // --- clues and found -------------------------------------------------------------------------------------------------
@@ -228,6 +248,7 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
   function onEmit(name, payload = {}) {
     if (name === 'care:birthday') log.birthdays = (log.birthdays ?? 0) + (payload.residents?.length ?? 1);
     if (name === 'care:discharge') log.discharges = (log.discharges ?? 0) + 1;
+    noteMoment(env, log, name, payload); // (Milestone 30 Batch B: birthdays at 100 / a round age, Night shifts, community sessions, the pilot)
     const key = FIRST_KEYS[name]?.(payload);
     if (key && !(log.timeline ??= []).some((x) => x.key === key)) log.timeline.push({ key, day: env.today() });
     if (name === 'staff:hired' && payload.id && log.joined[payload.id] == null) log.joined[payload.id] = env.today();
@@ -324,7 +345,8 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
         const st2 = archive.state(r.id);
         if (engine.everUnlocked(r.id)) return { id: r.id, state: engine.unlockedInRun(r.id) ? 'found' : 'known', name: r.name, reward: rewardWords(r), day: engine.run.unlocked[r.id]?.day ?? engine.account.history[r.id]?.first?.day ?? null, stage: CLUE.found };
         if (s > 0) return { id: r.id, state: 'clue', name: '???', clue: clueText(r, s), stage: s, of: CLUE.stages };
-        return { id: r.id, state: st2 === 'unknown' ? 'unknown' : st2, name: '???', stage: 0, of: CLUE.stages };
+        // (a rumour held back by its clue gate — or never reached — shows as not yet hinted at)
+        return { id: r.id, state: st2 === 'unknown' || st2 === 'clue' ? 'unknown' : st2, name: '???', stage: 0, of: CLUE.stages };
       });
     },
     get foundCount() {

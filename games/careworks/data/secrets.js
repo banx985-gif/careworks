@@ -49,13 +49,13 @@ export const FACTS = {
   'run.stage': { name: 'Facility stage', kind: 'number' },
   'run.year': { name: 'Campaign year', kind: 'number' },
   'run.rank': { name: 'Rank (E 0 … S 5)', kind: 'number' },
-  'run.residentList': { name: 'Each resident', kind: 'list', fields: { id: 'id', stay: 'stay type', longTerm: 'long-term stay', tags: 'life-story tags', mood: 'Mood', comfort: 'Comfort', independence: 'Independence', connection: 'Social Connection', mobility: 'mobility level', familyTrust: 'their family’s Trust', daysHere: 'days living here', memorySupport: 'memory support', starting: 'here since the home opened', plan: 'care plan options (plan.<domain>)', specialMenu: 'on a special menu the team can make', favouriteFood: 'Favourite-Food Boost active', dining: 'dining satisfaction', familiar: 'their highest Familiar Care', familiar90Days: 'days in a row with Familiar Care 90+' } },
+  'run.residentList': { name: 'Each resident', kind: 'list', fields: { id: 'id', stay: 'stay type', longTerm: 'long-term stay', tags: 'life-story tags', mood: 'Mood', comfort: 'Comfort', independence: 'Independence', connection: 'Social Connection', mobility: 'mobility level', familyTrust: 'their family’s Trust', daysHere: 'days living here', memorySupport: 'memory support', starting: 'here since the home opened', plan: 'care plan options (plan.<domain>)', specialMenu: 'on a special menu the team can make', favouriteFood: 'Favourite-Food Boost active', dining: 'dining satisfaction', familiar: 'their highest Familiar Care', familiar90Days: 'days in a row with Familiar Care 90+', gardenerDays: 'days in a row a Gardening resident in the garden program at Mood 95+', musicDance: 'Music or Dancing in their story', readingHistory: 'Reading or History in their story', quietSessions: 'quiet group sessions joined', trust95Days: 'days in a row their family’s Trust 95+', memorySessions: 'personalised memory / life-story sessions (ever)', memoryChoiceMin: 'their lowest Choice score', age: 'age now' } },
   // (Milestone 30) the home's averages over the residents here
   'run.community': { name: 'Community (residents’ average Social Connection)', kind: 'number' },
   'run.mobilityOutcome': { name: 'Mobility outcome (residents’ average Independence)', kind: 'number' },
   'run.diningSatisfaction': { name: 'Dining satisfaction (residents’ average)', kind: 'number' },
   // consecutive months (written at each month's close)
-  'run.months': { name: 'Each closed month', kind: 'list', fields: { m: 'month number', scores: 'headline scores (scores.<id>)', lowest: 'lowest headline score', net: 'trading net', profit: 'in profit', noMissed: 'no essential care missed', familyTrust: 'home Family Trust', nutrition: 'Nutrition', environment: 'Environment', residents: 'residents', occupancy: 'occupancy %', agencyShifts: 'agency shifts', agencyPct: 'agency shifts % of shifts', safePct: 'shifts at Safe Coverage %', essentialMissed: { name: 'essential care missed', harm: true }, falls: { name: 'falls', harm: true }, unsafeShifts: { name: 'unsafe shifts', harm: true }, medErrors: { name: 'medication-round issues', harm: true }, complaints: { name: 'complaints', harm: true }, passings: { name: 'passings', harm: true } } },
+  'run.months': { name: 'Each closed month', kind: 'list', fields: { nightShifts: 'Night shifts', nightSafePct: 'Night shifts at Safe Coverage %', shiftsAll: 'shifts', safeAllPct: 'shifts at Safe Coverage % (every shift)', agencyAllPct: 'shifts with agency cover % (every shift)', familiarCare: 'Familiar Care average', choice: 'Choice / preference adherence (Doing something they like)', m: 'month number', scores: 'headline scores (scores.<id>)', lowest: 'lowest headline score', net: 'trading net', profit: 'in profit', noMissed: 'no essential care missed', familyTrust: 'home Family Trust', nutrition: 'Nutrition', environment: 'Environment', residents: 'residents', occupancy: 'occupancy %', agencyShifts: 'agency shifts', agencyPct: 'agency shifts % of shifts', safePct: 'shifts at Safe Coverage %', essentialMissed: { name: 'essential care missed', harm: true }, falls: { name: 'falls', harm: true }, unsafeShifts: { name: 'unsafe shifts', harm: true }, medErrors: { name: 'medication-round issues', harm: true }, complaints: { name: 'complaints', harm: true }, passings: { name: 'passings', harm: true } } },
   'run.monthsClosed': { name: 'Months closed', kind: 'number' },
   // history: the firsts in the order they happened (for sequence / ever-happened rules)
   'run.timeline': { name: 'Firsts, in order (rank:D, award:C01, birthday, discharge, compliment, course, stage:2, partner:<id>)', kind: 'ids' },
@@ -95,6 +95,25 @@ export const FACTS = {
   'run.partners': { name: 'Each partner', kind: 'list', fields: { id: 'id', tier: 'tier (0 Partner … 3 Strategic)', active: 'deal running' } },
   'run.partnerTopTier': { name: 'Highest partner tier', kind: 'number' },
   'run.secretsFound': { name: 'Secrets found in this campaign', kind: 'number' },
+  // (Milestone 30 Batch B)
+  'run.secretsFoundIds': { name: 'Secrets found in this campaign (ids)', kind: 'ids' },
+  'run.centenarians': { name: 'Each 100th birthday held here', kind: 'list', fields: { id: 'resident', day: 'day', wellbeing: 'Resident Wellbeing then', trust: 'their family’s Trust then' } },
+  'run.majorBirthdays': { name: 'Each round-number birthday (80, 90, 100 …) held here', kind: 'list', fields: { id: 'resident', day: 'day', age: 'age', trust: 'their family’s Trust then', trust95Days: 'days in a row their family’s Trust had been 95+' } },
+  'run.nightBellResponse': { name: 'Night call bells answered within ten minutes %', kind: 'number' },
+  'run.communityDoor': { name: 'Community sessions and outings on a day with no essential care missed', kind: 'number' },
+  'run.familyDiningEvents': { name: 'Family dining events hosted (no system yet)', kind: 'number' },
+  'run.pilotDone': { name: 'An assistive-tech pilot completed by a resident who said yes', kind: 'flag' },
+  // (Milestone 30 Batch C)
+  'run.hydrationOnTime': { name: 'Drinks and hydration tasks done on time %', kind: 'number' },
+  'run.favouriteFoodPlans': { name: 'Residents on the Favourite-Food Boost', kind: 'number' },
+  'run.independenceGains': { name: 'Residents who gained 15+ Independence with Safety never below 80', kind: 'number' },
+  'run.drills': { name: 'Emergency drills (no system yet)', kind: 'list', fields: { score: 'score' } },
+  'run.emergencies': { name: 'Each incident handled', kind: 'list', fields: { kind: 'kind', prep: 'Preparedness then', band: 'severity band', calm: 'nobody fell or passed during it', day: 'day' } },
+  'run.otherAwardCount': { name: 'Visible accreditations won besides C10', kind: 'number' },
+  'run.legendaryHired': { name: 'A Legendary or Prestige person joined the team', kind: 'flag' },
+  'run.aheadOfCrownHaven': { name: 'Headline scores ahead of Crown Haven (benchmark)', kind: 'number' },
+  'run.legacyMentored': { name: 'Staff a Legacy Staff member mentored to Elite (no system yet)', kind: 'number' },
+  'account.legacyStaffLevels': { name: 'New Game+ levels one Legacy Staff member was carried through (no system yet)', kind: 'number', scope: 'account' },
   // harm (§35) — only ever in forbids
   'run.essentialMissedMonth': { name: 'Essential care missed this month', kind: 'number', harm: true },
   'run.essentialMissed': { name: 'Essential care missed (ever)', kind: 'number', harm: true },
@@ -106,6 +125,7 @@ export const FACTS = {
   'run.distress': { name: 'Residents in distress (Mood under 20)', kind: 'number', harm: true },
   'run.complaints': { name: 'Complaints (ever)', kind: 'number', harm: true },
   'run.passings': { name: 'Passings', kind: 'number', harm: true },
+  'run.personalAutomation': { name: 'Automation used for personal care', kind: 'number', harm: true }, // (Batch B: never happens)
   'run.eolNotWellSupported': { name: 'End-of-life periods not well supported', kind: 'number', harm: true }, // (Milestone 30)
   'run.forcedDependence': { name: 'Days a resident who could walk was kept on a wheelchair or transfer plan', kind: 'number', harm: true }, // (Milestone 30)
   // account (this device; New Game+ keeps it)
@@ -136,18 +156,54 @@ export const REWARD_TYPES = {
   item: { scope: 'run', text: () => 'A piece of care equipment' }, // items.grant('secret') — never bought
   arrival: { scope: 'run', text: (a) => `A special arrival: ${a.name ?? a.id}` }, // a flag the M30 special arrivals read
   event: { scope: 'run', text: (a) => CELEBRATIONS[a.id]?.name ?? a.id }, // a celebration / event chain flag (M30 builds them)
+  unlock: { scope: 'run', text: (a) => UNLOCKS[a.id]?.name ?? a.id }, // (Milestone 30) an unlock flag `unlock:<id>` a later milestone reads
 };
 export const RECORDS = {
   fiveStarBalance: { name: 'Five-Star Balance', text: 'All five headline scores 90+ together for six months' },
+  reablementChampion: { name: 'Reablement Champion', text: 'Five residents home again, steady and independent' },
+};
+// (Milestone 30) What an unlock flag opens. `builtIn`: the milestone that builds the thing itself (until then only the flag).
+export const UNLOCKS = {
+  libraryCircle: { name: 'The Library Circle program boost', builtIn: 'later' },
+  memoryLane: { name: 'The Memory Lane program', builtIn: 'later' },
+  centenarianClue: { name: 'A clue to the Centenarian Garden', builtIn: 'later' },
+  F34: { name: 'The Centenarian Garden (F34)', builtIn: 'M31' },
+  PRG11: { name: 'The Centenarian Living program (PRG11)', builtIn: 'M31' },
+  F35: { name: 'Legacy House (F35)', builtIn: 'M31' },
+  nightComfortPlan: { name: 'The Prestige Night Comfort plan', builtIn: 'later' },
+  communityDoor: { name: 'The Community Door program', builtIn: 'later' },
+  gentleAssist: { name: 'Gentle-assist logistics tech', builtIn: 'later' },
+  // (Batch C)
+  dignityBonus: { name: 'A lasting Dignity reputation bonus', builtIn: 'later' },
+  continuityPreset: { name: 'The Continuity roster preset', builtIn: 'later' },
+  prestigeDining: { name: 'The Prestige Dining plan', builtIn: 'later' },
+  independenceFirstUpgrade: { name: 'The Independence First trait upgrade', builtIn: 'later' },
+  emergencyExcellenceClue: { name: 'A clue to an Emergency Excellence accreditation', builtIn: 'later' },
+  C11: { name: 'The Master Care Circle accreditation (C11)', builtIn: 'M31' },
+  C12: { name: 'The Home, Not Hospital Honour (C12)', builtIn: 'M31' },
+  PRG12: { name: 'The Home, Not Hospital program (PRG12)', builtIn: 'M31' },
+  benchmarkNetwork: { name: 'The prestige benchmark network', builtIn: 'later' },
+  heartOfHomeEvolution: { name: 'The Founder’s Heart of the Home trait evolution', builtIn: 'later' },
+  workforceStability: { name: 'A Workforce Stability bonus', builtIn: 'later' },
+  legacyMentor: { name: 'The Legacy Mentor trait', builtIn: 'later' },
 };
 export const PALETTES = {
   heritageHome: { name: 'Heritage Home', text: 'A warm heritage palette for any home' },
 };
 export const RECOGNITIONS = {
   oldFriends: { name: 'Old Friends celebration', text: 'Two old friends, celebrated by the whole home' },
+  // (Batch C: accolades)
+  residentLedHome: { name: 'The Resident-Led Home accolade', text: 'A home where residents’ own choices lead the day' },
+  balancedOperations: { name: 'The Balanced Operations accolade', text: 'Full, safe and trusted, all at once' },
 };
 export const CELEBRATIONS = {
   oldFriends: { name: 'The Old Friends celebration' },
+  // (Milestone 30 Batch B)
+  heritageGarden: { name: 'The Heritage Garden event chain' },
+  residentBand: { name: 'The Resident Band event' },
+  familyLegacy: { name: 'The Family Legacy celebration' },
+  familyTable: { name: 'The Family Table event series' },
+  trueEnding: { name: 'The true CAREWORKS ending' }, // (Batch C: SEC-NGP-03 — the ending itself is a later milestone's)
 };
 
 // --- the rules (Milestone 29: three samples from §36 to prove the engine; the other 37 are Milestone 30) ----------------------
@@ -247,18 +303,304 @@ export const SECRET_RULES = [
   // the Recruit board that waits until they are hired (src/systems/staffing.js arrive). Legendary: once per run, looked at
   // each month's close. Prestige (New Game+ 2 / 3): once per account.
   ...staffSecrets(),
+  // --- Milestone 30, Batch B: resident stories (§36 SEC-RES-01, 03–08) and facility / program secrets (SEC-FAC-01, 02,
+  // SEC-PROG-01…04). Once per run, except Legacy House (24 secrets across every run: once per account).
+  ...storyAndPlaceSecrets(),
+  // --- Milestone 30, Batch C: care practice (§36 SEC-CARE-01…05), recognition / peers (SEC-COMP-01, 02, SEC-RIVAL-01),
+  // behaviour (SEC-BEH-01…04) and New Game+ (SEC-NGP-02, 03). Once per run, except New Game+ and anything counted across
+  // every run (secrets found): once per account.
+  ...practiceAndLegacySecrets(),
 ];
+function practiceAndLegacySecrets() {
+  const YEAR = 336;
+  const MONTH = ['secrets:month'];
+  const months = (where, n, label, category = 'quality') => ({ fact: 'run.months', op: 'consecutive', where, value: n, kind: 'count', category, label, unit: 'months' });
+  const unlock = (...ids) => ids.map((id) => ({ type: 'unlock', id }));
+  const rule = (id, name, category, requiresAll, clues, reward, rewardActions, extra = {}) => ({ id, name, category, oncePerRun: true, triggerEvents: MONTH, requiresAll, clueStages: stages(clues), reward, rewardActions, ...extra });
+  // once per account (New Game+, or counted across every run)
+  const account = (r, ng = 0) => {
+    const { oncePerRun, ...rest } = r;
+    return { ...rest, ...(ng ? { ngPlusMin: ng } : {}), oncePerAccount: true };
+  };
+  const C11 = { fact: 'run.awards', op: 'has', value: 'C11', kind: 'fixed', category: 'recognition', label: 'C11 won' }; // (built in Milestone 31: never true until then)
+  const C10 = { fact: 'run.awards', op: 'has', value: 'C10', kind: 'fixed', category: 'recognition', label: 'C10 won' };
+  const secrets = (n) => ({ fact: 'account.secretsFound', op: 'gte', value: n, kind: 'count', category: 'recognition', label: 'Secrets found (every run)' });
+  const LEGACY = (n) => ({ fact: 'account.legacyStaffLevels', op: 'gte', value: n, kind: 'fixed', category: 'staff', label: `One Legacy Staff member carried through New Game+ ${n === 2 ? '1 and 2' : '1, 2 and 3'}` }); // (no system yet)
+  return [
+    rule('SEC-CARE-01', 'Dignity First', 'care', [
+      months([{ field: 'choice', op: 'gte', value: 95 }, { field: 'residents', op: 'gte', value: 20 }], 12, 'Choice / preference adherence 95+ with 20+ residents', 'residents'),
+    ], [
+      'Residents here are asked, and their answers are kept.',
+      'Every small wish, honoured, adds up to dignity.',
+      'A full home where nobody’s wishes get lost.',
+      'Nearly there: dignity has become a habit.',
+    ], 'A lasting Dignity reputation bonus', unlock('dignityBonus')),
+    rule('SEC-CARE-02', 'Familiar Faces', 'care', [
+      months([{ field: 'familiarCare', op: 'gte', value: 90 }, { field: 'agencyAllPct', op: 'lt', value: 10 }], 12, 'Familiar Care average 90+ with agency cover on under 10% of shifts', 'familiarity'),
+    ], [
+      'Residents recognise every face that walks in.',
+      'The same kind people, day after day.',
+      'Strangers on the rota are rare here.',
+      'Very close: a team everyone knows by name.',
+    ], 'The Continuity roster preset', unlock('continuityPreset')),
+    rule('SEC-CARE-03', 'Every Meal Matters', 'care', [
+      { fact: 'run.nutrition', op: 'gte', value: 95, kind: 'threshold', category: 'nutrition', label: 'Nutrition 95+' },
+      { fact: 'run.hydrationOnTime', op: 'gte', value: 99, kind: 'threshold', category: 'nutrition', label: 'Drinks and hydration tasks done on time 99%+' },
+      { fact: 'run.favouriteFoodPlans', op: 'gte', value: 5, kind: 'count', category: 'nutrition', label: 'Residents on the Favourite-Food Boost' },
+    ], [
+      'A good cup of tea, always at the right moment.',
+      'Nobody here waits long for a drink.',
+      'Favourite dishes turn up on the right plates.',
+      'Nearly there: every meal really matters.',
+    ], 'The Prestige Dining plan', unlock('prestigeDining')),
+    rule('SEC-CARE-04', 'Independence Matters', 'care', [
+      { fact: 'run.independenceGains', op: 'gte', value: 10, kind: 'count', category: 'residents', label: 'Residents who gained 15+ Independence with Safety never below 80' },
+    ], [
+      'Some residents are doing more for themselves than when they arrived.',
+      'Steady progress, with nobody put at risk.',
+      'Doing it yourself, safely, is its own reward.',
+      'Very close: so many small victories.',
+    ], 'The Independence First trait upgrade', unlock('independenceFirstUpgrade')),
+    rule('SEC-CARE-05', 'Prepared for Anything', 'care', [
+      { fact: 'run.drills', op: 'countOf', where: [{ field: 'score', op: 'gte', value: 90 }], value: 3, kind: 'count', category: 'safety', label: 'Emergency drills completed at 90+' }, // (no drill system yet: never true)
+      { fact: 'run.emergencies', op: 'countOf', where: [{ field: 'prep', op: 'gte', value: 90 }, { field: 'calm', op: 'eq', value: true }], value: 1, kind: 'fixed', category: 'safety', label: 'An incident handled at Preparedness 90+ with nobody hurt' },
+    ], [
+      'The best homes practise for the days they hope never come.',
+      'Ready supplies, a ready team and a steady plan.',
+      'When something goes wrong, everyone knows what to do.',
+      'Nearly there: calm under pressure.',
+    ], 'A clue to an Emergency Excellence accreditation', unlock('emergencyExcellenceClue')),
+    rule('SEC-COMP-01', 'Master Care Circle', 'recognition', [
+      C10,
+      { fact: 'run.otherAwardCount', op: 'gte', value: 4, kind: 'count', category: 'recognition', label: 'Visible accreditations won besides C10' },
+      { fact: 'run.legendaryHired', op: 'eq', value: true, kind: 'fixed', category: 'staff', label: 'A Legendary (or Prestige) person on the team' },
+    ], [
+      'There is a circle of homes that few ever join.',
+      'The highest national honour is only the start.',
+      'A legend on the team would not go unnoticed.',
+      'Very close: the circle is ready to welcome you.',
+    ], 'The Master Care Circle accreditation (C11)', unlock('C11'), { triggerEvents: ['quality:award', 'secrets:month'] }),
+    account(rule('SEC-COMP-02', 'Home, Not Hospital Honour', 'recognition', [
+      C11,
+      months([{ field: 'scores.clinicalSafety', op: 'gte', value: 95 }, { field: 'scores.residentWellbeing', op: 'gte', value: 95 }], 12, 'Clinical Safety 95+ and Resident Wellbeing 95+ together'),
+      secrets(30),
+    ], [
+      'Some say a care home can feel more like home than any house.',
+      'Safe care and a happy life, each as important as the other.',
+      'Every secret uncovered brings the honour closer.',
+      'Nearly there: a home, not a hospital.',
+    ], 'The Home, Not Hospital Honour (C12) and its program (PRG12)', unlock('C12', 'PRG12')), 2),
+    account(rule('SEC-RIVAL-01', 'Legacy House Network', 'recognition', [
+      C10,
+      { fact: 'run.aheadOfCrownHaven', op: 'gte', value: 3, kind: 'count', category: 'recognition', label: 'Headline scores ahead of Crown Haven' },
+      secrets(12),
+    ], [
+      'A famous home sets the standard everyone measures against.',
+      'Beat the best at their own game, more than once.',
+      'Homes that know the hidden stories share them.',
+      'Very close: a network of the finest homes awaits.',
+    ], 'The prestige benchmark network', unlock('benchmarkNetwork'))),
+    rule('SEC-BEH-01', 'Heart of the Home', 'behaviour', [
+      { fact: 'run.staff', op: 'countOf', where: [{ field: 'starting', op: 'eq', value: true }, { field: 'daysEmployed', op: 'gte', value: 15 * YEAR }], value: 1, kind: 'fixed', category: 'staff', label: 'A starting staff member employed without a break to Year 16' },
+      { fact: 'run.score.staffWellbeing', op: 'gte', value: 80, kind: 'threshold', category: 'quality', label: 'Staff Wellbeing 80+' },
+    ], [
+      'Someone who was there on the very first day.',
+      'Loyalty grows where people are looked after.',
+      'A whole career, in a single home.',
+      'Nearly there: the heart of the home is still beating.',
+    ], 'The Founder’s Heart of the Home trait evolution', unlock('heartOfHomeEvolution')),
+    rule('SEC-BEH-02', 'Resident-Led Home', 'behaviour', [
+      months([{ field: 'choice', op: 'gte', value: 95 }, { field: 'residents', op: 'gte', value: 30 }], 12, 'Choice / preference adherence 95+ with 30+ residents', 'residents'),
+    ], [
+      'In this home, residents decide how the day goes.',
+      'The bigger the home, the harder it is to listen to everyone.',
+      'Listening has become the way things are done.',
+      'Very close: the residents are leading.',
+    ], 'The Resident-Led Home accolade', [{ type: 'recognition', id: 'residentLedHome' }]),
+    rule('SEC-BEH-03', 'No Empty Chairs', 'behaviour', [
+      months([{ field: 'occupancy', op: 'gte', value: 90 }, { field: 'safeAllPct', op: 'gte', value: 85 }, { field: 'scores.residentWellbeing', op: 'gte', value: 85 }, { field: 'scores.familyTrust', op: 'gte', value: 85 }], 12, 'Occupancy 90%+ with Safe Coverage, Resident Wellbeing and Family Trust all 85+', 'facility'),
+    ], [
+      'Every room is wanted, and every family knows why.',
+      'A full house that never feels stretched.',
+      'Busy, safe and trusted, all at once.',
+      'Nearly there: a waiting list of people who want to come.',
+    ], 'The Balanced Operations accolade', [{ type: 'recognition', id: 'balancedOperations' }]),
+    rule('SEC-BEH-04', 'Agency Independence', 'behaviour', [
+      months([{ field: 'agencyAllPct', op: 'lt', value: 5 }, { field: 'safeAllPct', op: 'gte', value: 100 }], 12, 'Agency cover on under 5% of shifts with every shift at Safe Coverage', 'staffing'),
+    ], [
+      'A home that stands on its own team.',
+      'Strangers on the rota are almost never needed.',
+      'Every shift covered, by people who belong here.',
+      'Very close: a team that never lets a shift go short.',
+    ], 'A Workforce Stability bonus', unlock('workforceStability')),
+    account(rule('SEC-NGP-02', 'Continuity Across Generations', 'newGamePlus', [
+      LEGACY(2),
+      { fact: 'run.legacyMentored', op: 'gte', value: 5, kind: 'count', category: 'staff', label: 'Staff the Legacy Staff member mentored to Elite' }, // (no system yet)
+    ], [
+      'Some carers follow you from home to home.',
+      'A familiar face, carried into a new beginning.',
+      'They pass on what they know to the next generation.',
+      'Nearly there: a mentor for every new team.',
+    ], 'The Legacy Mentor trait', unlock('legacyMentor')), 2),
+    account(rule('SEC-NGP-03', 'Living Legacy', 'newGamePlus', [
+      { fact: 'run.awards', op: 'has', value: 'C12', kind: 'fixed', category: 'recognition', label: 'C12 won' }, // (built in Milestone 31)
+      { fact: 'account.memoryBook', op: 'gte', value: 50, kind: 'count', category: 'residents', label: 'Memory Book pages (every home)' },
+      LEGACY(3),
+    ], [
+      'Every home you have run is part of a longer story.',
+      'The memories you keep are the truest record.',
+      'Someone has been with you from the very beginning.',
+      'The last page is nearly written.',
+    ], 'The true CAREWORKS ending and 5 Prestige Tokens', [{ type: 'event', id: 'trueEnding' }, { type: 'prestige', amount: 5 }]), 3),
+  ];
+}
+function storyAndPlaceSecrets() {
+  const YEAR = 336;
+  const residents = (where, n, label, category = 'residents') => ({ fact: 'run.residentList', op: 'countOf', where, value: n, kind: 'count', category, label });
+  const rule = (id, name, category, triggers, requiresAll, clues, reward, rewardActions, extra = {}) => ({ id, name, category, oncePerRun: true, triggerEvents: triggers, requiresAll, clueStages: stages(clues), reward, rewardActions, ...extra });
+  const MONTH = ['secrets:month'];
+  return [
+    rule('SEC-RES-01', 'The Gardener', 'residentStory', MONTH, [
+      { fact: 'run.programIds', op: 'has', value: 'PRG01', kind: 'fixed', category: 'programs', label: 'Gardening & Horticulture running' },
+      residents([{ field: 'gardenerDays', op: 'gte', value: 168 }], 1, 'A resident who loves gardening, in the garden program, at Mood 95+ for 6 months in a row'),
+    ], [
+      'Someone here has green fingers and a story to go with them.',
+      'Soil, seedlings and sunshine do more than you might think.',
+      'A gardener has been glowing for a long time now.',
+      'Nearly there: the garden is almost in full bloom.',
+    ], 'The Heritage Garden event chain', [{ type: 'event', id: 'heritageGarden' }]),
+    rule('SEC-RES-03', 'The Band', 'residentStory', MONTH, [
+      residents([{ field: 'musicDance', op: 'eq', value: true }, { field: 'connection', op: 'gte', value: 90 }], 3, 'Residents with Music or Dancing in their story, at Social Connection 90+ together'),
+    ], [
+      'Somebody keeps humming the same old tune.',
+      'Music lovers find each other, given the chance.',
+      'A few voices are starting to sound like a group.',
+      'Very close: someone is tuning up.',
+    ], 'The Resident Band event', [{ type: 'event', id: 'residentBand' }]),
+    rule('SEC-RES-04', 'Book Club', 'residentStory', MONTH, [
+      residents([{ field: 'readingHistory', op: 'eq', value: true }, { field: 'quietSessions', op: 'gte', value: 8 }], 4, 'Residents with Reading or History in their story who joined 8 quiet group sessions'),
+    ], [
+      'There is talk of a well-thumbed book being passed around.',
+      'Readers and history lovers enjoy a calm afternoon together.',
+      'Quiet sessions, again and again, build something.',
+      'Nearly there: a little circle has formed.',
+    ], 'The Library Circle program boost', [{ type: 'unlock', id: 'libraryCircle' }]),
+    rule('SEC-RES-05', 'Home Again', 'residentStory', ['care:discharge', 'secrets:month'], [
+      { fact: 'run.discharges', op: 'countOf', where: [{ field: 'independence', op: 'gte', value: 85 }], value: 5, kind: 'count', category: 'residents', label: 'Rehab discharges at Independence 85+' },
+    ], [
+      'Some people only come to stay for a while, and leave stronger.',
+      'Going home steady and sure is the best goodbye.',
+      'Several residents have walked out of the front door on their own.',
+      'Very close: another proud farewell.',
+    ], 'The Reablement Champion record', [{ type: 'record', id: 'reablementChampion' }]),
+    rule('SEC-RES-06', 'Four Generations', 'residentStory', ['care:birthday', 'secrets:month'], [
+      residents([{ field: 'trust95Days', op: 'gte', value: 3 * YEAR }], 1, 'A family with Trust 95+ for 3 years in a row', 'family'),
+      { fact: 'run.majorBirthdays', op: 'countOf', where: [{ field: 'trust95Days', op: 'gte', value: 3 * YEAR }], value: 1, kind: 'fixed', category: 'family', label: 'A round-number birthday (80, 90, 100 …) held for that resident' },
+    ], [
+      'A large family visits as often as they can.',
+      'Trust built slowly lasts the longest.',
+      'A big birthday is coming for someone much loved.',
+      'Nearly there: the whole family will want to be here.',
+    ], 'The Family Legacy celebration', [{ type: 'event', id: 'familyLegacy' }]),
+    rule('SEC-RES-07', 'Century Club', 'residentStory', ['care:birthday', 'secrets:month'], [
+      { fact: 'run.centenarians', op: 'countOf', where: [{ field: 'wellbeing', op: 'gte', value: 90 }, { field: 'trust', op: 'gte', value: 80 }], value: 1, kind: 'fixed', category: 'residents', label: 'A 100th birthday held while Resident Wellbeing is 90+ and their family’s Trust 80+' },
+    ], [
+      'Someone here has seen a great deal of history.',
+      'A very special birthday deserves a very happy home.',
+      'Their family will want to share the day.',
+      'Very close: get the candles ready.',
+    ], 'A clue to the Centenarian Garden', [{ type: 'unlock', id: 'centenarianClue' }]),
+    rule('SEC-RES-08', 'Memory Lane', 'residentStory', MONTH, [
+      residents([{ field: 'memorySupport', op: 'eq', value: true }, { field: 'memorySessions', op: 'gte', value: 12 }, { field: 'memoryChoiceMin', op: 'gte', value: 80 }], 1, 'A memory-support resident with 12 personalised sessions, their Choice score never below 80', 'memory'),
+    ], [
+      'Old photographs can open doors that seem closed.',
+      'A personal story, told again and again, brings peace.',
+      'Doing it their way matters as much as doing it at all.',
+      'Nearly there: another walk down a well-loved road.',
+    ], 'The Memory Lane program', [{ type: 'unlock', id: 'memoryLane' }]),
+    rule('SEC-FAC-01', 'Centenarian Garden', 'facility', MONTH, [
+      { fact: 'run.secretsFoundIds', op: 'has', value: 'SEC-RES-07', kind: 'fixed', category: 'residents', label: 'Century Club found' },
+      { fact: 'run.score.residentWellbeing', op: 'gte', value: 90, kind: 'threshold', category: 'quality', label: 'Resident Wellbeing 90+' },
+      { fact: 'run.programs', op: 'countOf', where: [{ field: 'id', op: 'eq', value: 'PRG01' }, { field: 'days', op: 'gte', value: YEAR }], value: 1, kind: 'fixed', category: 'programs', label: 'Gardening & Horticulture running for 12 months' },
+    ], [
+      'A remarkable birthday has people talking about a special garden.',
+      'Long lives deserve a beautiful place to sit.',
+      'A garden kept going season after season.',
+      'Very close: the first stones are being laid.',
+    ], 'The Centenarian Garden (F34) and the Centenarian Living program (PRG11)', [{ type: 'unlock', id: 'F34' }, { type: 'unlock', id: 'PRG11' }], {
+      // (its rumours start with Century Club: that secret's reward is the Centenarian clue)
+      clueGate: [{ fact: 'run.secretsFoundIds', op: 'has', value: 'SEC-RES-07', kind: 'fixed', category: 'residents', label: 'Century Club found (before any rumour)' }],
+    }),
+    {
+      ...rule('SEC-FAC-02', 'Legacy House', 'facility', MONTH, [
+        { fact: 'account.secretsFound', op: 'gte', value: 24, kind: 'count', category: 'recognition', label: 'Secrets found (every run)' },
+        { fact: 'run.awards', op: 'has', value: 'C11', kind: 'fixed', category: 'recognition', label: 'C11 won' }, // (C11 is built in Milestone 31: never true until then)
+        { fact: 'run.staff', op: 'countOf', where: [{ field: 'starting', op: 'eq', value: true }, { field: 'daysEmployed', op: 'gte', value: 16 * YEAR }], value: 1, kind: 'fixed', category: 'staff', label: 'A starting staff member still here through Year 16' },
+      ], [
+        'Homes with a long memory leave something behind.',
+        'Every secret you uncover adds to the story.',
+        'Someone who opened the doors with you is still here.',
+        'Nearly there: a house worth leaving as a legacy.',
+      ], 'Legacy House (F35)', [{ type: 'unlock', id: 'F35' }]),
+      oncePerRun: undefined,
+      oncePerAccount: true,
+    },
+    rule('SEC-PROG-01', 'Night Comfort Excellence', 'program', MONTH, [
+      { fact: 'run.months', op: 'consecutive', where: [{ field: 'nightShifts', op: 'gte', value: 26 }, { field: 'nightSafePct', op: 'gte', value: 100 }], value: 24, kind: 'count', category: 'staffing', label: 'Night shifts every night, all at Safe Coverage', unit: 'months' },
+      { fact: 'run.nightBellResponse', op: 'gte', value: 95, kind: 'threshold', category: 'staffing', label: 'Night call bells answered within ten minutes 95%+' },
+    ], [
+      'The quietest hours say the most about a home.',
+      'A steady team through the night lets everyone sleep easy.',
+      'When someone calls in the dark, someone comes quickly.',
+      'Very close: the calmest nights anyone can remember.',
+    ], 'The Prestige Night Comfort plan', [{ type: 'unlock', id: 'nightComfortPlan' }]),
+    rule('SEC-PROG-02', 'Family Table', 'program', MONTH, [
+      { fact: 'run.score.familyTrust', op: 'gte', value: 92, kind: 'threshold', category: 'family', label: 'Family Trust 92+' },
+      { fact: 'run.diningSatisfaction', op: 'gte', value: 90, kind: 'threshold', category: 'nutrition', label: 'Dining satisfaction 90+' },
+      { fact: 'run.familyDiningEvents', op: 'gte', value: 6, kind: 'count', category: 'family', label: 'Family dining events hosted' }, // (no system yet: never true)
+    ], [
+      'Families talk about the food as much as the care.',
+      'A good meal is better shared.',
+      'Inviting families to the table becomes a tradition.',
+      'Nearly there: set a few more places.',
+    ], 'The Family Table event series', [{ type: 'event', id: 'familyTable' }]),
+    rule('SEC-PROG-03', 'Community Door', 'program', MONTH, [
+      { fact: 'run.communityDoor', op: 'gte', value: 12, kind: 'count', category: 'community', label: 'Community sessions and outings on a day with no essential care missed' },
+    ], [
+      'Neighbours keep dropping by with a smile.',
+      'The world outside is welcome here.',
+      'Busy days out, with everyone at home still well cared for.',
+      'Very close: the door is almost always open.',
+    ], 'The Community Door program', [{ type: 'unlock', id: 'communityDoor' }], {
+      forbids: [{ fact: 'run.essentialMissedMonth', op: 'gt', value: 0, kind: 'fixed', category: 'care', label: 'Essential care missed this month' }],
+    }),
+    rule('SEC-PROG-04', 'BOTWORKS Gentle Assist', 'program', ['partners:signed', 'secrets:month'], [
+      { fact: 'run.partners', op: 'countOf', where: [{ field: 'id', op: 'eq', value: 'SPN08' }, { field: 'tier', op: 'gte', value: 3 }], value: 1, kind: 'fixed', category: 'partners', label: 'BOTWORKS Assistive Systems (SPN08) a Strategic partner' },
+      { fact: 'run.pilotDone', op: 'eq', value: true, kind: 'fixed', category: 'partners', label: 'An assistive-tech pilot completed by a resident who said yes' },
+    ], [
+      'A technology partner is curious about how a caring home works.',
+      'Helpful machines belong in the store room, not at the bedside.',
+      'Residents who try something new because they want to.',
+      'Nearly there: a long and trusting partnership.',
+    ], 'Gentle-assist logistics tech', [{ type: 'unlock', id: 'gentleAssist' }], {
+      forbids: [{ fact: 'run.personalAutomation', op: 'gt', value: 0, kind: 'fixed', category: 'partners', label: 'Automation used for personal care' }],
+    }),
+  ];
+}
 function staffSecrets() {
   const RANK_A = { fact: 'run.rank', op: 'gte', value: 4, kind: 'fixed', category: 'recognition', label: 'Rank A' };
+  const RANK_B = { fact: 'run.rank', op: 'gte', value: 3, kind: 'fixed', category: 'recognition', label: 'Rank B (before any rumour)' };
   const YEAR = 336; // (12 months of 28 days)
   const months = (where, n, label, category = 'quality') => ({ fact: 'run.months', op: 'consecutive', where, value: n, kind: 'count', category, label, unit: 'months' });
   const residents = (where, n, label, category = 'residents') => ({ fact: 'run.residentList', op: 'countOf', where, value: n, kind: 'count', category, label });
   const program = (id, days, label) => ({ fact: 'run.programs', op: 'countOf', where: [{ field: 'id', op: 'eq', value: id }, { field: 'days', op: 'gte', value: days }], value: 1, kind: 'fixed', category: 'programs', label });
   const ever = (id, label) => ({ fact: 'run.programsEver', op: 'has', value: id, kind: 'fixed', category: 'programs', label });
   const arrival = (id, name) => [{ type: 'arrival', id, name }];
-  const legend = (id, name, staffId, person, requiresAll, clues, forbids = []) => ({ id, name, category: 'staff', oncePerRun: true, triggerEvents: ['secrets:month'], requiresAll, forbids, clueStages: stages(clues), reward: `${person} arrives (a special arrival on the Recruit board)`, rewardActions: arrival(staffId, person) });
+  // (Batch B: no rumour of a Legendary person until the home reaches Rank B — the clue gate, src/systems/secrets.js)
+  const legend = (id, name, staffId, person, requiresAll, clues, forbids = []) => ({ id, name, category: 'staff', oncePerRun: true, triggerEvents: ['secrets:month'], requiresAll, forbids, clueGate: [RANK_B], clueStages: stages(clues), reward: `${person} arrives (a special arrival on the Recruit board)`, rewardActions: arrival(staffId, person) });
+  // (Prestige: no Rank gate — New Game+ already holds their rumours back)
   const prestige = (id, name, staffId, person, ng, requiresAll, clues, forbids = []) => {
-    const { oncePerRun, ...r } = legend(id, name, staffId, person, requiresAll, clues, forbids);
+    const { oncePerRun, clueGate, ...r } = legend(id, name, staffId, person, requiresAll, clues, forbids);
     return { ...r, ngPlusMin: ng, oncePerAccount: true };
   };
   return [
@@ -375,7 +717,7 @@ export function secretStrings() {
   const out = [];
   for (const r of SECRET_RULES) out.push(r.name, r.reward, ...r.clueStages.map((s) => s.text), ...[...(r.requiresAll ?? []), ...(r.requiresAny ?? []), ...(r.forbids ?? [])].map((c) => c.label ?? ''));
   for (const t of Object.values(REWARD_TYPES)) out.push(t.text({ id: 'x', amount: 2 }));
-  for (const g of [RECORDS, PALETTES, RECOGNITIONS, CELEBRATIONS]) for (const v of Object.values(g)) out.push(v.name, v.text ?? '');
+  for (const g of [RECORDS, PALETTES, RECOGNITIONS, CELEBRATIONS, UNLOCKS]) for (const v of Object.values(g)) out.push(v.name, v.text ?? '');
   for (const f of Object.values(FACTS)) out.push(f.name);
   return out.filter(Boolean);
 }

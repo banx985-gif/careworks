@@ -20,6 +20,7 @@ import { FRIENDSHIP } from '../../data/relationships.js';
 import { stayTypeOf } from './endOfLife.js';
 import { dietOf } from './dining.js';
 import { AID_LEVELS } from '../../data/mobility.js';
+import { staffById } from '../../data/staff.js';
 
 const r1 = (x) => Math.round(x * 10) / 10;
 const avg = (list) => (list.length ? list.reduce((a, b) => a + b, 0) / list.length : null);
@@ -37,6 +38,56 @@ const DEPENDENCE_PLANS = ['MO08', 'MO04']; // Wheelchair Mobility Plan, Transfer
 const WALKS_FROM = AID_LEVELS.find((a) => a.aid === 'frame').from; // a mobility level at which a walking plan fits
 const topFamiliar = (env, residentId) => Math.max(0, ...env.team().map((q) => env.familiarityOf(residentId, q.id) ?? 0));
 const forcedNow = (env) => env.residentsHere().filter((p) => DEPENDENCE_PLANS.includes(p.state.plan?.MO) && (p.state.mobility?.level ?? 0) >= WALKS_FROM).length;
+// Milestone 30 Batch B: more daily records —
+//   log.gardener      resident id → the day a Gardening resident in the garden program last reached Mood 95+
+//   log.trust95       resident id → the day their family's Trust last reached 95+
+//   log.quietSessions resident id → quiet group sessions they joined (data/activities.js quiet: true); log.sessionsSeen the
+//                     session keys already counted (sessions are kept 14 days)
+//   log.community     { pending: [day], good } — community / volunteer sessions and outings (the partners' counters), and
+//                     how many were on a day with no essential care missed; log.dayAt the essential-missed count at midnight
+//   log.night         { shifts, safe } this month's Night shifts and how many were at Safe Coverage (each month's record)
+//   log.centenarians / log.majorBirthdays   birthdays held at 100 / at a round age (80, 90, 100 …), with the readings then
+//   log.pilotDone     an assistive-tech pilot completed by a resident who said yes (the partners' counter, ever)
+const MOOD_HIGH = 95;
+const TRUST_HIGH = 95;
+const GARDEN_PROGRAM = 'PRG01';
+const GARDEN_VETO = ['SO05', 'EN06']; // (data/programs.js PRG01 veto: refusing these is a no to the program)
+const COMMUNITY_COUNTERS = ['communityActivity', 'outing'];
+const NIGHT_BELL = { from: 22, to: 6, targetMin: 10 }; // a Night bell (22:00–06:00) answered within targetMin minutes
+const DAYS_PER_YEAR = 336;
+const hasTag = (p, list) => (p.state.tags?.length ? p.state.tags : p.def.tags ?? []).some((t) => list.includes(t)) || list.includes(p.def.interest);
+const inGarden = (env, p) => !!env.care.programs?.running?.[GARDEN_PROGRAM] && !GARDEN_VETO.some((o) => p.state.optionPrefs?.[o] === 'refuse') && p.state.prefs?.groupActivity !== 'refuse';
+// A streak map: id → the first day of the unbroken run (gone when it breaks).
+function streak(map, id, ok, day) {
+  if (ok) map[id] ??= day;
+  else delete map[id];
+}
+// Their age now: their age on admission and each birthday since (data/activities.js: a birthday is a day of the year).
+export function ageNow(p, day, birthdayOf) {
+  const b = (birthdayOf?.(p.id) ?? 1) - 1;
+  const upTo = (x) => (x < b ? 0 : Math.floor((x - b) / DAYS_PER_YEAR) + 1);
+  return (p.def.age ?? 0) + Math.max(0, upTo(day) - upTo(p.state.admittedDay ?? 0));
+}
+// Milestone 30 Batch C: more records —
+//   log.shiftsAll     { shifts, safe, agency } this month's shifts, at Safe Coverage, with agency cover (each month's record)
+//   log.hydration     { done, missed, upTo } drinks / hydration tasks done or missed (each finished day counted once)
+//   log.indStart / log.safetyMin / log.indImproved   each resident's Independence when first seen here, their lowest
+//                     Safety since, and the day they had gained INDEPENDENCE_GAIN with Safety never below SAFETY_FLOOR
+//   log.emergencies   each incident handled: { kind, prep (Preparedness), band, calm: nobody fell or passed during it }
+//   log.legendaryHired  a Legendary / Prestige person joined the team (ever, this run)
+const INDEPENDENCE_GAIN = 15;
+const SAFETY_FLOOR = 80;
+const PEER_RIVAL = 'R07'; // Crown Haven (data/peers.js)
+const VISIBLE_AWARDS = ['C01', 'C02', 'C03', 'C04', 'C05', 'C06', 'C07', 'C08', 'C09', 'C10'];
+const choiceOf = (sample) => sample?.parts?.residentWellbeing?.find((x) => x.input === 'choice')?.value ?? null;
+export function familiarCareNow(env) {
+  const tops = env.residentsHere().map((p) => topFamiliar(env, p.id));
+  return tops.length ? r1(avg(tops)) : 0;
+}
+const nightHour = (t) => {
+  const h = Number(String(t ?? '').split(':')[0]);
+  return Number.isFinite(h) && (h >= NIGHT_BELL.from || h < NIGHT_BELL.to);
+};
 
 // --- the counters a month's record reads (each ever-rising, so a month is the difference since the last close) -------------
 function counters(env) {
@@ -53,7 +104,7 @@ function counters(env) {
   };
 }
 export function newLog(env) {
-  return { v: 1, months: [], joined: {}, starting: [], lastLeft: null, birthdays: 0, discharges: 0, timeline: [], opened: env.today(), at: counters(env), monthStart: env.today(), rebuilt: false, programBest: {}, familiar90: {}, forcedDependence: 0 };
+  return { v: 1, months: [], joined: {}, starting: [], lastLeft: null, birthdays: 0, discharges: 0, timeline: [], opened: env.today(), at: counters(env), monthStart: env.today(), rebuilt: false, programBest: {}, familiar90: {}, forcedDependence: 0, gardener: {}, trust95: {}, quietSessions: {}, sessionsSeen: {}, community: { pending: [], good: 0 }, dayAt: null, night: { shifts: 0, safe: 0 }, centenarians: [], majorBirthdays: [], pilotDone: false, shiftsAll: { shifts: 0, safe: 0, agency: 0 }, hydration: null, indStart: {}, safetyMin: {}, indImproved: {}, emergencies: [], legendaryHired: false };
 }
 
 // Each midnight, before the day's rules (Milestone 30): the records a day can't rebuild later.
@@ -69,6 +120,90 @@ export function dailyRecord(env, log) {
     else delete f[p.id];
   }
   log.forcedDependence = (log.forcedDependence ?? 0) + forcedNow(env);
+  // (Batch B) the gardener's and the family's streaks
+  const g = (log.gardener ??= {});
+  const t = (log.trust95 ??= {});
+  for (const m of [g, t]) for (const id of Object.keys(m)) if (!here.some((p) => p.id === id)) delete m[id];
+  for (const p of here) {
+    streak(g, p.id, hasTag(p, ['Gardening']) && (p.state.outcomes?.mood ?? 0) >= MOOD_HIGH && inGarden(env, p), day);
+    streak(t, p.id, (env.care.families?.[p.id]?.trust ?? 0) >= TRUST_HIGH, day);
+  }
+  // quiet group sessions joined (each finished session counted once)
+  const seen = (log.sessionsSeen ??= {});
+  const q = (log.quietSessions ??= {});
+  for (const [key, s] of Object.entries(env.care.activities?.sessions ?? {})) {
+    if (key in seen || s.day >= day) continue;
+    seen[key] = s.day;
+    if (env.isQuietActivity?.(s.activity)) for (const id of s.joined ?? []) q[id] = (q[id] ?? 0) + 1;
+  }
+  for (const [key, d] of Object.entries(seen)) if (d < day - 30) delete seen[key];
+  // community sessions on a day with no essential care missed
+  const c = (log.community ??= { pending: [], good: 0 });
+  const missedNow = env.care.counts?.essentialMissed ?? 0;
+  const missedToday = Math.max(0, missedNow - (log.dayAt ?? missedNow));
+  if (!missedToday) c.good += c.pending.filter((d) => d < day).length;
+  c.pending = c.pending.filter((d) => d >= day);
+  log.dayAt = missedNow;
+  // (Batch C) the finished days' drinks / hydration tasks
+  const h = (log.hydration ??= { done: 0, missed: 0, upTo: day - 1 });
+  for (const t of env.care.tasks ?? []) {
+    if (t.type !== 'hydration' || t.day == null || t.day < h.upTo || t.day >= day) continue;
+    if (t.status === 'done') h.done++;
+    if (t.status === 'missed') h.missed++;
+  }
+  h.upTo = day;
+  // (Batch C) Independence gained with Safety held
+  const s0 = (log.indStart ??= {});
+  const sm = (log.safetyMin ??= {});
+  const imp = (log.indImproved ??= {});
+  for (const p of here) {
+    const o = p.state.outcomes ?? {};
+    s0[p.id] ??= o.independence ?? 0;
+    sm[p.id] = Math.min(sm[p.id] ?? 100, o.safety ?? 100);
+    if (imp[p.id] == null && (o.independence ?? 0) - s0[p.id] >= INDEPENDENCE_GAIN && sm[p.id] >= SAFETY_FLOOR) imp[p.id] = day;
+  }
+}
+// (Batch B) the moments the records need, from the home's own bus (src/systems/secrets.js onEmit).
+export function noteMoment(env, log, name, payload = {}) {
+  if (name === 'partners:counted') {
+    if (COMMUNITY_COUNTERS.includes(payload.counter)) (log.community ??= { pending: [], good: 0 }).pending.push(env.today());
+    if (payload.counter === 'pilotDone') log.pilotDone = true;
+  }
+  if (name === 'coverage:shift' && payload.shift === 'night') {
+    const n = (log.night ??= { shifts: 0, safe: 0 });
+    n.shifts++;
+    if (payload.safe) n.safe++;
+  }
+  // (Batch C) every shift this month, at Safe Coverage, with agency cover
+  if (name === 'coverage:shift') {
+    const a = (log.shiftsAll ??= { shifts: 0, safe: 0, agency: 0 });
+    a.shifts++;
+    if (payload.safe) a.safe++;
+    if ((payload.agency ?? 0) > 0) a.agency++;
+  }
+  if (name === 'staff:hired' && ['legendary', 'secret'].includes(staffById(payload.id)?.tier)) log.legendaryHired = true;
+  if (name === 'care:incidentEnd') {
+    const rec = (env.care.incidents?.history ?? []).at(-1);
+    if (rec) {
+      const from = Math.floor((rec.start ?? 0) / 24);
+      const to = Math.floor((rec.end ?? rec.start ?? 0) / 24);
+      const during = (list) => (list ?? []).filter((x) => (x.day ?? -1) >= from && (x.day ?? -1) <= to).length;
+      const calm = !during(env.care.incidents?.falls) && !during(env.care.eol?.passings);
+      (log.emergencies ??= []).push({ kind: rec.kind ?? rec.id, prep: rec.prep ?? 0, band: rec.band ?? null, calm, day: env.today() });
+    }
+  }
+  if (name === 'care:birthday') {
+    const wellbeing = env.quality.scores().residentWellbeing;
+    for (const id of payload.residents ?? []) {
+      const p = env.residentsHere().find((x) => x.id === id);
+      if (!p) continue;
+      const age = ageNow(p, env.today(), env.birthdayOf);
+      const trust = env.care.families?.[id]?.trust ?? null;
+      const trust95Days = log.trust95?.[id] == null ? 0 : env.today() - log.trust95[id];
+      if (age === 100) (log.centenarians ??= []).push({ id, day: env.today(), wellbeing, trust });
+      if (age >= 80 && age % 10 === 0) (log.majorBirthdays ??= []).push({ id, day: env.today(), age, trust, trust95Days });
+    }
+  }
 }
 // Each staff member here: joined day 0 (a new home) / the hire's day / the Founder's days employed.
 function noteTeam(env, log) {
@@ -149,7 +284,21 @@ export function monthRecord(env, log) {
     complaints: Math.max(0, now.complaints - was.complaints),
     falls: Math.max(0, now.falls - was.falls),
     passings: Math.max(0, now.passings - was.passings),
+    // (Milestone 30 Batch B) this month's Night shifts and the share at Safe Coverage
+    nightShifts: log.night?.shifts ?? 0,
+    nightSafePct: log.night?.shifts ? r1((100 * log.night.safe) / log.night.shifts) : 0,
+    // (Milestone 30 Batch C) every shift this month (from each shift's moment), Familiar Care and Choice at the close
+    shiftsAll: log.shiftsAll?.shifts ?? 0,
+    safeAllPct: log.shiftsAll?.shifts ? r1((100 * log.shiftsAll.safe) / log.shiftsAll.shifts) : 0,
+    agencyAllPct: log.shiftsAll?.shifts ? r1((100 * log.shiftsAll.agency) / log.shiftsAll.shifts) : 0,
+    familiarCare: familiarCareNow(env),
+    choice: (() => {
+      const v = (env.care.quality?.samples ?? []).map(choiceOf).filter((x) => x != null);
+      return v.length ? r1(avg(v)) : null;
+    })(),
   };
+  log.night = { shifts: 0, safe: 0 };
+  log.shiftsAll = { shifts: 0, safe: 0, agency: 0 };
   log.months.push(rec);
   if (log.months.length > MONTHS_KEPT) log.months.splice(0, log.months.length - MONTHS_KEPT);
   log.at = now;
@@ -184,6 +333,15 @@ export function createSecretFacts({ env, log, engine, account }) {
         dining: p.state.dining?.avg ?? null,
         familiar: topFamiliar(env, p.id),
         familiar90Days: since == null ? 0 : env.today() - since,
+        // (Milestone 30 Batch B)
+        gardenerDays: L().gardener?.[p.id] == null ? 0 : env.today() - L().gardener[p.id],
+        musicDance: hasTag(p, ['Music', 'Dancing']),
+        readingHistory: hasTag(p, ['Reading', 'History']),
+        quietSessions: L().quietSessions?.[p.id] ?? 0,
+        trust95Days: L().trust95?.[p.id] == null ? 0 : env.today() - L().trust95[p.id],
+        memorySessions: p.state.memory?.sessions ?? 0,
+        memoryChoiceMin: p.state.memory?.choice?.min ?? null,
+        age: ageNow(p, env.today(), env.birthdayOf),
       };
     });
   const avgOver = (key) => {
@@ -294,6 +452,37 @@ export function createSecretFacts({ env, log, engine, account }) {
     .define('run.distress', () => here().filter((p) => (p.state.outcomes?.mood ?? 100) < 20).length)
     .define('run.complaints', () => (env.care.family?.complaints ?? []).length)
     .define('run.passings', () => (env.care.eol?.passings ?? []).length)
+    // (Milestone 30 Batch B)
+    .define('run.centenarians', () => L().centenarians ?? [])
+    .define('run.majorBirthdays', () => L().majorBirthdays ?? [])
+    .define('run.secretsFoundIds', () => engine().rules.filter((r) => engine().unlockedInRun(r.id)).map((r) => r.id))
+    .define('run.nightBellResponse', () => {
+      const night = Object.values(env.care.bells ?? {}).flatMap((b) => b.log ?? []).filter((x) => nightHour(x.t));
+      return night.length ? r1((100 * night.filter((x) => x.minutes <= NIGHT_BELL.targetMin).length) / night.length) : 100;
+    })
+    .define('run.communityDoor', () => L().community?.good ?? 0)
+    .define('run.familyDiningEvents', () => 0) // (no family dining events in the game yet: never true — "Needs a system")
+    .define('run.pilotDone', () => !!L().pilotDone || env.care.partners?.pilot?.doneDay != null)
+    .define('run.personalAutomation', () => 0) // (the game never automates personal care: SPN08's automation is logistics and admin only)
+    // (Milestone 30 Batch C)
+    .define('run.hydrationOnTime', () => {
+      const h = L().hydration ?? { done: 0, missed: 0 };
+      return h.done + h.missed ? r1((100 * h.done) / (h.done + h.missed)) : 0;
+    })
+    .define('run.favouriteFoodPlans', () => residentList().filter((x) => x.favouriteFood).length)
+    .define('run.independenceGains', () => Object.keys(L().indImproved ?? {}).length)
+    .define('run.drills', () => []) // (no emergency drills in the game yet: never true — "Needs a system")
+    .define('run.emergencies', () => L().emergencies ?? [])
+    .define('run.otherAwardCount', () => env.quality.wonIds().filter((id) => VISIBLE_AWARDS.includes(id) && id !== 'C10').length)
+    .define('run.legendaryHired', () => !!L().legendaryHired || env.team().some((q) => ['legendary', 'secret'].includes(q.model?.tier ?? staffById(q.id)?.tier)))
+    .define('run.aheadOfCrownHaven', () => {
+      const peer = env.care.quality?.peers?.[PEER_RIVAL];
+      if (!peer) return 0;
+      const s = scores();
+      return SCORE_IDS.filter((id, i) => s[id] > peer.scores[i]).length;
+    })
+    .define('run.legacyMentored', () => 0) // (no New Game+ Legacy Staff or promotion to Elite yet: never true)
+    .define('account.legacyStaffLevels', () => 0) // (no New Game+ Legacy Staff carry-over yet — staffTeam legacyCarryover: never true)
     .define('run.eolNotWellSupported', () => eolResults().filter((r) => !r.good).length)
     .define('run.forcedDependence', () => L().forcedDependence ?? 0)
     // account
