@@ -7,12 +7,13 @@
 //   a run: { id, wing, since (day started), paidTo (paid up to this day), paid (Credits so far), sessions (held),
 //            offered, joined, declined, residents: { residentId: { joined, declined } } }
 //
-//   unlockOf(def, ctx) → { ok, reason, lock }   ctx = { facilities: Set, roles: Set, night: bool, debug: bool, researched(nodeId) }
+//   unlockOf(def, ctx) → { ok, reason, lock }   ctx = { facilities: Set, roles: Set, night: bool, debug: bool, researched(nodeId),
+//                                                       secretOpen(flag) (Milestone 31: a prestige program's unlock flag) }
 //   shiftHours(shiftId) · rosteredHours(people, roles, shift) · committedHours(state, roles, shift, exceptId)
 //   hoursFor(def, ctx) → { need, rostered, committed, free, ok, text }
 //   vetoOf(def, st) → a plain reason (they refuse an option it is part of, or group activities), or null
 //   weeksDue(run, day) → whole weeks to pay for · daysUnpaid(run, day)
-import { PROGRAMS, VISIBLE_PROGRAMS, LOCKS, PROGRAM_RULES } from '../../data/programs.js';
+import { PROGRAMS, LOCKS, PROGRAM_RULES } from '../../data/programs.js';
 import { SHIFTS } from '../../data/balance.js';
 import { facilityById } from '../../data/facilities.js';
 import { ROLES } from '../../data/roles.js';
@@ -27,7 +28,7 @@ export function ensureProgramState(saved) {
   if (!saved) return fresh;
   const running = {};
   for (const [id, r] of Object.entries(saved.running ?? {})) {
-    if (!VISIBLE_PROGRAMS.some((x) => x.id === id)) continue; // (never a secret one)
+    if (!PROGRAMS.some((x) => x.id === id)) continue; // (Milestone 31: a prestige one runs only once started through its flag)
     running[id] = { id, wing: r.wing ?? 'home', since: r.since ?? 0, paidTo: r.paidTo ?? r.since ?? 0, paid: r.paid ?? 0, sessions: r.sessions ?? 0, offered: r.offered ?? 0, joined: r.joined ?? 0, declined: r.declined ?? 0, residents: Object.fromEntries(Object.entries(r.residents ?? {}).map(([k, v]) => [k, { joined: v.joined ?? 0, declined: v.declined ?? 0 }])) };
   }
   return { ...fresh, ...saved, running, history: [...(saved.history ?? [])], meetings: { ...(saved.meetings ?? {}) }, debug: !!saved.debug };
@@ -44,10 +45,13 @@ const ruleText = (r) => {
   return LOCKS[r.type]?.text(r) ?? 'Locked';
 };
 export function unlockOf(def, ctx) {
-  if (!def || def.secret) return { ok: false, reason: 'No such program', lock: 'secret' };
+  if (!def) return { ok: false, reason: 'No such program', lock: 'secret' };
+  // (Milestone 31) a prestige program exists for the player only once its secret's flag is set — never by ?debug=1
+  if (def.secret && !def.unlock.every((r) => r.type !== 'secret' || !!ctx.secretOpen?.(r.flag))) return { ok: false, reason: 'No such program', lock: 'secret' };
   for (const r of def.unlock) {
     let ok;
-    if (r.type === 'facility') ok = !!ctx.facilities?.has(r.facility);
+    if (r.type === 'secret') ok = true; // (checked above)
+    else if (r.type === 'facility') ok = !!ctx.facilities?.has(r.facility);
     else if (r.type === 'role') ok = !!ctx.roles?.has(r.role);
     else if (r.type === 'night') ok = !!ctx.night;
     else if (r.type === 'research') ok = !!ctx.researched?.(r.node) || !!ctx.debug; // (Milestone 21: the node is done)

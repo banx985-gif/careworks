@@ -79,7 +79,7 @@ import { VfxSystem } from '../../../core/VfxSystem.js';
 import { BOTTOM_SLOTS, bottomRoute, TOP_ICONS, RANK_NONE, CARE_ICONS, TOP_SHEETS, SPEED_LOCKED, PORTRAIT_CROP } from '../data/bars.js';
 import { SCORES, RANK_OPENS, RANK_BEAT, SPEED_UNLOCKS, QUALITY_ART, INSPECTION } from '../data/quality.js';
 import { accreditationById } from '../data/accreditations.js';
-import { PEERS } from '../data/peers.js';
+import { PEERS, peerById } from '../data/peers.js';
 import { ECONOMY_START } from '../data/balance.js';
 import { createCarePops, createDayBeat } from './ui/carePops.js';
 import { ASSETS } from '../data/assets.js';
@@ -99,7 +99,7 @@ import { WINGS_SPECIAL, wingById } from '../data/wings.js';
 import { CHANNELS, RANK_NOW } from '../data/recruitment.js';
 import { SPECIALTIES } from '../data/training.js';
 import { ROOMS, roomById } from '../data/rooms.js';
-import { BUILDABLE_FACILITIES } from '../data/facilities.js';
+import { BUILDABLE_FACILITIES, PRESTIGE_FACILITIES } from '../data/facilities.js';
 import { FOUNDERS } from '../data/setup.js';
 import { DOMAINS, CARE_OPTIONS, optionById, optionsFor, validateCarePlans, OPTION_PREF_MOOD } from '../data/carePlans.js';
 import { TASK_TYPES, BELL } from '../data/tasks.js';
@@ -1492,7 +1492,7 @@ function qualityTabs(w) {
   const peers = Q.peers();
   const rec = Q.recognition();
   const lastYear = rec.years.at(-1);
-  const nameOfPeer = (id) => (id === 'home' ? open.data.facility.name : PEERS.find((p) => p.id === id)?.name ?? id);
+  const nameOfPeer = (id) => (id === 'home' ? open.data.facility.name : peerById(id)?.name ?? id); // (Milestone 31: R08 too)
   const benchSections = [
     { lines: [{ text: peers.length ? `Your home against the ${peers.length} peer home${peers.length === 1 ? '' : 's'} in the network. They are a yardstick only: they never take residents, staff or funding.` : 'No peer homes yet.', color: COL.textMuted }], bars: bench.map((b) => ({ label: b.name, value: b.home, color: scoreColour(b.home), text: `${Math.round(b.home)}`, tick: b.peerAvg ?? undefined })) },
     { title: 'Score by score', lines: bench.map((b) => ({ text: b.of ? `${b.name}: you ${Math.round(b.home)} · peers ${Math.round(b.peerAvg)} on average · best ${b.best.name} ${Math.round(b.best.v)}${b.ahead ? ` (${b.ahead} of ${b.of} ahead)` : ' (you lead)'}` : `${b.name}: you ${Math.round(b.home)}`, color: b.ahead ? COL.actionDark : COL.good })) },
@@ -1586,8 +1586,8 @@ function openPeer(id) {
     const p = w?.quality.peers().find((x) => x.def.id === id);
     if (!p) return { title: '', sections: [] };
     const s = w.quality.scores();
-    return { title: p.def.name, subtitle: `${p.def.identity} · strong in ${p.def.strength} · in the network since Year ${p.def.year}`, art: p.def.logo, accent: COL.progress, sections: [
-      { lines: [{ text: 'A peer home in the benchmark network: a yardstick, never a rival for your residents, staff or funding.', color: COL.textMuted }], bars: SCORES.map((sc) => ({ label: sc.name, value: p.scores[sc.id], color: COL.progress, text: `${Math.round(p.scores[sc.id])}`, tick: s[sc.id] })) },
+    return { title: p.def.name, subtitle: `${p.def.identity} · strong in ${p.def.strength} · in the network since Year ${p.def.year ?? w.clock.dateOf(p.joined).year}`, art: p.def.logo, accent: COL.progress, sections: [
+      { lines: [{ text: p.def.adaptive ? 'A prestige benchmark: it keeps a step ahead of your home on every score. A yardstick, never a rival for your residents, staff or funding.' : 'A peer home in the benchmark network: a yardstick, never a rival for your residents, staff or funding.', color: COL.textMuted }], bars: SCORES.map((sc) => ({ label: sc.name, value: p.scores[sc.id], color: COL.progress, text: `${Math.round(p.scores[sc.id])}`, tick: s[sc.id] })) },
       { lines: [{ text: 'The mark on each bar is your home.', color: COL.textMuted }] },
     ] };
   });
@@ -1986,13 +1986,14 @@ function programSub(w, x) {
   if (!x.can.ok) return `${x.can.reason} · ${cost}`;
   return `Start · ${x.hours.text} · ${cost}`;
 }
-// Develop → Programs: the ten visible programs (PRG11 / PRG12 are secret and never listed).
+// Develop → Programs: the ten visible programs, and PRG11 / PRG12 once their secret is found (Milestone 31).
+const SECRET_PROGRAM_ICON = 'care_ui_29';
 function openPrograms() {
   sheet.open(() => {
     const w = open?.world;
     if (!w) return { title: '', sections: [] };
     const list = w.programs.list();
-    const row = (x) => ({ id: `prog:${x.def.id}`, label: `${x.def.name} · ${x.def.focus}`, sub: programSub(w, x), icon: x.def.icon, accent: x.running ? COL.good : x.can.ok ? COL.action : COL.progress, onTap: () => openProgram(x.def.id) });
+    const row = (x) => ({ id: `prog:${x.def.id}`, label: `${x.def.name} · ${x.def.focus}`, sub: programSub(w, x), icon: x.def.icon, iconBadge: x.prestige ? SECRET_PROGRAM_ICON : null, accent: x.running ? COL.good : x.can.ok ? COL.action : COL.progress, onTap: () => openProgram(x.def.id) }); // (Milestone 31: a prestige program wears the Secret Program icon)
     const running = list.filter((x) => x.running);
     const rest = list.filter((x) => !x.running);
     const weekly = running.reduce((a, x) => a + x.def.resources.weeklyCost, 0);
@@ -2039,7 +2040,7 @@ function openProgram(id) {
     ];
     if (run && !x.hours.ok) res.push({ text: 'Short of staff hours on the roster now: sessions still run when someone can lead them', color: COL.warn });
     const adds = [programSchedule(d), { text: `Suits: ${d.suits.text}`, color: COL.actionDark }, { text: 'Residents choose: nobody is made to join, and a refused plan option or activity is never overridden.', color: COL.textMuted }];
-    const fx = [{ text: x.effect, color: COL.good }];
+    const fx = [{ text: x.effect, color: COL.good }, ...(x.prestige ? [{ text: x.boost > 1 ? `The Centenarian Garden is making it ${Math.round((x.boost - 1) * 100)}% stronger` : 'A Centenarian Garden in the home would make it stronger', color: x.boost > 1 ? COL.good : COL.textMuted }] : [])]; // (Milestone 31)
     const part = run ? [
       { text: `Running since ${agoWord(w, run.since)}: ${run.sessions} session${run.sessions === 1 ? '' : 's'} so far`, color: COL.actionDark },
       `Offered ${run.offered} · joined ${run.joined} · chose not to ${run.declined}`,
@@ -2056,6 +2057,7 @@ function openProgram(id) {
       title: d.name,
       subtitle: `${d.focus} · ${run ? 'Running' : x.can.ok ? 'Ready to start' : 'Not running'}`,
       art: d.icon,
+      badge: x.prestige ? SECRET_PROGRAM_ICON : null, // (Milestone 31)
       accent: accentNow(),
       sections: [
         { lines: head },
@@ -2105,7 +2107,7 @@ function programLedger(w, range) {
     ],
   };
 }
-// The Build list: every room and facility (not the two secret ones) with its picture, cost, what it does or why it is
+// The Build list: every room and facility (the two secret ones only once their secret is found — Milestone 31) with its picture, cost, what it does or why it is
 // locked. Tap one to place it (a ghost in the home).
 function openBuildList() {
   sheet.open(() => {
@@ -2123,6 +2125,7 @@ function openBuildList() {
         homeScreen.startPlacing(d.id);
       } };
     };
+    const prestige = PRESTIGE_FACILITIES.filter((d) => w.prestige.open(d.unlock.flag)); // (Milestone 31)
     return {
       title: 'Build',
       subtitle: `${credits(w.ledger.balance)} Credits · Stage ${w.stage.n}: ${w.rooms.length} of ${w.stage.capacity} rooms`,
@@ -2131,6 +2134,8 @@ function openBuildList() {
       sections: [
         { title: 'Rooms', columns: 1, buttons: ROOMS.map((d) => row(d, 'room')) },
         { title: 'Facilities', columns: 1, buttons: BUILDABLE_FACILITIES.map((d) => row(d, 'facility')) },
+        // (Milestone 31: the prestige spaces, once their secret is found — never before, not even greyed)
+        ...(prestige.length ? [{ title: 'Prestige spaces', columns: 1, buttons: prestige.map((d) => row(d, 'facility')) }] : []),
       ],
     };
   });

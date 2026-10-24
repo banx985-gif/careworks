@@ -20,7 +20,7 @@ export const FIRSTS_TEXT = {
 // Plaque (beside their accreditation once won: C05 Safe Care, C02 Resident Choice), the National Excellence Trophy (the
 // C10 moment, and C10 once won).
 export const REWARD_ART = { research: 'care_reward_03', prestige: 'care_reward_04', rehab: 'care_reward_06', safety: 'care_reward_07', wellbeing: 'care_reward_08', trophy: 'care_reward_09' };
-export const PLAQUES = { C05: REWARD_ART.safety, C02: REWARD_ART.wellbeing, C10: REWARD_ART.trophy };
+export const PLAQUES = { C05: REWARD_ART.safety, C02: REWARD_ART.wellbeing, C10: REWARD_ART.trophy, C11: REWARD_ART.prestige, C12: REWARD_ART.trophy }; // (Milestone 31: the two prestige awards)
 
 // Care effects in the home (core/VfxSystem 'world' layer, like the M5 pops; Reduced flashes or Low graphics turn them
 // off). size = drawn width in world px at zoom 1; life = real seconds; gap = real seconds before the same kind again.

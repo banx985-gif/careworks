@@ -180,9 +180,12 @@ export function createLayout({ saved = null, bus = null } = {}) {
   // --- unlocks, capacity ---------------------------------------------------------------------------------------------
   let researched = () => false; // (Milestone 21: the home world says which research nodes are done)
   let rankOk = () => false; // (Milestone 26: the home world says whether the home has reached a Rank)
+  let secretOk = () => false; // (Milestone 31: the home world says whether a secret's unlock flag is set)
   function unlock(defId) {
     const d = defOf(defId);
-    if (!d || d.secret) return { ok: false, reason: 'Unknown' };
+    if (!d) return { ok: false, reason: 'Unknown' };
+    // (Milestone 31) F34 / F35 open only through their own secret's flag — never by ?debug=1's unlock
+    if (d.secret) return secretOk(d.unlock.flag) ? { ok: true, reason: null } : { ok: false, reason: 'Unknown' };
     if (d.unlock.type === 'start' || s.debugUnlock) return { ok: true, reason: null };
     if (d.unlock.type === 'research' && d.unlock.node && researched(d.unlock.node)) return { ok: true, reason: null };
     if (d.unlock.type === 'rank' && rankOk(d.unlock.value)) return { ok: true, reason: null }; // (Milestone 26)
@@ -488,6 +491,9 @@ export function createLayout({ saved = null, bus = null } = {}) {
     },
     setRankCheck(fn) {
       rankOk = fn ?? (() => false);
+    },
+    setSecretCheck(fn) {
+      secretOk = fn ?? (() => false);
     },
     check,
     place,

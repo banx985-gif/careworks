@@ -116,7 +116,9 @@ import { HOME, RESIDENT, ENTRANCE, MAX_FLOOR, STAGES, LOGICAL_CAP } from '../../
 import { SET_DRESSING } from '../../data/dressing.js';
 import { createLayout } from './homeLayout.js';
 import { roomById } from '../../data/rooms.js';
-import { facilityById, scaleBonus, LEVELS, levelMultOf } from '../../data/facilities.js';
+import { facilityById, scaleBonus, LEVELS, levelMultOf, LEGACY_HOUSE } from '../../data/facilities.js';
+import { accreditationById } from '../../data/accreditations.js'; // (Milestone 31)
+import { ageNow } from './secretFacts.js'; // (Milestone 31: Centenarian Living's eldest residents)
 import { residentById, NEEDS, supportLevel, RESIDENTS, STAY_LEAVE_HOUR } from '../../data/residents.js';
 import { Rng } from '../../../../core/Rng.js';
 import { DAY, ROUTINE, WAKE, ALL_STEPS, TIMER_SCALE } from '../../data/routine.js';
@@ -162,7 +164,7 @@ import { TRUST, VISIT, NOTICE as FAMILY_NOTICE, MEETING, MEETING_ASK, MEETING_KI
 import { ensureFamily, ensureFamilyHome, changeTrust, nextVisitDay, visitParts, visitTotal, visitWords, homeTrust, callOf, whoOf, theirWord, noteSeen, seenOf } from './family.js';
 import { SHIFT_TEMPLATES, WINGS as ALL_WINGS, DEFAULT_WING } from '../../data/shifts.js';
 import { WINGS_SPECIAL, wingById, wingForSupport } from '../../data/wings.js';
-import { PROGRAMS, VISIBLE_PROGRAMS, programById, visibleProgram, EFFECT_TEXT, LEDGER_CATEGORY, PROGRAM_RULES } from '../../data/programs.js';
+import { PROGRAMS, VISIBLE_PROGRAMS, PRESTIGE_PROGRAMS, programById, visibleProgram, programFlag, PRESTIGE_GARDEN, EFFECT_TEXT, LEDGER_CATEGORY, PROGRAM_RULES } from '../../data/programs.js';
 import { ensureProgramState, newRun, unlockOf, hoursFor, vetoOf, weeksDue, daysUnpaid, countFor } from './programs.js';
 import { activityPct } from './traitEffects.js';
 import { createBlessings } from './blessings.js'; // (Milestone 30b: the Works Gods)
@@ -224,6 +226,15 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   let director = null;
   let directorLive = false;
   let secrets = null; // (Milestone 29: the secrets read every moment too, once the world is made)
+  // Milestone 31: the prestige chain. Is what a secret's unlock flag opens open here (C11 / C12, F34 / F35, PRG11 / PRG12,
+  // R08)? Only the secrets say so (src/systems/secrets.js unlocked) — nothing is bought, ?debug=1's unlocks never open it.
+  const prestigeOpen = (flag) => !!flag && !!secrets?.unlocked(flag);
+  // A prestige award's own rewards, each once (keyed): C11's Prestige Tokens on this device, C12's accolade in this home.
+  function prestigeAwardRewards(a) {
+    if (!a?.secret || !secrets) return;
+    if (a.reward.prestige) secrets.grantPrestige(a.id, a.reward.prestige);
+    if (a.reward.accolade) secrets.grantRecognition(a.reward.accolade, a.id);
+  }
   bus = {
     emit(name, payload) {
       if (directorLive) director?.raise(name, payload);
@@ -763,7 +774,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     // (Milestone 15: one stop on a drinks round is light work — a share of the Familiar Care, Energy and Morale)
     const share = t.source === 'round' ? HYDRATION.stopShare : 1;
     const famShare = t.source === 'routine' && mealOfStep(t.stepId) ? HYDRATION.serveShare : share; // (Milestone 16: an 8-minute serve is a short contact)
-    if (!q.agency) addFamiliarity(care, t.resident, helper, FAMILIARITY.perTask * famShare * (1 + familiarPct(q.model.traits) / 100) * (1 + rb('familiarPct') / 100), clock.totalDays, 1 - famShare);
+    if (!q.agency) addFamiliarity(care, t.resident, helper, FAMILIARITY.perTask * famShare * (1 + familiarPct(q.model.traits) / 100) * (1 + rb('familiarPct') / 100) * legacyMult(t.resident, LEGACY_HOUSE.familiarMult), clock.totalDays, 1 - famShare); // (Milestone 31: Legacy House)
     crew.finishTask(helper, share);
     bus?.emit('care:task', { id: t.id, type: t.type, status: 'done', staff: helper, resident: t.resident });
   }
@@ -981,7 +992,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const music = t.optionId === 'SO04';
     if (!ms || (t.source !== 'lifeStory' && !music)) return null;
     const theme = music ? 'favourite music from the past' : themeOf(p.def, p.state);
-    const mult = (famBefore >= LIFE_STORY.familiarAt ? LIFE_STORY.familiarBonus : 1) * (lvOf('F20') ? scaleBonus(LIFE_STORY.roomMult, lvOf('F20')) : 1) * (1 + memoryPct(q.model.traits) / 100) * (1 + rb('memoryPct') / 100); // (Milestone 21: research)
+    if (!music) legacyVisit(p); // (Milestone 31: life-story time at Legacy House)
+    const mult = (famBefore >= LIFE_STORY.familiarAt ? LIFE_STORY.familiarBonus : 1) * (lvOf('F20') ? scaleBonus(LIFE_STORY.roomMult, lvOf('F20')) : 1) * (1 + memoryPct(q.model.traits) / 100) * (1 + rb('memoryPct') / 100) * (music ? 1 : legacyMult(p.id, LEGACY_HOUSE.storyMult)); // (Milestone 21: research; Milestone 31: Legacy House)
     t.outcomes = Object.fromEntries(Object.entries(t.outcomes ?? {}).map(([k, v]) => [k, v * mult]));
     if (!q.agency) addFamiliarity(care, p.id, q.id, LIFE_STORY.familiarityBonus, clock.totalDays);
     ms.sessions = (ms.sessions ?? 0) + 1;
@@ -1149,6 +1161,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const hasPiece = (id) => layout.ofDef(id).length > 0;
   // Milestone 25c: a facility's level × (×1 / ×1.5 / ×2, its best copy) — 0 when none stands, so it doubles as "has one"
   const lvOf = (id) => (hasPiece(id) ? layout.levelMultOfDef(id) : 0);
+  // Milestone 31: Legacy House (F35, data/facilities.js LEGACY_HOUSE) — a resident who joins life-story time while it
+  // stands uses it for the next weeks: their life-story sessions lift more and the Familiar Care they build grows faster
+  // (× its level). care.prestige.legacy: residentId → the last day they count as using it.
+  const legacyOn = () => hasPiece(LEGACY_HOUSE.facility) && !offline(LEGACY_HOUSE.facility);
+  const legacyUsers = () => (care.prestige ??= { legacy: {} }).legacy;
+  const legacyUser = (residentId) => legacyOn() && (legacyUsers()[residentId] ?? -1) >= clock.totalDays;
+  function legacyVisit(p) {
+    if (legacyOn()) legacyUsers()[p.id] = clock.totalDays + LEGACY_HOUSE.days;
+  }
+  const legacyMult = (residentId, base) => (legacyUser(residentId) ? scaleBonus(base, lvOf(LEGACY_HOUSE.facility)) : 1);
   const themOf = (p) => (p.def.pronoun === 'she' ? 'her' : 'him');
   // A free floor tile in front of (else beside, else behind) a piece; n = which one (0 the nurse's, 1 the cart's).
   function besidePiece(pc, n = 0) {
@@ -1547,9 +1569,15 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     delete p.state.wouldEnjoy;
     // Milestone 17: Life-story time — personal for a memory-support resident (their own theme), better in the Memory
     // Activity Room
+    // (Milestone 31: anyone at life-story time uses Legacy House while it stands; its stories lift them more)
+    if (act.id === 'lifeStory') {
+      legacyVisit(p);
+      const extra = legacyMult(p.id, LEGACY_HOUSE.storyMult) - 1;
+      if (extra > 0) for (const [o, v] of Object.entries(act.lifts)) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v * m * extra);
+    }
     if (act.id === 'lifeStory' && memoryOf(p)) {
       const ms = memoryOf(p);
-      const f20 = lvOf('F20') ? scaleBonus(LIFE_STORY.roomMult, lvOf('F20')) : 1;
+      const f20 = (lvOf('F20') ? scaleBonus(LIFE_STORY.roomMult, lvOf('F20')) : 1) * legacyMult(p.id, LEGACY_HOUSE.storyMult);
       for (const [o, v] of Object.entries(LIFE_STORY.lifts)) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v * 0.5 * f20); // (half a one-to-one session's lift, in a small group)
       ms.sessions = (ms.sessions ?? 0) + 1;
       ms.lastSession = { day, theme: themeOf(p.def, p.state), with: null, kind: 'group' };
@@ -2668,7 +2696,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (band === 'decline') return { go: false, why: 'their choice' };
     return new Rng(`${seed}:${p.id}:${day}:${d.id}:program`).next() < pj ? { go: true, why: null } : { go: false, why: 'their choice' };
   }
-  const suitsOffer = (d, p) => (d.adds.who === 'memory' ? !!memoryOf(p) : d.adds.who === 'rehab' ? !!p.state.rehab?.active && p.state.rehab.readyDay == null : true);
+  const suitsOffer = (d, p) => (d.adds.who === 'memory' ? !!memoryOf(p) : d.adds.who === 'rehab' ? !!p.state.rehab?.active && p.state.rehab.readyDay == null : d.adds.who === 'elder' ? ageNow(p, clock.totalDays, birthdayOf) >= d.adds.minAge : true); // (Milestone 31: Centenarian Living — the eldest residents)
+  // Milestone 31: the Centenarian Garden (F34) makes the prestige programs stronger — × 1.2 at Level I, more with its level
+  // (and nothing while it is out of action).
+  const gardenMult = (d) => (d?.secret && hasPiece(PRESTIGE_GARDEN.facility) && !offline(PRESTIGE_GARDEN.facility) ? scaleBonus(PRESTIGE_GARDEN.mult, lvOf(PRESTIGE_GARDEN.facility)) : 1);
   // Each band: the running programs' one-to-one offers for this resident (Music & Memory, Reablement practice, the night
   // comfort checks).
   function planProgramTasks(p, inst, at) {
@@ -2689,7 +2720,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           honour(memoryOf(p)); // (Milestone 17: the Choice signal — their decline respected)
           continue;
         }
-        addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: A.type, essential: false, name: A.name, source: 'program', program: d.id, ...(A.optionId ? { optionId: A.optionId } : {}), ...(A.goalKind ? { goalKind: A.goalKind } : {}), ...(A.asleepDrops ? { asleepDrops: { ...A.asleepDrops } } : {}), at: h, place: A.place ?? 'resident', roles: [...A.roles], minutes: A.minutes, drops: { ...A.drops }, outcomes: { ...A.outcomes }, opens: Math.max(at, when), due: until });
+        addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: A.type, essential: false, name: A.name, source: 'program', program: d.id, ...(A.optionId ? { optionId: A.optionId } : {}), ...(A.goalKind ? { goalKind: A.goalKind } : {}), ...(A.asleepDrops ? { asleepDrops: { ...A.asleepDrops } } : {}), at: h, place: A.place ?? 'resident', roles: [...A.roles], minutes: A.minutes, drops: { ...A.drops }, outcomes: Object.fromEntries(Object.entries(A.outcomes).map(([o, v]) => [o, v * gardenMult(d)])), opens: Math.max(at, when), due: until }); // (Milestone 31: the garden's boost on a prestige program)
       }
     }
   }
@@ -2726,8 +2757,18 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   }
   // Night Comfort: anyone awake in the Night band is a little more comfortable (a warm drink, a quiet word, low lights).
   function programHour(p, hours) {
+    prestigeHour(p, hours); // (Milestone 31)
     if (!programOn('PRG08', p) || bandAt(hourNow()).id !== 'night' || world.isAsleep(p) || !inCare(p)) return;
     p.state.outcomes.comfort = clamp(p.state.outcomes.comfort + programById('PRG08').effects.awakeComfortPerHour * hours);
+  }
+  // Milestone 31: Home, Not Hospital — every clinical task is still done; the day bends around the person, so everyone
+  // awake in the day bands is a little more comfortable and content (× the garden's boost).
+  function prestigeHour(p, hours) {
+    if (!programOn('PRG12', p) || bandAt(hourNow()).id === 'night' || world.isAsleep(p) || !inCare(p)) return;
+    const d = programById('PRG12');
+    const m = gardenMult(d);
+    p.state.outcomes.comfort = clamp(p.state.outcomes.comfort + d.effects.dayComfortPerHour * m * hours);
+    p.state.outcomes.mood = clamp(p.state.outcomes.mood + d.effects.dayMoodPerHour * m * hours);
   }
   // Family Partnership: a partnership meeting for each family not met in a while (a few a day at most); never for a
   // resident who refuses the Family Connection Plan.
@@ -2772,12 +2813,15 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
   }
   // What the rules read: placed facilities, the team's roles, the Night shift, the debug switch.
-  const programCtx = () => ({ researched: (id) => !!research?.has(id), facilities: facilityIds(), roles: teamRoles(), night: team().some((q) => roster.shiftOf(q.id)?.id === 'night' && !roster.isTraining(q.id)), wings: new Set(WINGS_SPECIAL.filter((w) => layout.wings.active(w.id)).map((w) => w.id)), debug: !!progState.debug }); // (Milestone 27: working wings)
+  const programCtx = () => ({ researched: (id) => !!research?.has(id), facilities: facilityIds(), roles: teamRoles(), night: team().some((q) => roster.shiftOf(q.id)?.id === 'night' && !roster.isTraining(q.id)), wings: new Set(WINGS_SPECIAL.filter((w) => layout.wings.active(w.id)).map((w) => w.id)), debug: !!progState.debug, secretOpen: (f) => prestigeOpen(f) }); // (Milestone 27: working wings; Milestone 31: a prestige program's flag)
+  // The programs the player can see: the ten, and a prestige one once its flag is set (Milestone 31).
+  const listedPrograms = () => [...VISIBLE_PROGRAMS, ...PRESTIGE_PROGRAMS.filter((d) => prestigeOpen(programFlag(d)))];
+  const listedProgram = (id) => listedPrograms().find((d) => d.id === id) ?? null;
   const hoursPeople = () => team().map((q) => ({ id: q.id, role: q.role, shift: roster.shiftOf(q.id)?.id ?? null, training: roster.isTraining(q.id) }));
   const programHours = (d) => hoursFor(d, { people: hoursPeople(), state: progState });
   // Can it start now? → { ok, reason }
   function canStartProgram(id) {
-    const d = visibleProgram(id);
+    const d = listedProgram(id);
     if (!d) return { ok: false, reason: 'No such program' };
     if (runOf(id)) return { ok: false, reason: 'Already running' };
     const u = unlockOf(d, programCtx());
@@ -2878,11 +2922,13 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // --- quality, Rank, accreditations, inspections and peer homes (Milestone 26) ---------------------------------------
   care.quality = ensureQualityState(care.quality);
   const qualityFresh = !care.quality.samples.length; // (a new home, or an M25c save: worked out from the home as it is, below)
-  quality = createQuality({ state: care.quality, seed, bus, today: () => clock.totalDays, year: () => clock.year, onAward: (a) => {
+  quality = createQuality({ state: care.quality, seed, bus, today: () => clock.totalDays, year: () => clock.year, secretOpen: (f) => prestigeOpen(f), hasFacility: (id) => hasPiece(id) && !offline(id), onAward: (a) => {
     if (a.reward.credits) ledger.economy.add('credits', a.reward.credits, `Recognition bonus: ${a.name}`, 'recognition'); // (bible §27)
     staffState.founder.history.recognitions = (staffState.founder.history.recognitions ?? 0) + 1; // (bible §3.5.5)
+    prestigeAwardRewards(a); // (Milestone 31: C11's Prestige Tokens, C12's accolade)
   } });
   layout.setRankCheck((r) => rankAtLeast(rankNow(), r)); // (Build Mode: a rank-locked room or facility opens)
+  layout.setSecretCheck((f) => prestigeOpen(f)); // (Milestone 31: F34 / F35 only through their secret's flag)
   // --- community partners and grants (Milestone 23) ----------------------------------------------------------------------
   // The home's Nutrition outcome (the residents' average dining satisfaction; null before anyone has eaten here) and its
   // Environment score (room quality and cleanliness — src/systems/partners.js environmentScore).
@@ -4615,21 +4661,36 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return research;
     },
     // --- Milestone 20: specialist programs --------------------------------------------------------------------------------
-    // world.programs: the ten visible programs (PRG11 / PRG12 are secret: never listed, never startable).
+    // Milestone 31: the prestige chain — open(flag) (an unlock flag the secrets set: C11, C12, F34, F35, PRG11, PRG12,
+    // benchmarkNetwork), legacyUser(residentId) (using Legacy House now), gardenMult (the Centenarian Garden's boost)
+    prestige: {
+      open: (flag) => prestigeOpen(flag),
+      legacyUser: (residentId) => legacyUser(residentId),
+      get legacyUsers() {
+        return Object.keys(legacyUsers()).filter((id) => legacyUser(id));
+      },
+      get gardenMult() {
+        return gardenMult({ secret: true });
+      },
+      // (tests) as if they had just joined life-story time
+      visitForTests: (residentId) => (byResident(residentId) ? legacyVisit(byResident(residentId)) : null),
+    },
+    // world.programs: the ten visible programs, and PRG11 / PRG12 once their secret's flag is set (Milestone 31: until
+    // then never listed, never startable).
     programs: {
       get state() {
         return progState;
       },
-      // [{ def, running (its run or null), unlock { ok, reason, lock }, hours, can { ok, reason }, effect (plain words) }]
-      list: () => VISIBLE_PROGRAMS.map((d) => ({ def: d, running: runOf(d.id), unlock: unlockOf(d, programCtx()), hours: programHours(d), can: runOf(d.id) ? { ok: false, reason: 'Running' } : canStartProgram(d.id), effect: EFFECT_TEXT[d.id](d.effects) })),
-      byId: (id) => visibleProgram(id),
+      // [{ def, running (its run or null), unlock { ok, reason, lock }, hours, can { ok, reason }, effect (plain words), prestige }]
+      list: () => listedPrograms().map((d) => ({ def: d, running: runOf(d.id), unlock: unlockOf(d, programCtx()), hours: programHours(d), can: runOf(d.id) ? { ok: false, reason: 'Running' } : canStartProgram(d.id), effect: EFFECT_TEXT[d.id](d.effects), prestige: !!d.secret, boost: gardenMult(d) })),
+      byId: (id) => listedProgram(id),
       running: () => runningDefs().map((d) => ({ def: d, run: runOf(d.id) })),
       isRunning: (id) => !!runOf(id),
       runOf: (id) => runOf(id),
       canStart: (id) => canStartProgram(id),
       start: (id, opts) => startProgram(id, opts),
       stop: (id) => stopProgram(id),
-      hours: (id) => (visibleProgram(id) ? programHours(visibleProgram(id)) : null),
+      hours: (id) => (listedProgram(id) ? programHours(listedProgram(id)) : null),
       // Staff hours the running programs take from each shift (the roster sheet): [{ shift, roles, hours, ids }]
       useByShift() {
         const out = [];
@@ -5318,6 +5379,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     isQuietActivity: (activityId) => !!activityById(activityId)?.quiet,
   };
   secrets = createSecrets({ env: secretEnv, state: care.secrets, rules: secretRules ?? undefined, bus, strict: secretsStrict, runId: runId ?? seed, account: secretsAccount });
+  // (Milestone 31: a reload after a prestige award — its rewards again, keyed, so whichever half wasn't saved is put right)
+  for (const id of quality.wonIds()) prestigeAwardRewards(accreditationById(id));
   directorLive = true; // (Milestone 28: from here on, every moment goes through the director)
   return world;
 }

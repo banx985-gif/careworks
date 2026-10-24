@@ -4,7 +4,9 @@
 // everything here is worked out from those snapshots. Nothing in this file can be ticked, filled in or bought: the only
 // player action is applying for an accreditation, which books an inspection and never changes what it finds.
 //
-//   createQuality({ state, seed, bus, today, year, onAward(def) })
+//   createQuality({ state, seed, bus, today, year, onAward(def), secretOpen(flag), hasFacility(defId) })
+//     (Milestone 31: secretOpen says whether a secret's unlock flag is set — C11 / C12 are listed and R08 joins only then;
+//     hasFacility reads the home for C11's prestige facility)
 //     q.daily(day, inputs)   yesterday's snapshot (Milestone 27: inputs.lifts { scoreId: points } adds the good-care signal): a day's scores into the rolling window, reputation from sustained
 //                            scores, any inspection due, the yearly routine review and recognition table, the peers' drift
 //     q.prime(inputs)        a new home (or an older save): fill the window from the home as it is now
@@ -25,8 +27,9 @@ import { Rankings } from '../../../../core/Rankings.js';
 import { gradeRun } from '../../../../core/GradeEngine.js';
 import { Rng } from '../../../../core/Rng.js';
 import { SCORES, SCORE_IDS, WINDOW, READINGS, RANKS, REPUTATION, INSPECTION, ROUTINE_GRADE, SPEED_UNLOCKS } from '../../data/quality.js';
-import { ACCREDITATIONS, accreditationById, COUNTER_NAMES, MEASURE_NAMES } from '../../data/accreditations.js';
-import { PEERS, peerById, PEER_DRIFT, RECOGNITION } from '../../data/peers.js';
+import { ALL_ACCREDITATIONS, accreditationById, COUNTER_NAMES, MEASURE_NAMES } from '../../data/accreditations.js';
+import { PEERS, PRESTIGE_PEERS, ALL_PEERS, peerById, PEER_DRIFT, RECOGNITION } from '../../data/peers.js';
+import { facilityById } from '../../data/facilities.js';
 import { programById } from '../../data/programs.js';
 
 const clamp = (x) => Math.max(0, Math.min(100, x));
@@ -55,11 +58,19 @@ export function newQualityState() {
     lastRoutine: null,
     opened: null, // the day the records began (prime)
     debugReach: false,
+    lastMissed: null, // (Milestone 31) the last day essential care was missed (null: never since the records began) — C12
   };
 }
 export function ensureQualityState(saved) {
   const fresh = newQualityState();
   if (!saved || typeof saved !== 'object') return fresh;
+  // (Milestone 31: an older save never kept the last missed day — the newest miss in its month of samples, or, with none
+  // there, the day before that month began: nothing older is known, so it is never counted as clean)
+  if (!('lastMissed' in saved)) {
+    const S = saved.samples ?? [];
+    const miss = [...S].reverse().find((x) => (x.essential?.missed ?? 0) > 0);
+    saved = { ...saved, lastMissed: miss ? miss.day : S.length ? S[0].day - 1 : null };
+  }
   return { ...fresh, ...saved, rep: { ...fresh.rep, ...(saved.rep ?? {}) }, acc: { ...(saved.acc ?? {}) }, samples: [...(saved.samples ?? [])], inspections: [...(saved.inspections ?? [])], community: [...(saved.community ?? [])], peers: { ...(saved.peers ?? {}) }, recognition: [...(saved.recognition ?? [])], rankLog: [...(saved.rankLog ?? [])], programDays: { ...(saved.programDays ?? {}) } };
 }
 
@@ -104,10 +115,13 @@ export function dayScores(readings) {
   return { scores, parts };
 }
 
-export function createQuality({ state, seed = 'careworks', bus = null, today = () => 0, year = () => 1, onAward = null }) {
+export function createQuality({ state, seed = 'careworks', bus = null, today = () => 0, year = () => 1, onAward = null, secretOpen = () => false, hasFacility = () => false }) {
   const st = state;
   const ranks = RANKS.map((r) => ({ id: r.id, min: r.min }));
-  const wonIds = () => ACCREDITATIONS.filter((a) => st.acc[a.id]?.won != null).map((a) => a.id);
+  const wonIds = () => ALL_ACCREDITATIONS.filter((a) => st.acc[a.id]?.won != null).map((a) => a.id);
+  // (Milestone 31) C11 / C12 are listed (and can be applied for) only once their secret's unlock flag is set
+  const listed = (a) => !!a && (!a.secret || !!secretOpen(a.unlockFlag) || st.acc[a.id]?.won != null);
+  const listedAccreditations = () => ALL_ACCREDITATIONS.filter(listed);
   const rep = new ReputationSystem({ ranks, canReach: (i) => st.debugReach || wonIds().length >= RANKS[i].accreditations });
   rep.load(st.rep);
   const rankings = new Rankings({ points: RECOGNITION.points, focusId: RECOGNITION.homeId });
@@ -119,6 +133,7 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
     // (Milestone 27: the good-care signal of a well-supported end of life — points on top, never below the day's score)
     for (const [id, v] of Object.entries(x.lifts ?? {})) if (scores[id] != null && v > 0) scores[id] = r1(Math.min(100, scores[id] + v));
     st.samples.push({ day, scores, parts, nutrition: x.nutrition ?? null, essential: { done: x.essential?.done ?? 0, missed: x.essential?.missed ?? 0 }, unsafe: x.unsafe ?? 0, overdue: x.overdue ?? 0, incidents: x.incidentsEnded ?? 0 });
+    if ((x.essential?.missed ?? 0) > 0) st.lastMissed = Math.max(st.lastMissed ?? -Infinity, day); // (Milestone 31: C12)
     if (st.samples.length > WINDOW) st.samples.splice(0, st.samples.length - WINDOW);
   }
   const scores = () => {
@@ -201,7 +216,21 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
         return { text: `Year ${r.min} (now Year ${year()})`, ok: year() >= r.min };
       case 'accreditations': {
         const missing = r.ids.filter((id) => !won(id));
+        if (r.ids.length === 1) return { text: `${accreditationById(r.ids[0])?.name ?? r.ids[0]} (${r.ids[0]}) ${missing.length ? 'still to win' : 'won'}`, ok: !missing.length };
         return { text: missing.length ? `Every earlier accreditation: ${missing.join(', ')} still to win` : 'Every earlier accreditation won', ok: !missing.length };
+      }
+      // (Milestone 31) a prestige facility placed (C11)
+      case 'facility': {
+        const have = r.ids.filter((id) => hasFacility(id));
+        const names = r.ids.map((id) => facilityById(id)?.name ?? id).join(' or ');
+        return { text: have.length ? `A prestige facility in the home: ${have.map((id) => facilityById(id)?.name ?? id).join(', ')}` : `A prestige facility in the home (${names}): none yet`, ok: have.length > 0 };
+      }
+      // (Milestone 31) no essential care missed in the last `days` days (C12) — from the records, never filled in
+      case 'essentialClean': {
+        const since = st.lastMissed ?? (st.opened != null ? st.opened - 1 : today());
+        const clean = Math.max(0, today() - since - 1);
+        const months = Math.round(r.days / 28);
+        return { text: `No essential care missed for ${months} months: ${Math.min(clean, r.days)} of ${r.days} days so far`, ok: clean >= r.days };
       }
       default:
         return { text: 'Unknown requirement', ok: false };
@@ -225,7 +254,7 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
   }
   function judge(id) {
     const a = accreditationById(id);
-    if (!a) return { pass: false, lines: [] };
+    if (!listed(a)) return { pass: false, lines: [] };
     const lines = [...a.requirement.map(requirementLine), ...historyLines()];
     return { pass: lines.every((l) => l.ok), lines };
   }
@@ -241,7 +270,7 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
   }
   function apply(id) {
     const a = accreditationById(id);
-    if (!a) return { ok: false, reason: 'No such accreditation' };
+    if (!listed(a)) return { ok: false, reason: 'No such accreditation' }; // (Milestone 31: a prestige one before its flag)
     const s = status(a);
     if (s === 'won') return { ok: false, reason: 'Already awarded' };
     if (s === 'locked') return { ok: false, reason: `Needs Rank ${a.rank}` };
@@ -267,7 +296,7 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
       record({ kind: 'accreditation', id: a.id, day, pass: true, lines: j.lines });
       addRep(a.reward.reputation, day, `Accreditation: ${a.name}`);
       onAward?.(a); // (the home world: the recognition bonus on the Ledger, the Founder's recognitions)
-      bus?.emit('quality:award', { id: a.id, name: a.name, art: a.art, day, finale: !!a.finale });
+      bus?.emit('quality:award', { id: a.id, name: a.name, art: a.art, day, finale: !!a.finale, prestige: !!a.secret });
     } else {
       st.acc[a.id] = { failed: day, until: day + INSPECTION.cooldownDays };
       record({ kind: 'accreditation', id: a.id, day, pass: false, lines: j.lines });
@@ -297,9 +326,27 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
       st.peers[p.id] = { scores: [...p.base], joined: day };
       bus?.emit('quality:peer', { id: p.id, name: p.name, day });
     }
+    // (Milestone 31) R08 joins once its secret's flag is set: a little above the home on every score
+    for (const p of PRESTIGE_PEERS) {
+      if (st.peers[p.id] || !secretOpen(p.unlockFlag) || !st.samples.length) continue;
+      const s = scores();
+      st.peers[p.id] = { scores: SCORE_IDS.map((id) => r1(Math.min(p.adaptive.ceiling, s[id] + p.adaptive.lead))), joined: day };
+      bus?.emit('quality:peer', { id: p.id, name: p.name, day, prestige: true });
+    }
+  }
+  // (Milestone 31) Adaptive (R08): part of the way back to a little above the home's own score, each month.
+  function adaptiveDrift(p, rec, day) {
+    const A = p.adaptive;
+    const s = scores();
+    const rng = new Rng(`${seed}:peer:${p.id}:${day}`);
+    rec.scores = rec.scores.map((v, i) => {
+      const target = Math.min(A.ceiling, s[SCORE_IDS[i]] + A.lead);
+      return r1(Math.max(PEER_DRIFT.floor, Math.min(A.ceiling, v + (target - v) * A.pull + rng.range(-A.noise, A.noise))));
+    });
   }
   function peersDrift(day) {
     const D = PEER_DRIFT;
+    for (const p of PRESTIGE_PEERS) if (st.peers[p.id]) adaptiveDrift(p, st.peers[p.id], day);
     for (const p of PEERS) {
       const rec = st.peers[p.id];
       if (!rec) continue;
@@ -379,7 +426,7 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
       return { rank: R.id, need: R.min, accreditations: R.accreditations, have: wonIds().length, held: rep.value >= R.min };
     },
     rankLog: () => st.rankLog,
-    accreditations: () => ACCREDITATIONS.map((def) => ({ def, status: status(def), day: st.acc[def.id]?.won ?? null, until: st.acc[def.id]?.until ?? null, inspectionDay: st.applied?.id === def.id ? st.applied.day : null, check: judge(def.id) })),
+    accreditations: () => listedAccreditations().map((def) => ({ def, status: status(def), day: st.acc[def.id]?.won ?? null, until: st.acc[def.id]?.until ?? null, inspectionDay: st.applied?.id === def.id ? st.applied.day : null, check: judge(def.id) })),
     won,
     wonIds,
     applied: () => st.applied,
@@ -390,7 +437,7 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
     markSeen(uid = null) {
       for (const x of st.inspections) if (uid == null || x.uid === uid) x.seen = true;
     },
-    peers: () => PEERS.filter((p) => st.peers[p.id]).map((def) => ({ def, scores: Object.fromEntries(SCORE_IDS.map((id, i) => [id, st.peers[def.id].scores[i]])), avg: peerAvg(def.id), joined: st.peers[def.id].joined })),
+    peers: () => ALL_PEERS.filter((p) => st.peers[p.id]).map((def) => ({ def, scores: Object.fromEntries(SCORE_IDS.map((id, i) => [id, st.peers[def.id].scores[i]])), avg: peerAvg(def.id), joined: st.peers[def.id].joined })),
     benchmark() {
       const s = scores();
       return SCORE_IDS.map((id, i) => {

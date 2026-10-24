@@ -16,7 +16,8 @@
 //     { type: 'research', node }       a research node is done (data/research.js, Milestone 21); ?debug=1 allows it too
 //     { type: 'partner', text }        a community partner — Milestone 23: locked, ?debug=1 allows it
 //     { type: 'wing', wing, id }       a specialist wing working (its hub placed inside it — Milestone 27; ?debug=1 allows it)
-//     { type: 'secret', secret }       never: PRG11 / PRG12 are hidden (Milestone 31)
+//     { type: 'secret', secret, flag } PRG11 / PRG12: hidden until that secret's unlock flag `unlock:<flag>` is set
+//                                      (Milestone 31; ?debug=1's unlock never opens it)
 //   scope: 'facility' (the whole home) or 'wing' (one wing: 'home' is the only one until Milestone 24)
 //   resources:
 //     staff: { roles, shift, hours }  staff hours a week, from that shift's roster (the M7 roster; trainees don't count)
@@ -36,7 +37,7 @@
 //   choice: an activity id whose feeling (M14 feelingOf / joinChance) decides a one-to-one offer (null: offered, and the
 //     usual at-the-door refusal rules apply)
 //   effects: the numbers it adds, on outcomes earlier milestones built (each program's own keys; see EFFECT_TEXT)
-//   secret: true — never listed, never startable
+//   secret: true — a prestige program: never listed or startable until its flag is set (Milestone 31)
 import { nodeLabel } from './research.js';
 
 const p = (id, name, focus, fields) => ({ id, name, focus, icon: `program_${id.toLowerCase()}`, scope: 'facility', veto: { options: [], group: false }, choice: null, secret: false, ...fields });
@@ -147,14 +148,41 @@ export const PROGRAMS = [
     effects: { comfortScore: 5 },
   }),
   // Secret (Milestone 31): never listed, never startable.
-  p('PRG11', 'Centenarian Living', 'Prestige', { text: 'Secret', secret: true, unlock: [{ type: 'secret', secret: 'SEC-FAC-01' }], resources: { staff: { roles: ['LC'], shift: 'afternoon', hours: 2 }, facility: null, shownAt: [], weeklyCost: 0, prop: null }, adds: { kind: 'none' }, suits: { text: '', tags: [] }, effects: {} }),
-  p('PRG12', 'Home, Not Hospital', 'Prestige', { text: 'Secret', secret: true, unlock: [{ type: 'secret', secret: 'SEC-COMP-02' }], resources: { staff: { roles: ['RN'], shift: 'morning', hours: 2 }, facility: null, shownAt: [], weeklyCost: 0, prop: null }, adds: { kind: 'none' }, suits: { text: '', tags: [] }, effects: {} }),
+  // Prestige (Milestone 31): hidden until their secret's unlock flag is set (flag: SEC-FAC-01 → unlock:PRG11, SEC-COMP-02 →
+  // unlock:PRG12), then listed and run by the same rules as the others (staff hours, Credits, choice). The Centenarian
+  // Garden (F34) makes both stronger: effects × 1.2 (× its level). Placeholder numbers, logged in docs/DECISIONS.md.
+  p('PRG11', 'Centenarian Living', 'Prestige', {
+    secret: true,
+    text: 'Long lives lived their own way: an afternoon of their choosing for the home’s eldest residents',
+    unlock: [{ type: 'secret', secret: 'SEC-FAC-01', flag: 'PRG11' }],
+    resources: { staff: { roles: ['LC'], shift: 'afternoon', hours: 2 }, facility: null, shownAt: ['F34', 'F14', 'F05'], weeklyCost: 60, prop: null },
+    // a one-to-one offer to each resident aged minAge or more; they say yes or no as always
+    adds: { kind: 'task', name: 'An afternoon their way', type: 'activity', at: 14.5, band: 'afternoon', days: [1, 3, 5], roles: ['LC', 'CW'], minutes: 30, drops: { social: 10 }, outcomes: { mood: 3, comfort: 2, connection: 1 }, who: 'elder', minAge: 90 },
+    suits: { text: 'Residents aged 90 and over', tags: [] },
+    veto: { options: [], group: false },
+    effects: { session: { mood: 3, comfort: 2, connection: 1 }, minAge: 90 },
+  }),
+  p('PRG12', 'Home, Not Hospital', 'Prestige', {
+    secret: true,
+    text: 'Every clinical task still done, fitted around each resident’s own day: quality of life first',
+    unlock: [{ type: 'secret', secret: 'SEC-COMP-02', flag: 'PRG12' }],
+    resources: { staff: { roles: ['RN', 'CW'], shift: 'morning', hours: 2 }, facility: null, shownAt: ['F34', 'F01'], weeklyCost: 80, prop: null },
+    adds: { kind: 'none' },
+    suits: { text: 'Everyone who lives here', tags: [] },
+    // Comfort and Mood an hour for every resident awake in the day bands (morning, afternoon, evening); care itself is unchanged
+    effects: { dayComfortPerHour: 0.15, dayMoodPerHour: 0.15 },
+  }),
 ];
-// The ten a player ever sees (PRG11 / PRG12 are secret).
+// The ten a player always sees (PRG11 / PRG12 are secret: listed only once their flag is set — Milestone 31).
 export const VISIBLE_PROGRAMS = PROGRAMS.filter((x) => !x.secret);
+export const PRESTIGE_PROGRAMS = PROGRAMS.filter((x) => x.secret);
 export const programById = (id) => PROGRAMS.find((x) => x.id === id) ?? null;
 // (by id, the visible ones only — what the sheet and the world's list use)
 export const visibleProgram = (id) => VISIBLE_PROGRAMS.find((x) => x.id === id) ?? null;
+// (Milestone 31) the unlock flag that opens a prestige program (null: an ordinary one)
+export const programFlag = (def) => def?.unlock.find((r) => r.type === 'secret')?.flag ?? null;
+// (Milestone 31) the Centenarian Garden's boost on the prestige programs: × 1.2 at Level I (data/facilities.js F34)
+export const PRESTIGE_GARDEN = { facility: 'F34', mult: 1.2 };
 
 // What each lock says while it is locked (plain words), and the milestone that opens it.
 export const LOCKS = {
@@ -162,6 +190,7 @@ export const LOCKS = {
   partner: { milestone: 'M23', text: (r) => `Needs ${r.text} (community partners arrive in a later update)` },
   wing: { milestone: 'M27', text: (r) => `Needs the ${r.wing} working (its hub placed inside the wing)` },
   night: { text: () => 'Needs staff rostered on the Night shift' },
+  secret: { milestone: 'M31', text: () => 'Needs its secret found (a prestige program)' }, // (Milestone 31: shown only once it is)
 };
 // The rules (src/systems/programs.js): the week, the staff-hours check and stopping.
 export const PROGRAM_RULES = {
@@ -187,6 +216,9 @@ export const EFFECT_TEXT = {
   PRG08: (e) => `Comfort +${e.awakeComfortPerHour} an hour for anyone awake at night · quiet checks ease needs, so fewer call bells`,
   PRG09: (e) => `The visit lifts Mood and Social Connection ${e.liftMult}× · Social Connection +${e.joined.connection} for each visit joined`,
   PRG10: (e) => `End-of-life comfort score +${e.comfortScore} for residents in its wing`, // (Milestone 27)
+  // (Milestone 31: the prestige two; the Centenarian Garden makes both 20% stronger)
+  PRG11: (e) => `Mood +${e.session.mood}, Comfort +${e.session.comfort}, Social Connection +${e.session.connection} each afternoon a resident aged ${e.minAge}+ says yes · +20% with the Centenarian Garden`,
+  PRG12: (e) => `Comfort +${e.dayComfortPerHour} and Mood +${e.dayMoodPerHour} an hour for everyone awake in the day · clinical care unchanged · +20% with the Centenarian Garden`,
 };
 
 // Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator.
@@ -217,7 +249,8 @@ export function validatePrograms(v, { facilities = null, activities = null, opti
       }
     }
     if (options) for (const o of x.veto.options) v.check(options.includes(o), `${who}: veto option ${o}`);
-    if (!x.secret) v.check(!!EFFECT_TEXT[x.id], `${who}: effect text`);
+    v.check(!!EFFECT_TEXT[x.id], `${who}: effect text`);
+    if (x.secret) v.check(!!programFlag(x), `${who}: a prestige program opens by its unlock flag`);
   }
   return v;
 }

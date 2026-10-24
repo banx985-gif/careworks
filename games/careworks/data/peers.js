@@ -2,7 +2,7 @@
 // them. A peer is a yardstick only — it never takes residents, staff or funding from the home (bible §32: no predatory
 // competition). Each appears at the start of its year with five benchmark scores (the same five as the home's), which
 // drift once a month, seeded: up in its strong areas (to a ceiling), a little either way elsewhere.
-// R08 Legacy House Network is secret (Milestone 31): not listed.
+// R08 Legacy House Network is secret (Milestone 31): PRESTIGE_PEERS below.
 //   base: the five scores on arrival (clinicalSafety, residentWellbeing, familyTrust, staffWellbeing, environment)
 //   strong: the scores that drift up
 export const PEERS = [
@@ -14,8 +14,16 @@ export const PEERS = [
   { id: 'R06', name: 'Northstar Nursing', identity: 'Clinical excellence', strength: 'Clinical', year: 9, logo: 'peer_logo_r06', strong: ['clinicalSafety', 'environment'], base: [82, 72, 72, 72, 76] },
   { id: 'R07', name: 'Crown Haven', identity: 'Elite all-rounder', strength: 'Balanced', year: 12, logo: 'peer_logo_r07', strong: ['clinicalSafety', 'residentWellbeing', 'familyTrust', 'staffWellbeing', 'environment'], base: [80, 80, 80, 80, 80] },
 ];
-export const SECRET_PEERS = ['R08'];
-export const peerById = (id) => PEERS.find((p) => p.id === id) ?? null;
+// R08 Legacy House Network (Milestone 31, bible §32: "Prestige benchmark · Adaptive · Secret"): joins the network only once
+// SEC-RIVAL-01's flag is set (unlock:benchmarkNetwork). Adaptive: it arrives `lead` points above the home on every score
+// and each month moves `pull` of the way back to `lead` above the home's own score (± noise, never past `ceiling`), so it
+// is always a stretch. Like every peer it never takes residents, staff or funding.
+export const PRESTIGE_PEERS = [
+  { id: 'R08', name: 'Legacy House Network', identity: 'Prestige benchmark', strength: 'Adaptive', year: null, logo: 'peer_logo_r08', secret: true, unlockFlag: 'benchmarkNetwork', strong: [], base: null, adaptive: { lead: 3, pull: 0.5, noise: 0.4, ceiling: 99 } },
+];
+export const SECRET_PEERS = PRESTIGE_PEERS.map((p) => p.id);
+export const ALL_PEERS = [...PEERS, ...PRESTIGE_PEERS];
+export const peerById = (id) => ALL_PEERS.find((p) => p.id === id) ?? null;
 
 // The monthly drift: a strong score moves up by strongUp ± noise (never past ceiling); any other by ± noise (kept
 // between floor and ceiling).
@@ -23,7 +31,7 @@ export const PEER_DRIFT = { strongUp: 0.35, noise: 0.6, floor: 45, ceiling: 94 }
 
 // The yearly recognition table (core/Rankings): every peer that has appeared and the home, placed by the average of
 // their five scores at the year's end; points for each place.
-export const RECOGNITION = { points: [25, 18, 15, 12, 10, 8, 6, 4], homeId: 'home' };
+export const RECOGNITION = { points: [25, 18, 15, 12, 10, 8, 6, 4, 2], homeId: 'home' }; // (Milestone 31: a ninth place, for R08)
 
 export function validatePeers(v) {
   v.check(PEERS.length === 7, 'peers: R01–R07 (R08 stays secret)');

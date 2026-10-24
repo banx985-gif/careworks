@@ -78,13 +78,36 @@ export const ACCREDITATIONS = [
     reward: { reputation: 800, credits: 3000, bonus: {}, flags: ['finale'], text: 'The Year-16 finale · Reputation +800 (the ending itself comes in a later update) · a 3,000-Credit recognition bonus' },
   },
 ];
-// C11 Master Care Circle and C12 Home, Not Hospital Honour are secret (Milestones 29–31): not listed, never shown.
-export const SECRET_ACCREDITATIONS = ['C11', 'C12'];
-export const accreditationById = (id) => ACCREDITATIONS.find((a) => a.id === id) ?? null;
+// C11 Master Care Circle and C12 Home, Not Hospital Honour are secret (Milestone 31, bible §31): never listed or shown
+// until their own secret's unlock flag is set (SEC-COMP-01 → unlock:C11, SEC-COMP-02 → unlock:C12 — src/systems/secrets.js
+// unlocked(id)). Then they sit on Quality → Accreditation like the others: applied for at Rank S, judged by a real
+// inspection on what really happened, won once (a big beat), never bought.
+//   { type: 'facility', ids }        one of these facilities placed (C11: a prestige facility, F34 or F35)
+//   { type: 'essentialClean', days } no essential care missed in the last `days` days (C12: three months, 84 days)
+//   reward.prestige: Prestige Tokens (once per device, keyed by the award, like a secret's tokens)
+//   reward.accolade: a recognition the home keeps (data/secrets.js RECOGNITIONS)
+//   reward.beat: the big beat's line (neither has a Credits bonus)
+export const PRESTIGE_ACCREDITATIONS = [
+  {
+    id: 'C11', name: 'Master Care Circle', rank: 'S', art: 'care_award_11', secret: true, unlockFlag: 'C11',
+    text: 'The circle of homes that hold the national honour and keep a prestige space of their own.',
+    requirement: [{ type: 'accreditations', ids: ['C10'] }, { type: 'facility', ids: ['F34', 'F35'] }],
+    reward: { reputation: 600, credits: 0, prestige: 3, bonus: {}, flags: [], text: '3 Prestige Tokens (once on this device) · Reputation +600', beat: 'Awarded · 3 Prestige Tokens · Reputation +600' },
+  },
+  {
+    id: 'C12', name: 'Home, Not Hospital Honour', rank: 'S', art: 'care_award_12', secret: true, unlockFlag: 'C12',
+    text: 'The ultimate care recognition: clinical care that is safe, and a life that feels like home.',
+    requirement: [{ type: 'score', score: 'clinicalSafety', min: 95 }, { type: 'score', score: 'residentWellbeing', min: 95 }, { type: 'essentialClean', days: 84 }],
+    reward: { reputation: 1000, credits: 0, accolade: 'homeNotHospital', bonus: {}, flags: [], text: 'The ultimate care recognition: the Home, Not Hospital accolade · Reputation +1,000', beat: 'The ultimate care recognition · Reputation +1,000' },
+  },
+];
+export const SECRET_ACCREDITATIONS = PRESTIGE_ACCREDITATIONS.map((a) => a.id);
+export const ALL_ACCREDITATIONS = [...ACCREDITATIONS, ...PRESTIGE_ACCREDITATIONS];
+export const accreditationById = (id) => ALL_ACCREDITATIONS.find((a) => a.id === id) ?? null;
 
 export const COUNTER_NAMES = { rehabDischarges: 'successful rehab discharges', communityEvents: 'community events held' };
 export const MEASURE_NAMES = { nutrition: 'Nutrition (dining satisfaction)' };
-export const REQUIREMENT_TYPES = ['score', 'allScores', 'measure', 'counter', 'program', 'year', 'accreditations'];
+export const REQUIREMENT_TYPES = ['score', 'allScores', 'measure', 'counter', 'program', 'year', 'accreditations', 'facility', 'essentialClean'];
 
 export function validateAccreditations(v, { scoreIds, programIds, rankIds }) {
   v.check(ACCREDITATIONS.length === 10, 'accreditations: C01–C10 (C11 / C12 stay secret)');
@@ -102,6 +125,14 @@ export function validateAccreditations(v, { scoreIds, programIds, rankIds }) {
       if (r.type === 'measure') v.check(r.measure in MEASURE_NAMES, `${who}: measure ${r.measure}`);
     }
     v.check(Number.isFinite(a.reward.reputation) && !!a.reward.text, `${who}: reward`);
+  });
+  // (Milestone 31) the two prestige recognitions: secret, opened only by their own unlock flag
+  PRESTIGE_ACCREDITATIONS.forEach((a, i) => {
+    const who = `accreditation ${a.id}`;
+    v.check(a.id === `C${11 + i}` && a.secret && a.unlockFlag === a.id, `${who}: secret, opened by unlock:${a.id}`);
+    v.check(a.art === `care_award_${a.id.slice(1)}` && rankIds.includes(a.rank), `${who}: art, rank`);
+    for (const r of a.requirement) v.check(REQUIREMENT_TYPES.includes(r.type), `${who}: requirement type ${r.type}`);
+    v.check(Number.isFinite(a.reward.reputation) && !!a.reward.text && !!a.reward.beat, `${who}: reward`);
   });
   return v;
 }

@@ -387,6 +387,26 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
       return [...st.flags];
     },
     flag: (f) => st.flags.includes(f),
+    // (Milestone 31) Is what an unlock flag opens open here? Its flag in this run — or, for a once-per-account secret
+    // found in an earlier run on this device (it can't be found twice), that secret found. Nothing else opens it.
+    unlocked(id) {
+      if (st.flags.includes(`unlock:${id}`)) return true;
+      return live.some((r) => r.oncePerAccount && engine.everUnlocked(r.id) && (r.rewardActions ?? []).some((a) => a.type === 'unlock' && a.id === id));
+    },
+    // (Milestone 31) A prestige award's own rewards, each once: Prestige Tokens keyed by the award on this device (C11),
+    // an accolade kept by this home (C12). A reload repeats the call; nothing is given twice.
+    grantPrestige(key, amount) {
+      const r = acct().rewards;
+      if (r[`${key}:prestige`]) return false;
+      r[`${key}:prestige`] = { amount, day: env.today(), runId };
+      saveAccount();
+      return true;
+    },
+    grantRecognition(id, why) {
+      if (st.recognitions.some((x) => x.id === id)) return false;
+      handlers.recognition({ id, secret: why });
+      return true;
+    },
     get recognitions() {
       return [...st.recognitions];
     },

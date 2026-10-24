@@ -205,6 +205,8 @@ export const RECOGNITIONS = {
   // (Batch C: accolades)
   residentLedHome: { name: 'The Resident-Led Home accolade', text: 'A home where residents’ own choices lead the day' },
   balancedOperations: { name: 'The Balanced Operations accolade', text: 'Full, safe and trusted, all at once' },
+  // (Milestone 31: C12's reward, given by the award itself — data/accreditations.js PRESTIGE_ACCREDITATIONS)
+  homeNotHospital: { name: 'The Home, Not Hospital accolade', text: 'Safe care and a life that feels like home, both at their very best' },
 };
 export const CELEBRATIONS = {
   oldFriends: { name: 'The Old Friends celebration' },

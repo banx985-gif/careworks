@@ -78,12 +78,18 @@ export const FACILITIES = [
   f('F31', 'Rehabilitation Wing Hub', 'Maker', rank('A'), 8800, fx('rehabWing', 1, 'Unlocks Rehab wing expansion'), { text: 'The heart of a rehabilitation wing' }),
   f('F32', 'Palliative Care Wing Hub', 'Maker', rank('A'), 9000, fx('palliativeWing', 1, 'Unlocks the Palliative wing'), { text: 'The heart of a palliative wing' }),
   f('F33', 'Emergency Preparedness Hub', 'Thinker', research('Safety', 5, 'OPS4', 'Emergency Readiness'), 7600, fx('emergencySeverityPct', -15, 'Emergency severity −15%', true), { text: 'Plans and kit for when things go wrong' }),
-  f('F34', 'Centenarian Garden', 'Secret', { type: 'secret', value: 'SEC-FAC-01', text: 'Secret' }, 12000, fx('prestigeWellbeingPct', 20, 'Prestige wellbeing program +20%'), { text: 'A secret' }),
-  f('F35', 'Legacy House', 'Secret', { type: 'secret', value: 'SEC-FAC-02', text: 'Secret' }, 15000, fx('prestigeStoryHub', 1, 'Prestige story / familiar-care hub'), { text: 'A secret' }),
+  // (Milestone 31: the two prestige spaces — on the Build list only once their secret's unlock flag is set, `flag`)
+  f('F34', 'Centenarian Garden', 'Secret', { type: 'secret', value: 'SEC-FAC-01', flag: 'F34', text: 'A secret: the Centenarian Garden' }, 12000, fx('prestigeWellbeingPct', 20, 'Prestige wellbeing programs +20%', true), { text: 'A beautiful garden for long lives: the prestige programs do more' }),
+  f('F35', 'Legacy House', 'Secret', { type: 'secret', value: 'SEC-FAC-02', flag: 'F35', text: 'A secret: Legacy House' }, 15000, fx('prestigeStoryHub', 1, 'Story and Familiar Care hub: life-story time and Familiar Care +25% for residents who use it', true), { text: 'A house of stories: photographs, keepsakes and the people who know them' }),
 ];
 export const facilityById = (id) => FACILITIES.find((x) => x.id === id) ?? null;
-// What Build Mode may ever list (the secret two never appear, not even greyed).
+// What Build Mode always lists (the secret two never appear, not even greyed, until their flag is set — Milestone 31).
 export const BUILDABLE_FACILITIES = FACILITIES.filter((x) => !x.secret);
+export const PRESTIGE_FACILITIES = FACILITIES.filter((x) => x.secret);
+// (Milestone 31) F35 Legacy House: a resident "uses" it by joining life-story time (a group session or a one-to-one)
+// while it stands; for `days` after, their life-story sessions lift × storyMult and the Familiar Care they build with
+// the team × familiarMult (each × its level, as other facility bonuses). Placeholder numbers, logged in DECISIONS.
+export const LEGACY_HOUSE = { facility: 'F35', days: 28, storyMult: 1.25, familiarMult: 1.25 };
 
 // Check the list. v = a core/DataValidator.
 export function validateFacilities(v, list = FACILITIES) {

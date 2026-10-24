@@ -2,7 +2,7 @@
 // missing draws the placeholder box, never crashes.
 import { PLACED, PROPS, STAGES } from './home.js';
 import { ROOMS } from './rooms.js';
-import { BUILDABLE_FACILITIES } from './facilities.js';
+import { BUILDABLE_FACILITIES, PRESTIGE_FACILITIES } from './facilities.js';
 import { BOTTOM_SLOTS, TOP_ICONS, CARE_ICONS } from './bars.js';
 import { CARE_POPS } from './pops.js';
 import { RESIDENTS } from './residents.js';
@@ -14,13 +14,13 @@ import { TROLLEYS } from './dining.js';
 import { DISCHARGE } from './mobility.js';
 import { ROUND } from './clinical.js';
 import { FAMILY_ICONS, FIRSTS, COMPLIMENT } from './family.js';
-import { VISIBLE_PROGRAMS } from './programs.js';
+import { VISIBLE_PROGRAMS, PRESTIGE_PROGRAMS } from './programs.js';
 import { PARTNERS } from './partners.js';
 import { WINGS_SPECIAL } from './wings.js';
 import { INCIDENTS } from './incidents.js';
 import { ITEM_TYPES } from './items.js';
-import { ACCREDITATIONS } from './accreditations.js';
-import { PEERS } from './peers.js';
+import { ACCREDITATIONS, PRESTIGE_ACCREDITATIONS } from './accreditations.js';
+import { PEERS, PRESTIGE_PEERS } from './peers.js';
 import { QUALITY_ART } from './quality.js';
 import { MEMORIAL } from './endOfLife.js';
 import { DRESSING_ART } from './dressing.js';
@@ -71,7 +71,7 @@ export const ASSETS = {
   ...Object.fromEntries([...new Set(INCIDENTS.map((t) => t.icon))].map((k) => art('ui', k))),
   // Milestone 25c: every UI icon (the Menu sheet's rows, the equipment store) and the filed pictures care-equipment items
   // reuse (care equipment, rewards, UI icons). The rest of the items are code placeholders until their files exist.
-  // (Milestone 28b: care_ui_29, the Secret Program icon, is secret like PRG11 / PRG12: not loaded until Milestone 31)
+  // (Milestone 28b: care_ui_29, the Secret Program icon, is loaded with the prestige art below — Milestone 31)
   ...Object.fromEntries(Array.from({ length: 30 }, (_, i) => `care_ui_${String(i + 1).padStart(2, '0')}`).filter((k) => k !== 'care_ui_29').map((k) => art('ui', k))),
   ...Object.fromEntries(ITEM_TYPES.filter((t) => !t.art.startsWith('care_item_')).map((t) => art({ care_equipment: 'equipment', care_reward: 'rewards', care_ui: 'ui' }[t.art.replace(/_[0-9]+$/, '')], t.art))),
   // Milestone 26: the ten visible award icons (C11 / C12 are secret: not loaded), the seven peer logos (R08 secret), the
@@ -90,6 +90,13 @@ export const ASSETS = {
   ...Object.fromEntries(Object.values(FIRST_ART).map((k) => art('events', k))),
   ...Object.fromEntries(Object.values(REWARD_ART).map((k) => art('rewards', k))),
   ...Object.fromEntries(Object.values(CARE_FX).map((x) => art('vfx', x.art))),
+  // Milestone 31: the prestige chain's art — F34 / F35, C11 / C12, PRG11 / PRG12 and the Secret Program icon, R08's logo
+  // (loaded now; shown only once each one's secret flag opens it)
+  ...Object.fromEntries(PRESTIGE_FACILITIES.map((f) => art('facilities', f.art))),
+  ...Object.fromEntries(PRESTIGE_ACCREDITATIONS.map((x) => art('awards', x.art))),
+  ...Object.fromEntries(PRESTIGE_PROGRAMS.map((p) => art('programs', p.icon))),
+  ...Object.fromEntries(PRESTIGE_PEERS.map((p) => art('logos', p.logo))),
+  ...Object.fromEntries([art('ui', 'care_ui_29')]),
   studioLogo: 'assets/branding/banx_gamex_logo.png',
   // Milestone 0 loader test (?screen=test): the placeholder PWA icon as a real image, and one deliberately missing file.
   m0Real: 'assets/branding/pwa/icon-192.png',
