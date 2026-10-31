@@ -22,6 +22,10 @@ import { wingById } from './wings.js';
 import { residentById } from './residents.js';
 import { stageById } from './endOfLife.js';
 import { FIRST_ART, FIRSTS_TEXT, REWARD_ART, PRESTIGE_RANKS } from './artMoments.js';
+import { VERDICT_TEXT } from './verdicts.js';
+
+// (Milestone 32b) An accreditation inspection's four inspectors, revealed one at a time before the result.
+const inspectionCeremony = (x, headline, lines, art) => (x.panel ? { kind: 'accreditation', title: `${x.name ?? accreditationById(x.id)?.name ?? 'Inspection'}: the inspection`, panel: x.panel, total: x.panel.reduce((t, p) => t + p.score, 0), max: 40, tier: null, headline, lines, art } : null);
 
 // --- the 14 categories (§33) --------------------------------------------------------------------------------------------------
 export const CATEGORIES = [
@@ -119,9 +123,13 @@ export const KINDS = {
   'quality:award': { cat: 'recognition', inbox: true, make: (x) => {
     const rw = accreditationById(x.id)?.reward ?? { reputation: 0, credits: 0 };
     // (Milestone 31: a prestige award — C11 / C12 — says its own reward, with the prestige glow)
-    return { weight: 'big', title: x.name, ...(rw.beat ? { line: `${x.name} · ${rw.beat}` } : {}), text: rw.beat ?? `Awarded · Reputation +${rw.reputation} · ${rw.credits.toLocaleString('en-GB')} Credits`, art: x.finale ? QUALITY_ART.finale : x.art, ...(x.finale ? { badge: REWARD_ART.trophy, aura: true } : x.prestige ? { badge: REWARD_ART.prestige, aura: true } : {}), good: true, opens: { type: 'quality' } };
+    const text = rw.beat ?? `Awarded · Reputation +${rw.reputation} · ${rw.credits.toLocaleString('en-GB')} Credits`;
+    const ceremony = inspectionCeremony(x, `Awarded: ${x.name}`, [text], x.finale ? QUALITY_ART.finale : x.art); // (Milestone 32b)
+    return { weight: 'big', title: x.name, ...(rw.beat ? { line: `${x.name} · ${rw.beat}` } : {}), text, ...(ceremony ? { ceremony } : {}), art: x.finale ? QUALITY_ART.finale : x.art, ...(x.finale ? { badge: REWARD_ART.trophy, aura: true } : x.prestige ? { badge: REWARD_ART.prestige, aura: true } : {}), good: true, opens: { type: 'quality' } };
   } },
-  'quality:inspection': { cat: 'recognition', inbox: true, make: (x) => (x.kind === 'routine' ? { weight: 'medium', text: `The routine review: grade ${x.grade} (Inbox)`, good: x.grade !== 'D', opens: { type: 'quality' } } : x.pass ? { weight: 'inbox', text: `${accreditationById(x.id)?.name}: awarded`, good: true, opens: { type: 'quality' } } : { weight: 'medium', text: `${accreditationById(x.id)?.name}: the inspection fell short — see what to work on (Inbox)`, good: false, opens: { type: 'quality' } }) },
+  // (Milestone 32b: the routine review is shown at the Awards Evening, so its own moment is an Inbox line; an inspection
+  // that fell short shows its four inspectors, then what to work on)
+  'quality:inspection': { cat: 'recognition', inbox: true, make: (x) => (x.kind === 'routine' ? { weight: 'inbox', text: `The routine review: grade ${x.grade} (Quality → Inspections)`, good: x.grade !== 'D', opens: { type: 'quality' } } : !x.pass && x.panel ? { weight: 'big', title: `${accreditationById(x.id)?.name}: not this time`, text: 'The inspection fell short — see what to work on (Quality → Inspections)', line: `${accreditationById(x.id)?.name}: the inspection fell short — see what to work on (Inbox)`, art: accreditationById(x.id)?.art ?? QUALITY_ART.icon, good: false, opens: { type: 'quality' }, ceremony: inspectionCeremony(x, 'Not this time', ['See what to work on in Quality → Inspections', 'Apply again after the cooldown'], accreditationById(x.id)?.art ?? QUALITY_ART.icon) } : x.pass ? { weight: 'inbox', text: `${accreditationById(x.id)?.name}: awarded`, good: true, opens: { type: 'quality' } } : { weight: 'medium', text: `${accreditationById(x.id)?.name}: the inspection fell short — see what to work on (Inbox)`, good: false, opens: { type: 'quality' } }) },
   'quality:peer': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'quiet', text: x.prestige ? `${x.name} invites your home into its circle: a prestige benchmark, always a step ahead (Quality → Benchmark)` : `${x.name} joins the benchmark network (Quality → Benchmark)`, good: true, opens: { type: 'quality' } }) }, // (Milestone 31: R08)
   'care:stage': { cat: 'memorial', inbox: true, make: (x) => (x.stage === 'approaching' && x.offer ? { weight: 'blocking', title: `${first(x.name)}: comfort care offered`, text: `${first(x.name)} is approaching the end of life: comfort care is offered, never forced`, line: x.line, good: true, opens: { type: 'inbox' }, choice: { kind: 'comfort', id: x.resident } } : { weight: 'quiet', text: `${first(x.name)}: ${stageById(x.stage).name.toLowerCase()}`, line: x.line, good: true, opens: res(x.resident) }) },
   // Milestone 29: secrets — a quiet Inbox line when a clue stage is reached (only the clue, never the condition), a big beat
@@ -135,6 +143,10 @@ export const KINDS = {
   'care:achievement': { cat: 'recognition', inbox: true, make: (x) => (x.beat === 'big' ? { weight: 'big', title: `Achievement: ${x.name}`, text: x.reward || 'Kept in every home', line: `Achievement: ${x.name}${x.reward ? ` · ${x.reward}` : ''}`, art: REWARD_ART.trophy, aura: true, good: true, opens: { type: 'achievements' } } : { weight: 'inbox', text: `Achievement${x.first ? '' : ' (this home)'}: ${x.name}${x.reward ? ` · ${x.reward}` : ''}`, good: true, opens: { type: 'achievements' } }) },
   'care:hallOfFame': { cat: 'staff', inbox: true, make: (x) => ({ weight: x.candidate ? 'inbox' : 'quiet', text: x.candidate ? `${first(x.name)} can join the Staff Hall of Fame (Records)` : `${first(x.name)} joins the Staff Hall of Fame · ${x.why}`, good: true, opens: { type: 'hallOfFame' } }) },
   'care:keepsake': { cat: 'memorial', inbox: true, make: (x) => ({ weight: 'quiet', text: x.line, line: `${x.line} · a keepsake: the ${x.name}`, good: true, opens: { type: 'memoryBook' } }) },
+  // Milestone 32b: the verdict calendar — the Open Day (Month 7) and the Awards Evening (Month 12) are big ceremonies
+  'care:openDayToday': { cat: 'community', inbox: true, make: () => ({ weight: 'quiet', text: VERDICT_TEXT.openDayToday, good: true, opens: { type: 'trophies' } }) },
+  'care:openDay': { cat: 'community', inbox: true, make: (x) => ({ weight: 'big', title: x.ceremony.title, text: `${x.ceremony.headline} · ${x.ceremony.total} / 40`, line: `${x.ceremony.title}: ${x.ceremony.headline} (${x.ceremony.total} / 40) · ${x.ceremony.lines.join(' · ')}`, art: x.ceremony.art, good: true, opens: { type: 'trophies' }, ceremony: x.ceremony }) },
+  'care:awardsEvening': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'big', title: x.ceremony.title, text: x.ceremony.headline, line: `${x.ceremony.title}: ${x.ceremony.headline} · ${x.ceremony.lines.join(' · ')}`, art: x.ceremony.art, good: true, opens: { type: 'trophies' }, ceremony: x.ceremony }) },
   'care:passed': { cat: 'memorial', inbox: true, make: (x) => ({ weight: 'blocking', title: x.name, text: x.card, line: x.line ?? x.card, good: true, opens: { type: 'memoryBook' }, choice: { kind: 'memorial', id: x.page?.id ?? x.resident } }) },
 };
 

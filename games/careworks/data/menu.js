@@ -30,6 +30,7 @@ export const MENU_GROUPS = [
     row('achievements', 'Achievements', 'Thirty goals for a caring home, kept in every home', 'care_ui_28'), // (Milestone 32: Quality → Records too)
     row('homeRecords', 'Home Records', 'This home’s best and the best across all your homes', 'care_ui_28'),
     row('hallOfFame', 'Staff Hall of Fame', 'The people who made your homes what they are', 'care_ui_28'),
+    row('trophies', 'Trophy Case', 'Open Days and Awards Evenings, year by year', 'care_ui_28'), // (Milestone 32b: Quality → Records too)
     row('family', 'Family', 'The Reception / Family Desk: visits, meetings and Family Trust', 'care_ui_10'),
   ] },
   { title: 'Business', rows: [

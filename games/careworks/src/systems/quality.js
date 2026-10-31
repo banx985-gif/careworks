@@ -30,6 +30,7 @@ import { SCORES, SCORE_IDS, WINDOW, READINGS, RANKS, REPUTATION, INSPECTION, ROU
 import { ALL_ACCREDITATIONS, accreditationById, COUNTER_NAMES, MEASURE_NAMES } from '../../data/accreditations.js';
 import { PEERS, PRESTIGE_PEERS, ALL_PEERS, peerById, PEER_DRIFT, RECOGNITION } from '../../data/peers.js';
 import { facilityById } from '../../data/facilities.js';
+import { panelOf } from './verdicts.js';
 import { programById } from '../../data/programs.js';
 
 const clamp = (x) => Math.max(0, Math.min(100, x));
@@ -286,33 +287,35 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
     st.inspections.push({ uid: st.nextUid++, seen: false, ...rec });
     if (st.inspections.length > 24) st.inspections.splice(0, st.inspections.length - 24);
   }
+  // (Milestone 32b) the four inspectors' view of the home today: the routine grade's own maths in four parts
+  const gradeNow = () => gradeRun({ categories: ROUTINE_GRADE.categories, bands: ROUTINE_GRADE.bands, facts: { ...scores(), essentialDone: history().essentialDone } });
   function inspect(day) {
     const a = accreditationById(st.applied.id);
     st.applied = null;
     st.firstReview ??= day;
     const j = judge(a.id);
+    const panel = panelOf(gradeNow()); // (Milestone 32b: shown, never part of the pass)
     if (j.pass) {
       st.acc[a.id] = { won: day };
-      record({ kind: 'accreditation', id: a.id, day, pass: true, lines: j.lines });
+      record({ kind: 'accreditation', id: a.id, day, pass: true, lines: j.lines, panel });
       addRep(a.reward.reputation, day, `Accreditation: ${a.name}`);
       onAward?.(a); // (the home world: the recognition bonus on the Ledger, the Founder's recognitions)
-      bus?.emit('quality:award', { id: a.id, name: a.name, art: a.art, day, finale: !!a.finale, prestige: !!a.secret });
+      bus?.emit('quality:award', { id: a.id, name: a.name, art: a.art, day, finale: !!a.finale, prestige: !!a.secret, panel });
     } else {
       st.acc[a.id] = { failed: day, until: day + INSPECTION.cooldownDays };
-      record({ kind: 'accreditation', id: a.id, day, pass: false, lines: j.lines });
+      record({ kind: 'accreditation', id: a.id, day, pass: false, lines: j.lines, panel });
     }
-    bus?.emit('quality:inspection', { id: a.id, kind: 'accreditation', pass: j.pass, day });
+    bus?.emit('quality:inspection', { id: a.id, kind: 'accreditation', pass: j.pass, day, panel, name: a.name });
   }
 
   // --- the yearly routine review ----------------------------------------------------------------------------------------
   function routineReview(day) {
-    const facts = { ...scores(), essentialDone: history().essentialDone };
-    const g = gradeRun({ categories: ROUTINE_GRADE.categories, bands: ROUTINE_GRADE.bands, facts });
+    const g = gradeNow();
     const lines = g.categories.map((c) => ({ text: `${c.name}: ${c.score} / ${c.max}`, ok: c.score >= c.max * 0.6 }));
     const h = history();
     lines.push({ text: h.incidents ? `${h.incidents} incident${h.incidents === 1 ? '' : 's'} this month, handled (never counted against the home)` : 'No incidents this month', ok: true, info: true });
     const gain = REPUTATION.routine[g.band] ?? 0;
-    record({ kind: 'routine', day, pass: true, grade: g.band, total: g.total, reputation: gain, lines });
+    record({ kind: 'routine', day, pass: true, grade: g.band, total: g.total, reputation: gain, lines, panel: panelOf(g) }); // (Milestone 32b: the four inspectors)
     st.lastRoutine = day;
     if (gain) addRep(gain, day, `Routine review: grade ${g.band}`);
     bus?.emit('quality:inspection', { id: null, kind: 'routine', pass: true, grade: g.band, total: g.total, day });
@@ -407,7 +410,8 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
     daily,
     prime,
     scores,
-    addReputation: (amount, day, reason) => amount > 0 && addRep(amount, day, reason), // (Milestone 32: an achievement's small lift)
+    addReputation: (amount, day, reason) => amount > 0 && addRep(amount, day ?? today(), reason), // (Milestone 32: an achievement's small lift; Milestone 32b: a show's place)
+    gradeNow, // (Milestone 32b: the routine grade of the home today — the inspectors' panel and the tests)
     parts: (id) => st.samples.at(-1)?.parts[id] ?? [],
     measure,
     history,

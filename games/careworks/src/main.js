@@ -82,6 +82,9 @@ import { accreditationById } from '../data/accreditations.js';
 import { PEERS, peerById } from '../data/peers.js';
 import { ECONOMY_START } from '../data/balance.js';
 import { createCarePops, createDayBeat } from './ui/carePops.js';
+import { createCeremony } from './ui/ceremony.js'; // (Milestone 32b)
+import { panelOf, panelTotal } from './systems/verdicts.js';
+import { INSPECTORS, inspectorById, tierById, VERDICT_TEXT, OPEN_DAY, AWARDS_EVENING } from '../data/verdicts.js';
 import { ASSETS } from '../data/assets.js';
 import { SAVE } from '../data/save.js';
 import { createCampaigns } from './app/campaigns.js';
@@ -186,6 +189,7 @@ const loop = new FixedStepLoop({
     dayBeat.update(dt);
     if (bigBeat && (bigBeat.age += dt) >= BIG_BEAT_LIFE) bigBeat = null;
     memorial.update(dt); // (Milestone 27: real time — the moment waits while the game is paused)
+    ceremony.update(dt); // (Milestone 32b)
     tickMoments(dt); // (Milestone 28: the event director's moment on screen)
     autosave.tick(dt);
     hintLine.update(dt); // (Milestone 25c)
@@ -197,6 +201,7 @@ const loop = new FixedStepLoop({
     router.render(ctx, alpha);
     sheet.render(ctx);
     if (router.currentName === 'home') drawBigBeat(ctx);
+    if (ceremony.active) ceremony.render(ctx); // (Milestone 32b: the inspectors, the Open Day, the Awards Evening)
     dialog.render(ctx);
     if (memorial.active) {
       memorial.height = renderer.height;
@@ -240,12 +245,12 @@ debug.log(`seeded rng check: ${rng.int(0, 9999)} (same every reload)`);
 const pauseButton = () => layout.anchor('top-right', 240, THEME.button.minH, 80);
 router.modal = {
   get active() {
-    return loop.paused || dialog.active || memorial.active; // (Milestone 27: the memorial moment takes every tap)
+    return loop.paused || dialog.active || memorial.active || ceremony.active; // (Milestone 27: the memorial moment takes every tap; Milestone 32b: a ceremony too)
   },
-  onTap: (p) => (loop.paused ? loop.resume('tap') : dialog.active ? dialog.onTap(p) : memorial.onTap()),
+  onTap: (p) => (loop.paused ? loop.resume('tap') : dialog.active ? dialog.onTap(p) : ceremony.active ? ceremony.onTap() : memorial.onTap()),
   onDown: (p) => dialog.active && dialog.onDown?.(p),
   onUp: (p) => dialog.active && dialog.onUp?.(p),
-  onBack: () => (loop.paused ? loop.resume('back') : dialog.active ? dialog.onBack() : memorial.onTap()),
+  onBack: () => (loop.paused ? loop.resume('back') : dialog.active ? dialog.onBack() : ceremony.active ? ceremony.onTap() : memorial.onTap()),
 };
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'p' && e.key !== 'P' && e.key !== ' ') return;
@@ -590,7 +595,7 @@ const bottomBar = createBottomBar({
 const vfx = new VfxSystem({ assets, width: W, height: renderer.height, font: THEME.family, maxTexts: 4, maxEffects: 16 });
 const dayBeat = createDayBeat();
 // Milestone 25c: the next-step hint line (core/ui/HintLine; the rules are hintRules() below, first match wins)
-const hintLine = new HintLine({ rect: () => homeScreen.rectOf('hint'), rules: hintRules(), quiet: () => !open || !!spawn || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || settings.get('showHints') === false || !!bigBeat });
+const hintLine = new HintLine({ rect: () => homeScreen.rectOf('hint'), rules: hintRules(), quiet: () => !open || !!spawn || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || settings.get('showHints') === false || !!bigBeat || ceremony.active });
 const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it), onWings: () => openWings(), hint: hintLine, prefs: { nameTags: () => settings.get('nameTags') !== false, taskMarkers: () => settings.get('taskMarkers') !== false, lowFx } });
 const carePops = createCarePops({ bus, fxOn: () => fxOn(), world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused && !lowFx() }); // (Milestone 25c: Low graphics — no pops)
 // The end of each day: the medium beat ("Day 3 — all routine care done" / "2 tasks missed").
@@ -650,7 +655,7 @@ bus.on('staff:trained', ({ id }) => careFx('training', agentAt(open?.world?.byId
 bus.on('research:complete', () => careFx('research', pieceCentre(open?.world?.placed.find((x) => x.defId === 'F01')), 200));
 bus.on('care:compliment', ({ resident }) => careFx('compliment', agentAt(open?.world?.residentById(resident))));
 function momentUi() {
-  return { home: !!open && !spawn && router.currentName === 'home', sheet: sheet.active || homeScreen.buildMode, popup: dialog.active || memorial.active || loop.paused || textPrompt.active };
+  return { home: !!open && !spawn && router.currentName === 'home', sheet: sheet.active || homeScreen.buildMode, popup: dialog.active || memorial.active || ceremony.active || loop.paused || textPrompt.active };
 }
 function tickMoments(dt) {
   const ev = open?.world?.events;
@@ -662,6 +667,7 @@ function tickMoments(dt) {
   if (cur) presentMoment(cur, ev);
 }
 function presentMoment(m, ev) {
+  if (m.ceremony && ceremony.show(m.ceremony)) return void haptics.medium(); // (Milestone 32b: one tap skips, the next closes)
   if (m.weight === 'big') bigBeat = { uid: m.uid, title: m.title ?? '', text: m.text, art: m.art, badge: m.badge ?? null, aura: !!m.aura, confetti: m.kind === 'quality:award', age: 0 };
   else if (m.weight === 'medium' || m.weight === 'quiet') dayBeat.showText(m.text, m.good);
   else if (m.weight === 'blocking') {
@@ -1523,7 +1529,7 @@ function qualityTabs(w) {
 function recordSections(w) {
   const results = [...w.endOfLife.results()].reverse().slice(0, 6);
   return [
-    { lines: [{ text: 'Your records across every home. A resident passing is never scored: only their comfort, the plan, the family’s support and their wishes are.', color: COL.textMuted }], columns: 1, buttons: [{ id: 'records:book', label: BOOK.title, sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} · ${BOOK.subtitle.toLowerCase()}`, icon: MEMORIAL.art.book, accent: COL.progress, onTap: () => openMemoryBook() }, { id: 'records:secrets', label: 'Secrets', sub: secretsSub(w), icon: SECRETS_ICON, accent: COL.progress, onTap: () => openSecrets() }, { id: 'records:achievements', label: ACH_TEXT.title, sub: achievementsSub(w), icon: ACH_ICON, accent: COL.progress, onTap: () => openAchievements() }, { id: 'records:home', label: ACH_TEXT.records, sub: ACH_TEXT.recordsSub, icon: ACH_ICON, accent: COL.progress, onTap: () => openHomeRecords() }, { id: 'records:hall', label: ACH_TEXT.hall, sub: `${w.achievements.hall.length} in the Hall of Fame${w.achievements.candidates().length ? ` · ${w.achievements.candidates().length} can be added` : ''}`, icon: ACH_ICON, accent: COL.progress, onTap: () => openHallOfFame() }] }, // (Milestone 29: Records → Secrets; Milestone 32: Achievements, Home Records, Staff Hall of Fame)
+    { lines: [{ text: 'Your records across every home. A resident passing is never scored: only their comfort, the plan, the family’s support and their wishes are.', color: COL.textMuted }], columns: 1, buttons: [{ id: 'records:book', label: BOOK.title, sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} · ${BOOK.subtitle.toLowerCase()}`, icon: MEMORIAL.art.book, accent: COL.progress, onTap: () => openMemoryBook() }, { id: 'records:secrets', label: 'Secrets', sub: secretsSub(w), icon: SECRETS_ICON, accent: COL.progress, onTap: () => openSecrets() }, { id: 'records:achievements', label: ACH_TEXT.title, sub: achievementsSub(w), icon: ACH_ICON, accent: COL.progress, onTap: () => openAchievements() }, { id: 'records:home', label: ACH_TEXT.records, sub: ACH_TEXT.recordsSub, icon: ACH_ICON, accent: COL.progress, onTap: () => openHomeRecords() }, { id: 'records:hall', label: ACH_TEXT.hall, sub: `${w.achievements.hall.length} in the Hall of Fame${w.achievements.candidates().length ? ` · ${w.achievements.candidates().length} can be added` : ''}`, icon: ACH_ICON, accent: COL.progress, onTap: () => openHallOfFame() }, { id: 'records:trophies', label: VERDICT_TEXT.trophyCase, sub: trophySub(w), icon: QUALITY_ART.icon, accent: COL.progress, onTap: () => openTrophyCase() }] }, // (Milestone 32b: the Trophy Case) (Milestone 29: Records → Secrets; Milestone 32: Achievements, Home Records, Staff Hall of Fame)
     { title: 'End-of-life care in this home', lines: results.length ? results.flatMap((r) => [{ text: `${dateWord(w, r.day)} · ${r.name}: comfort ${r.score}${r.good ? ' · a well-supported time' : ''}`, color: r.good ? COL.good : COL.actionDark }, ...(r.note ? [{ text: `What could have been better: ${r.note}`, color: COL.textMuted }] : [])]) : [{ text: 'Nothing yet.', color: COL.textMuted }] },
   ];
 }
@@ -1532,6 +1538,7 @@ function inspectionSection(w, x) {
   const title = x.kind === 'routine' ? `Routine review: grade ${x.grade} (${x.total} / 100)` : `${a.name}: ${x.pass ? 'awarded' : 'fell short'}`;
   const lines = [{ text: `${dateWord(w, x.day)}${x.kind === 'routine' && x.reputation ? ` · Reputation +${x.reputation}` : ''}${x.pass && a ? ` · ${a.reward.text}` : ''}`, color: COL.textMuted }];
   const shown = x.kind === 'accreditation' && !x.pass ? x.lines.filter((l) => !l.ok) : x.lines;
+  if (x.panel) lines.push({ text: `The inspectors (${x.panel.reduce((t, p) => t + p.score, 0)} / 40): ${x.panel.map((p) => `${inspectorById(p.id)?.name} ${p.score}`).join(' · ')}`, color: COL.actionDark }); // (Milestone 32b)
   if (x.kind === 'accreditation' && !x.pass) lines.push({ text: 'What fell short:', color: COL.bad });
   for (const l of shown) lines.push({ text: `${l.info ? '·' : l.ok ? '✓' : '✗'} ${l.text}`, color: l.info ? COL.textMuted : l.ok ? COL.good : COL.bad });
   return { title, titleDot: x.pass ? COL.good : COL.warn, lines };
@@ -2247,6 +2254,20 @@ function keepPages(pages, home) {
   if (n) open?.world?.achievements?.bookChanged(); // (Milestone 32: Memory Book milestones and #29)
   return n;
 }
+// Milestone 32b: the ceremony card (src/ui/ceremony.js) — the four inspectors one at a time, then the result. The home's
+// clock waits while it is up, as for the memorial moment.
+let ceremonyResume = false;
+const ceremonyLog = []; // (tests: what showed)
+const ceremony = createCeremony({ width: W, height: () => renderer.height, assets, onOpen: (c) => {
+  const w = open?.world;
+  ceremonyResume = !!w && !w.clock.paused;
+  w?.clock.pause();
+  ceremonyLog.push({ kind: c.kind, title: c.title, total: c.total, tier: c.tier ?? null });
+  if (ceremonyLog.length > 20) ceremonyLog.shift();
+}, onClose: () => {
+  if (ceremonyResume) open?.world?.clock.resume();
+  ceremonyResume = false;
+} });
 const memorial = new MajorFeedback({ layout, width: W, height: renderer.height, pause: () => {}, minShowSec: 1.6, hint: 'Tap to carry on' });
 let memorialResume = false;
 function showMemorial(e, uid = null) {
@@ -2526,6 +2547,39 @@ function openHomeRecords() {
       });
     }
     return { title: ACH_TEXT.records, subtitle: ACH_TEXT.recordsSub, art: ACH_ICON, accent: accentNow(), sections };
+  });
+}
+// --- Milestone 32b: the verdict calendar — the Trophy Case (Quality → Records, Menu) ---------------------------------------
+// Every Open Day (Month 7) and Awards Evening (Month 12) this home has held: its place, the four inspectors, what it won.
+function trophySub(w) {
+  const t = w.verdicts?.trophies() ?? [];
+  const won = t.filter((x) => x.tier !== 'part').length;
+  return t.length ? `${t.length} held · ${won} placed` : `The first Open Day is in Month ${OPEN_DAY.month}`;
+}
+function trophyRow(w, x) {
+  const t = tierById(x.tier);
+  const what = x.kind === 'openDay' ? OPEN_DAY.title : AWARDS_EVENING.title;
+  const got = [x.reputation ? `Reputation +${x.reputation}` : null, x.item ? `item: ${x.item}` : null].filter(Boolean).join(' · ');
+  const lines = [
+    { text: `${x.kind === 'awards' ? `Grade ${x.grade} · ` : ''}${x.panel ? `${x.total} / 40` : ''} · ${x.place === 1 ? '1st' : x.place === 2 ? '2nd' : x.place === 3 ? '3rd' : `${x.place}th`} of ${x.of}${got ? ` · ${got}` : ''}`, color: COL.actionDark },
+    ...(x.panel ? [{ text: x.panel.map((p) => `${inspectorById(p.id)?.name} ${p.score}`).join(' · '), color: COL.textMuted }] : []),
+  ];
+  return { title: `Year ${x.year} · ${what}: ${t.name}`, titleDot: t.color, lines };
+}
+function openTrophyCase() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: VERDICT_TEXT.trophyCase, sections: [] };
+    const t = w.verdicts?.trophies() ?? [];
+    const sections = [{ lines: [{ text: `Every Month ${OPEN_DAY.month} the home opens its doors for the ${OPEN_DAY.title}, and every Month 12 the ${AWARDS_EVENING.title} shows the year's routine review and the recognition table together. Four inspectors judge each: ${INSPECTORS.map((i) => `${i.name} (${i.looks})`).join(', ')}. A low result is simply "Taking part".`, color: COL.textMuted }] }];
+    if (t.length) sections.push(...t.map((x) => trophyRow(w, x)));
+    else sections.push({ lines: [{ text: 'No trophies yet.', color: COL.textMuted }] });
+    if (debug.enabled) sections.push({ title: 'Debug', columns: 1, buttons: [{ id: 'trophies:debugShow', label: 'Show an inspector reveal (debug)', sub: 'Today’s home as the four inspectors would see it', accent: COL.progress, onTap: () => {
+      sheet.close();
+      const g = w.quality.gradeNow();
+      ceremony.show({ kind: 'debug', title: 'The inspectors (debug)', panel: panelOf(g), total: panelTotal(panelOf(g)), max: 40, tier: null, headline: `Grade ${g.band} today`, lines: [`Routine review ${g.total} / 100`], art: QUALITY_ART.icon });
+    } }] });
+    return { title: VERDICT_TEXT.trophyCase, subtitle: VERDICT_TEXT.trophyCaseSub, art: QUALITY_ART.icon, accent: accentNow(), sections };
   });
 }
 function openHallOfFame() {
@@ -3904,6 +3958,7 @@ const MENU_OPEN = {
   achievements: () => openAchievements(), // (Milestone 32: Records → Achievements, Home Records, Staff Hall of Fame)
   homeRecords: () => openHomeRecords(),
   hallOfFame: () => openHallOfFame(),
+  trophies: () => openTrophyCase(), // (Milestone 32b)
   family: () => placedOf('F09') && openHomeSheet(placedOf('F09').id),
   business: () => openBusiness(),
   partners: () => openPartners(),
@@ -4245,7 +4300,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { openAchievements, openHomeRecords, openHallOfFame, get achievementsSaving() { return achievementsSaving; }, openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { openTrophyCase, ceremony, ceremonyLog, openAchievements, openHomeRecords, openHallOfFame, get achievementsSaving() { return achievementsSaving; }, openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

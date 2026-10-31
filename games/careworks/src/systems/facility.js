@@ -255,6 +255,7 @@ export const SAVE_MIGRATIONS = {
   29: (record) => record, // (Milestone 29: no secrets state = nothing found, no clues; the facts' records rebuilt from the history the save has)
   30: (record) => record, // (Milestone 30b: no Works Gods yet — no god arrived or hired, no god secret found; the new records (good surprises, this month's call bells) start at 0)
   31: (record) => record, // (Milestone 32: no achievements state = nothing earned in this home yet; it catches up at once on load from what the home already has (quiet Inbox lines); records start from the next day)
+  32: (record) => record, // (Milestone 32b: no verdicts state = no Open Day or Awards Evening held yet; older inspections simply have no inspectors' panel)
 };
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).

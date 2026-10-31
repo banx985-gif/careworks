@@ -88,6 +88,8 @@ export const ITEM_SOURCES = {
   wellWisher: { text: 'A well-wisher from the community', monthlyChance: 0.12 },
   grant: { text: 'A grant goal met', chance: 1 },
   achievement: { text: 'An achievement', chance: 0 }, // hook only (achievements come in Milestone 31)
+  openDay: { text: 'A place at the Community Open Day', chance: 1 }, // (Milestone 32b: weights by place, data/verdicts.js)
+  awardsEvening: { text: 'A place at the Year-end Awards Evening', chance: 1 }, // (Milestone 32b)
   secret: { text: 'A secret found', chance: 1, weights: { common: 10, rare: 45, elite: 35, legendary: 10 } }, // (Milestone 29: a secret's item reward)
 };
 // Never: the test fails if any source says it is bought or paid for.

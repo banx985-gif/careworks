@@ -183,6 +183,8 @@ import { READINGS } from '../../data/quality.js';
 import { createEvents, ensureEventsState } from './events.js';
 import { createSecrets, ensureSecretsState } from './secrets.js'; // (Milestone 29)
 import { createCareAchievements, ensureAchievementsState } from './achievements.js'; // (Milestone 32)
+import { createVerdicts, ensureVerdictsState } from './verdicts.js'; // (Milestone 32b)
+import { OPEN_DAY } from '../../data/verdicts.js';
 import { stageById, EOL_STAGES, PACE, GOOD_CARE, COMFORT, SIGNAL, MEMORIAL, BOOK, PLAN as EOL_PLAN, WISHES } from '../../data/endOfLife.js';
 import { ensureEolState, ensureResidentEol, eligible as eolEligible, weeklyChance, stageLength, nextStage, newAcc, comfortOf, signalLift, familyResult, betterNote, wishesOf, timeAt } from './endOfLife.js';
 
@@ -228,6 +230,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   let directorLive = false;
   let secrets = null; // (Milestone 29: the secrets read every moment too, once the world is made)
   let achievements = null; // (Milestone 32: achievements, records and the Hall of Fame read every moment too)
+  let verdicts = null; // (Milestone 32b: the Open Day and the Awards Evening)
   // Milestone 31: the prestige chain. Is what a secret's unlock flag opens open here (C11 / C12, F34 / F35, PRG11 / PRG12,
   // R08)? Only the secrets say so (src/systems/secrets.js unlocked) — nothing is bought, ?debug=1's unlocks never open it.
   const prestigeOpen = (flag) => !!flag && !!secrets?.unlocked(flag);
@@ -2007,13 +2010,19 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       }
       addVisit(p, day, { meeting, party });
     }
+    // (Milestone 32b) the Community Open Day: families who weren't due come too (a few, seeded order; never in an outbreak)
+    if (verdicts?.isOpenDay(day) && !visitsPaused(day)) {
+      const extra = seated().filter((p) => familyOf(p)?.contact && !fh.visits.some((v) => v.resident === p.id && v.day === day));
+      const order = new Rng(`${seed}:openDay:${day}`).shuffle(extra);
+      for (const p of order.slice(0, OPEN_DAY.extraVisits)) addVisit(p, day, { openDay: true });
+    }
   }
-  function addVisit(p, day, { meeting = false, party = false } = {}) {
+  function addVisit(p, day, { meeting = false, party = false, openDay = false } = {}) {
     const rng = new Rng(`${seed}:visitAt:${p.id}:${day}`);
     let at = VISIT.arriveFrom + rng.next() * (VISIT.arriveTo - VISIT.arriveFrom);
     if (party) at = Math.min(at, (dayStep(p, 'cards', day)?.at ?? 13.5) - 0.25); // (in time for the birthday tea)
     if (meeting) at = Math.min(at, MEETING.at);
-    const v = { id: `v${fh.nextId++}`, resident: p.id, day, at: absHour(day, at), phase: 'due', meeting, party, start: null, end: null, room: false, roomTile: null, greeter: null, favourite: null, communicatorPct: 0, task: null, follow: null };
+    const v = { id: `v${fh.nextId++}`, resident: p.id, day, at: absHour(day, at), phase: 'due', meeting, party, start: null, end: null, room: false, roomTile: null, greeter: null, favourite: null, communicatorPct: 0, task: null, follow: null, ...(openDay ? { openDay: true } : {}) };
     fh.visits.push(v);
     return v;
   }
@@ -4022,6 +4031,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
     secrets?.daily(day); // (Milestone 29: each midnight, after the quality scores and any month close: the day's secret rules)
     achievements?.daily(); // (Milestone 32: the day's records, achievements, Memory Book milestones and the Hall of Fame)
+    verdicts?.daily(day); // (Milestone 32b: yesterday's Open Day judged; the Awards Evening at the year's end, after the routine review)
   }
 
   // --- rostering and Safe Coverage (Milestone 7) -----------------------------------------------------------------
@@ -4091,6 +4101,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     blessings, // (Milestone 30b: the Works Gods' blessings — src/systems/blessings.js)
     get secrets() {
       return secrets; // (Milestone 29: the secret engine, its clue stages, rewards and why-false inspector)
+    },
+    get verdicts() {
+      return verdicts; // (Milestone 32b)
     },
     get achievements() {
       return achievements; // (Milestone 32: achievements, Home Records, Memory Book milestones, the Hall of Fame)
@@ -5420,6 +5433,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     legacyEnding: () => false, // (Milestone 33: the Year-16 ending)
   };
   achievements = createCareAchievements({ env: achEnv, state: care.achievements, account: achievementsAccount, bus });
+  // Milestone 32b: the verdict calendar (src/systems/verdicts.js) — the Open Day every Month 7, the Awards Evening every
+  // Month 12; an older home simply has none held yet.
+  care.verdicts = ensureVerdictsState(care.verdicts);
+  verdicts = createVerdicts({ state: care.verdicts, seed, bus, quality, items, dateOf: (d) => clock.dateOf(d), programsRunning: () => Object.keys(progState.running ?? {}).length });
   directorLive = true; // (Milestone 28: from here on, every moment goes through the director)
   achievements.catchUp(); // (Milestone 32: an older home earns at once what it already has — quiet Inbox lines)
   return world;
