@@ -12,6 +12,7 @@
 //   quiet      a quiet line, only when nothing else is showing                       — may show over an open sheet
 //   inbox      an Inbox line only
 //   none       nothing to show (still counted for the long-run report)
+import { ENDING_TEXT } from './ending.js'; // (Milestone 33)
 import { SEVERITY } from './incidents.js';
 import { LEVELS } from './facilities.js';
 import { SPECIALTIES } from './training.js';
@@ -149,6 +150,9 @@ export const KINDS = {
   'care:openDayToday': { cat: 'community', inbox: true, make: () => ({ weight: 'quiet', text: VERDICT_TEXT.openDayToday, good: true, opens: { type: 'trophies' } }) },
   'care:openDay': { cat: 'community', inbox: true, make: (x) => ({ weight: 'big', title: x.ceremony.title, text: `${x.ceremony.headline} · ${x.ceremony.total} / 40`, line: `${x.ceremony.title}: ${x.ceremony.headline} (${x.ceremony.total} / 40) · ${x.ceremony.lines.join(' · ')}`, art: x.ceremony.art, good: true, opens: { type: 'trophies' }, ceremony: x.ceremony }) },
   'care:awardsEvening': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'big', title: x.ceremony.title, text: x.ceremony.headline, line: `${x.ceremony.title}: ${x.ceremony.headline} · ${x.ceremony.lines.join(' · ')}`, art: x.ceremony.art, good: true, opens: { type: 'trophies' }, ceremony: x.ceremony }) },
+  // (Milestone 33) the Year-16 ending: a big beat that opens its ceremony's pages (src/main.js); the Living Legacy ending too
+  'care:ending': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'big', title: ENDING_TEXT.beatTitle, text: ENDING_TEXT.beatText, line: `${ENDING_TEXT.inbox} · grade ${x.band}, ${x.total} / 1000`, art: QUALITY_ART.finale, badge: REWARD_ART.trophy, aura: true, good: true, opens: { type: 'ending' }, ending: 'year16' }) },
+  'care:livingLegacy': { cat: 'recognition', inbox: true, make: () => ({ weight: 'big', title: ENDING_TEXT.livingTitle, text: ENDING_TEXT.livingLines[0], line: `${ENDING_TEXT.livingTitle}: the true CAREWORKS ending (Records → Year-16 Ending)`, art: 'memory_book_emblem', aura: true, good: true, opens: { type: 'ending' }, ending: 'living' }) },
   'care:passed': { cat: 'memorial', inbox: true, make: (x) => ({ weight: 'blocking', title: x.name, text: x.card, line: x.line ?? x.card, good: true, opens: { type: 'memoryBook' }, choice: { kind: 'memorial', id: x.page?.id ?? x.resident } }) },
 };
 

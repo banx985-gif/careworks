@@ -35,6 +35,12 @@ export function createCampaigns({ adapter, save, bus = null }) {
       await this.refresh();
       return data;
     },
+    // (Milestone 33) a New Game+ home built elsewhere (src/systems/ngplusRun.js) into slot n
+    async startData(n, data) {
+      await slots.create(n, { data, summary: slotSummary(data) });
+      await this.refresh();
+      return data;
+    },
     async open(n) {
       const data = await slots.load(n);
       if (data) await slots.setLastUsed(n);

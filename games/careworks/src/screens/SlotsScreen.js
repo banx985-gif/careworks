@@ -6,6 +6,8 @@
 // each card, and a home on New Game+ shows the NG+ key art (care_brand_06) with its number.
 // Two modes: 'browse' (Play / Delete — Delete asks first) and 'new' (pick where the new facility goes: an empty slot,
 // or Replace on an occupied one; START FACILITY asks again before anything is overwritten).
+// Milestone 33: a third mode, 'ngplus' (bible §3.5.8) — where the New Game+ home goes: free slots first, the finished home's
+// slot locked ("kept"), an occupied one offers Write over (src/main.js asks a second time, naming facility, year, NG+).
 // Layout and tapping share one pass (lay out → draw and/or hit-test), so they can never disagree.
 import { THEME } from '../../../../core/Theme.js';
 import { drawButton, hitRect } from '../../../../core/ui/Button.js';
@@ -18,8 +20,9 @@ const C = THEME.color;
 const S = THEME.size;
 
 // cards(): [{ n, empty, summary, error }]; last(): the last-used slot number or null.
-export function createSlotsScreen({ layout, assets = null, cards, last, onBack, onPlay, onDelete, onNewInSlot }) {
+export function createSlotsScreen({ layout, assets = null, cards, last, onBack, onPlay, onDelete, onNewInSlot, onNgSlot = () => {} }) {
   let mode = 'browse';
+  let parent = null; // (Milestone 33: the finished home's slot, locked in 'ngplus' mode)
   let note = null;
   const rects = {};
 
@@ -41,7 +44,7 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
     if (ctx && assets) drawArtCrop(ctx, assets, BRAND.slots, ART_CROP[BRAND.slots], { x: sr.x, y: sr.y + br.h + 40, w: sr.w, h: sr.h - br.h - 60 }, 0.3);
     if (ctx) {
       drawButton(ctx, br, '‹ Back', { accent: C.progress });
-      text(ctx, mode === 'new' ? 'Choose a slot' : 'Campaign Slots', sr.x + sr.w / 2 + 60, br.y + br.h / 2 - 4, { size: S.title, bold: true, align: 'center', baseline: 'middle', maxWidth: sr.w - 320 });
+      text(ctx, mode !== 'browse' ? 'Choose a slot' : 'Campaign Slots', sr.x + sr.w / 2 + 60, br.y + br.h / 2 - 4, { size: S.title, bold: true, align: 'center', baseline: 'middle', maxWidth: sr.w - 320 });
     }
     let y = br.y + br.h + 24;
     const line = note ?? (mode === 'new' ? 'Where should your new facility go?' : null);
@@ -53,10 +56,14 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
     const h = Math.min(360, (sr.y + sr.h - 30 - y - gap * 3) / 4);
     const x = sr.x + 24;
     const w = sr.w - 48;
-    for (const s of cards()) {
+    const list = mode === 'ngplus' ? [...cards()].sort((a, b) => (a.n === parent) - (b.n === parent) || !a.empty - !b.empty || a.n - b.n) : cards(); // (Milestone 33: free slots first)
+    for (const s of list) {
       const r = { x, y, w, h };
       rects[`slot${s.n}`] = r;
-      if (s.summary) occupied(ctx, r, s, box);
+      if (mode === 'ngplus' && s.empty) {
+        box(r, () => onNgSlot(s.n), `new${s.n}`);
+        if (ctx) empty(ctx, r, s, 'NEW GAME+ HOME');
+      } else if (s.summary) occupied(ctx, r, s, box);
       else if (s.error) damaged(ctx, r, s, box);
       else {
         box(r, () => onNewInSlot(s.n), `new${s.n}`);
@@ -75,7 +82,13 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
     const bh = Math.min(110, (r.h - 60) / 2);
     const b1 = { x: r.x + r.w - bw - 24, y: r.y + r.h / 2 - bh - 10, w: bw, h: bh };
     const b2 = { x: b1.x, y: r.y + r.h / 2 + 10, w: bw, h: bh };
-    if (mode === 'new') {
+    if (mode === 'ngplus') {
+      const rep = { x: b1.x, y: r.y + (r.h - bh) / 2, w: bw, h: bh };
+      if (s.n !== parent) box(rep, () => onNgSlot(s.n), `replace${s.n}`);
+      if (ctx) layoutCard();
+      if (ctx && s.n !== parent) drawButton(ctx, rep, 'Write over', { accent: C.bad });
+      if (ctx && s.n === parent) text(ctx, 'KEPT', rep.x + rep.w / 2, rep.y + rep.h / 2, { size: S.heading, bold: true, color: C.good, align: 'center', baseline: 'middle' });
+    } else if (mode === 'new') {
       const rep = { x: b1.x, y: r.y + (r.h - bh) / 2, w: bw, h: bh };
       box(rep, () => onNewInSlot(s.n), `replace${s.n}`);
       if (ctx) layoutCard();
@@ -106,7 +119,7 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
       const tw = b1.x - 20 - tx - (ngW ? ngW + 16 : 0);
       let ty = r.y + 22 * k;
       if (ngW) drawArtCrop(ctx, assets, BRAND.ngPlus, ART_CROP[BRAND.ngPlus], { x: b1.x - 16 - ngW, y: r.y + 16, w: ngW, h: r.h - 32 }); // (Milestone 28b: New Game+)
-      text(ctx, `SLOT ${s.n}${isLast ? ' · LAST PLAYED' : ''}${ng > 0 ? ` · NEW GAME+ ${ng}` : ''}`, tx, ty, { size: S.small, bold: true, color: isLast ? C.progress : C.textMuted, maxWidth: tw });
+      text(ctx, `SLOT ${s.n}${mode === 'ngplus' && s.n === parent ? ' · THIS FINISHED HOME IS KEPT' : isLast ? ' · LAST PLAYED' : ''}${ng > 0 ? ` · NEW GAME+ ${ng}` : ''}`, tx, ty, { size: S.small, bold: true, color: isLast ? C.progress : C.textMuted, maxWidth: tw });
       ty += 42 * k;
       text(ctx, m.facility, tx, ty, { size: S.heading, bold: true, color: palette.dark, maxWidth: tw });
       ty += 60 * k;
@@ -118,7 +131,7 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
     }
   }
 
-  function empty(ctx, r, s) {
+  function empty(ctx, r, s, label = 'NEW FACILITY') {
     ctx.save();
     ctx.fillStyle = C.panelAlt;
     ctx.strokeStyle = C.action;
@@ -136,7 +149,7 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
     ctx.arc(r.x + 120, cy, rad, 0, Math.PI * 2);
     ctx.fill();
     text(ctx, '+', r.x + 120, cy + 4, { size: rad * 1.5, bold: true, color: C.textOnAction, align: 'center', baseline: 'middle' });
-    text(ctx, 'NEW FACILITY', r.x + 220, cy - 32, { size: S.title, bold: true, color: C.actionDark, baseline: 'middle', maxWidth: r.w - 260 });
+    text(ctx, label, r.x + 220, cy - 32, { size: S.title, bold: true, color: C.actionDark, baseline: 'middle', maxWidth: r.w - 260 });
     text(ctx, `Slot ${s.n} is empty · tap to start`, r.x + 222, cy + 34, { size: S.body, color: C.textMuted, baseline: 'middle', maxWidth: r.w - 260 });
   }
 
@@ -157,6 +170,7 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
     enter(params = {}) {
       mode = params.mode ?? 'browse';
       note = params.note ?? null;
+      parent = params.parent ?? null;
     },
     onTap(p) {
       pass(null, p)?.();

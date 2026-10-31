@@ -495,7 +495,7 @@ export function createSecretFacts({ env, log, engine, account }) {
       const s = scores();
       return SCORE_IDS.filter((id, i) => s[id] > peer.scores[i]).length;
     })
-    .define('run.legacyMentored', () => 0) // (no New Game+ Legacy Staff or promotion to Elite yet: never true)
+    .define('run.legacyMentored', () => env.legacyMentored?.() ?? 0) // (Milestone 33: the most staff one Legacy Staff member on the team has mentored to Elite, every home — src/systems/ngplus.js mentorCheck)
     // (Milestone 30b: the Works Gods' secrets)
     .define('run.facilitiesLevel3', () => env.facilitiesAtLevel?.(3) ?? 0)
     .define('run.goodSurprises', () => L().goodSurprises ?? 0)
@@ -504,7 +504,7 @@ export function createSecretFacts({ env, log, engine, account }) {
     .define('run.unsafeShifts12m', () => L().months.slice(-11).reduce((t, m) => t + (m.unsafeShifts ?? 0), 0) + month().unsafe)
     .define('account.godsHired', () => account().godsHired?.() ?? [])
     .define('account.fourGodsHired', () => ['bolt', 'jinx', 'zip', 'kaching'].filter((g) => (account().godsHired?.() ?? []).includes(g)).length)
-    .define('account.legacyStaffLevels', () => 0) // (no New Game+ Legacy Staff carry-over yet — staffTeam legacyCarryover: never true)
+    .define('account.legacyStaffLevels', () => env.legacyStaffLevels?.() ?? 0) // (Milestone 33: the longest unbroken NG+1, NG+2 … chain a Legacy Staff member on the team was carried through)
     .define('run.eolNotWellSupported', () => eolResults().filter((r) => !r.good).length)
     .define('run.forcedDependence', () => L().forcedDependence ?? 0)
     // account

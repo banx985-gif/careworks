@@ -54,7 +54,7 @@ export function unlockOf(def, ctx) {
     else if (r.type === 'facility') ok = !!ctx.facilities?.has(r.facility);
     else if (r.type === 'role') ok = !!ctx.roles?.has(r.role);
     else if (r.type === 'night') ok = !!ctx.night;
-    else if (r.type === 'research') ok = !!ctx.researched?.(r.node) || !!ctx.debug; // (Milestone 21: the node is done)
+    else if (r.type === 'research') ok = !!ctx.researched?.(r.node) || !!ctx.debug || !!ctx.blueprint?.(def.id); // (Milestone 21: the node is done; Milestone 33: or a Legacy Program blueprint)
     else if (r.type === 'wing') ok = !!ctx.wings?.has(r.id) || !!ctx.debug; // (Milestone 27: the wing works — its hub stands inside it)
     else if (r.type === 'partner') ok = !!ctx.debug; // (Milestone 23: ?debug=1 only)
     else ok = false;

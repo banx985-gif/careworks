@@ -186,6 +186,8 @@ import { createCareAchievements, ensureAchievementsState } from './achievements.
 import { createVerdicts, ensureVerdictsState } from './verdicts.js'; // (Milestone 32b)
 import { OPEN_DAY } from '../../data/verdicts.js';
 import { poolOf, CROWD_POOL, CROWD_SIZE, castById } from '../../data/cast.js'; // (Milestone 32c)
+import { createEnding, ensureEndingState, endingFacts } from './ending.js'; // (Milestone 33)
+import { legacyChain, mentorCheck, ngDiscountCost } from './ngplus.js'; // (Milestone 33)
 import { stageById, EOL_STAGES, PACE, GOOD_CARE, COMFORT, SIGNAL, MEMORIAL, BOOK, PLAN as EOL_PLAN, WISHES } from '../../data/endOfLife.js';
 import { ensureEolState, ensureResidentEol, eligible as eolEligible, weeklyChance, stageLength, nextStage, newAcc, comfortOf, signalLift, familyResult, betterNote, wishesOf, timeAt } from './endOfLife.js';
 
@@ -232,6 +234,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   let secrets = null; // (Milestone 29: the secrets read every moment too, once the world is made)
   let achievements = null; // (Milestone 32: achievements, records and the Hall of Fame read every moment too)
   let verdicts = null; // (Milestone 32b: the Open Day and the Awards Evening)
+  let ending = null; // (Milestone 33: the Year-16 ending and the postgame)
   // Milestone 31: the prestige chain. Is what a secret's unlock flag opens open here (C11 / C12, F34 / F35, PRG11 / PRG12,
   // R08)? Only the secrets say so (src/systems/secrets.js unlocked) — nothing is bought, ?debug=1's unlocks never open it.
   const prestigeOpen = (flag) => !!flag && !!secrets?.unlocked(flag);
@@ -2834,7 +2837,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
   }
   // What the rules read: placed facilities, the team's roles, the Night shift, the debug switch.
-  const programCtx = () => ({ researched: (id) => !!research?.has(id), facilities: facilityIds(), roles: teamRoles(), night: team().some((q) => roster.shiftOf(q.id)?.id === 'night' && !roster.isTraining(q.id)), wings: new Set(WINGS_SPECIAL.filter((w) => layout.wings.active(w.id)).map((w) => w.id)), debug: !!progState.debug, secretOpen: (f) => prestigeOpen(f) }); // (Milestone 27: working wings; Milestone 31: a prestige program's flag)
+  const programCtx = () => ({ researched: (id) => !!research?.has(id), facilities: facilityIds(), roles: teamRoles(), night: team().some((q) => roster.shiftOf(q.id)?.id === 'night' && !roster.isTraining(q.id)), wings: new Set(WINGS_SPECIAL.filter((w) => layout.wings.active(w.id)).map((w) => w.id)), debug: !!progState.debug, secretOpen: (f) => prestigeOpen(f), blueprint: (id) => (care.ngPlusStart?.blueprints ?? []).includes(id) }); // (Milestone 33: a Legacy Program blueprint waives its research) // (Milestone 27: working wings; Milestone 31: a prestige program's flag)
   // The programs the player can see: the ten, and a prestige one once its flag is set (Milestone 31).
   const listedPrograms = () => [...VISIBLE_PROGRAMS, ...PRESTIGE_PROGRAMS.filter((d) => prestigeOpen(programFlag(d)))];
   const listedProgram = (id) => listedPrograms().find((d) => d.id === id) ?? null;
@@ -2937,6 +2940,11 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // --- research (Milestone 21) ------------------------------------------------------------------------------------------
   care.rewards ??= { reputation: 0, research: 0, positiveOutcomes: 0, discharges: [] };
   research = createResearch({ ledger, care, bus, today: () => clock.totalDays, hasPiece: (id) => layout.ofDef(id).length > 0 });
+  // (Milestone 33) a New Game+ home's research carried over as starting Research Points, once
+  if (care.ngPlusStart?.rp > 0 && !care.ngPlusStart.rpGiven) {
+    care.ngPlusStart.rpGiven = true;
+    research.addRp(care.ngPlusStart.rp, `New Game+ ${ngPlus}: research carried over from ${care.ngPlusStart.from?.home ?? 'the last home'}`, 'ngPlus');
+  }
   layout.setResearchCheck((id) => research.has(id)); // (Build Mode: a facility research opens)
   // --- the economy (Milestone 22) ---------------------------------------------------------------------------------------
   economy = createEconomy({ ledger, care, bus, today: () => clock.totalDays });
@@ -4036,7 +4044,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       achievements?.monthClosed(secretMonth); // (Milestone 32: the month's records, Safe Month / Safe Year)
       for (const p of residents) delete p.state.moodMonth; // (a new month's Mood)
     }
+    if (ngPlus > 0) mentorCheck({ team: team().filter((q) => !q.agency).map((q) => q.model), day, runId: runId ?? seed }); // (Milestone 33: Legacy Staff mentoring to Elite)
     secrets?.daily(day); // (Milestone 29: each midnight, after the quality scores and any month close: the day's secret rules)
+    if (day % clock.daysPerMonth === 0) ending?.monthClose(); // (Milestone 33: the Year-16 ending, at the first month close after Year 16)
+    ending?.livingCheck(); // (Milestone 33: the Living Legacy ending once SEC-NGP-03 is found)
     achievements?.daily(); // (Milestone 32: the day's records, achievements, Memory Book milestones and the Hall of Fame)
     verdicts?.daily(day); // (Milestone 32b: yesterday's Open Day judged; the Awards Evening at the year's end, after the routine review)
   }
@@ -4111,6 +4122,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     get verdicts() {
       return verdicts; // (Milestone 32b)
+    },
+    get ending() {
+      return ending; // (Milestone 33: the Year-16 ending, its ceremony's pages, the postgame)
+    },
+    get ngPlus() {
+      return ngPlus ?? 0;
     },
     get achievements() {
       return achievements; // (Milestone 32: achievements, Home Records, Memory Book milestones, the Hall of Fame)
@@ -5086,6 +5103,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       partners.serialize(); // (Milestone 23: deals, tiers, history, the grant board and active grants, into care.partners)
       quality.serialize(); // (Milestone 26: the rolling scores, rank, accreditations, inspections, peers, into care.quality)
       secrets?.serialize(); // (Milestone 29: the secrets' run records, clue stages, found and fired rewards, into care.secrets)
+      ending?.serialize(); // (Milestone 33: into care.ending)
       staffState.pos = crew.positions();
       staffState.modes = crew.modes();
       staffState.bandDone = Object.fromEntries(crew.people.map((q) => [q.id, q.bandDone ?? 0]));
@@ -5256,15 +5274,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     return p ? p.name : null;
   };
   layout.setUpgradeMods({ cost: boltCost, days: boltDays }); // (Milestone 30b: Bolt's blessing on level-ups)
+  const buildCost = (defId) => ngDiscountCost(care.ngPlusStart?.discount, defId, boltCost(layout.costOf(defId))); // (Milestone 33)
   world.build = {
     // (Milestone 30b) what building this costs now (Bolt on the team: 15% less)
-    costOf: (defId) => boltCost(layout.costOf(defId)),
+    costOf: (defId) => buildCost(defId),
     // Can this go here? (plus the money and the lock) → { ok, reason }
     check(defId, col, row, uid = null) {
       if (uid == null) {
         const u = layout.unlock(defId);
         if (!u.ok) return u;
-        const cost = boltCost(layout.costOf(defId));
+        const cost = buildCost(defId);
         if (ledger.balance < cost) return { ok: false, reason: `Not enough Credits: it costs ${cost.toLocaleString('en-GB')}` };
       }
       return layout.check(defId, col, row, uid);
@@ -5274,8 +5293,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (!c.ok) return c;
       const r = layout.place(defId, col, row);
       if (!r.ok) return r;
-      const cost = boltCost(layout.costOf(defId));
-      pay(-cost, `Build: ${r.piece.name}`, 'build');
+      const cost = buildCost(defId);
+      const disc = care.ngPlusStart?.discount;
+      if (disc?.id === defId && !disc.used) disc.used = clock.totalDays; // (Milestone 33: the New Game+ discount is spent)
+      pay(-cost, `Build: ${r.piece.name}${disc?.id === defId && disc.used === clock.totalDays ? ` (New Game+ ${disc.pct}% off)` : ''}`, 'build');
       // (Milestone 23: BrightHome's saving on a new room; a facility built counts for the equipment grant)
       if (roomById(defId)) partners?.noteSaving('roomBuildPct', cost, 'now');
       else partners?.record('facilityBuilt', { facility: defId });
@@ -5400,6 +5421,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     birthdaysHeld: () => acts.state.birthdays?.held ?? {},
     birthdayFirst: () => acts.state.birthdays?.first ?? null,
     ngPlus: () => ngPlus ?? 0,
+    // (Milestone 33) New Game+ history: the longest unbroken chain of NG+ levels a Legacy Staff member on the team has been
+    // carried through (NG+1, then NG+2 …), and the most staff one of them has mentored to Elite (every home)
+    legacyStaffLevels: () => Math.max(0, ...team().filter((q) => !q.agency).map((q) => legacyChain(q.model?.counters?.legacy, ngPlus ?? 0))),
+    legacyMentored: () => Math.max(0, ...team().filter((q) => !q.agency && q.model?.counters?.legacy).map((q) => (q.model.counters.legacy.mentored ?? []).length)),
     facilitiesAtLevel: (n) => layout.pieces.filter((pc) => facilityById(pc.defId) && !roomById(pc.defId) && (layout.levelOf(pc.uid) ?? 1) >= n).length, // (Milestone 30b: Bolt's secret)
     homeName: () => homeName ?? null,
     addRecognition: () => (staffState.founder.history.recognitions = (staffState.founder.history.recognitions ?? 0) + 1),
@@ -5439,13 +5464,31 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return pc && facilityById(pc.defId) && !roomById(pc.defId) ? { uid: pc.uid, defId: pc.defId, name: facilityById(pc.defId).name } : null;
     },
     addReputation: (amount, reason) => quality.addReputation(amount, clock.totalDays, reason),
-    legacyEnding: () => false, // (Milestone 33: the Year-16 ending)
+    legacyEnding: () => !!ending?.reached, // (Milestone 33: the Year-16 ending)
   };
   achievements = createCareAchievements({ env: achEnv, state: care.achievements, account: achievementsAccount, bus });
   // Milestone 32b: the verdict calendar (src/systems/verdicts.js) — the Open Day every Month 7, the Awards Evening every
   // Month 12; an older home simply has none held yet.
   care.verdicts = ensureVerdictsState(care.verdicts);
   verdicts = createVerdicts({ state: care.verdicts, seed, bus, quality, items, dateOf: (d) => clock.dateOf(d), programsRunning: () => Object.keys(progState.running ?? {}).length });
+  // Milestone 33: the Year-16 ending (src/systems/ending.js) — the grade from facts the home already keeps, the ceremony's
+  // pages, the postgame; the Living Legacy ending once SEC-NGP-03 is found in this home.
+  care.ending = ensureEndingState(care.ending);
+  ending = createEnding({
+    state: care.ending,
+    clock,
+    bus,
+    facts: () => endingFacts({ months: secrets.log.months ?? [], fact: (n) => (n === 'credits' ? ledger.balance : secrets.facts.get(n)), score: (id) => quality.scores()[id] }),
+    lookBack: () => ({ home: homeName ?? null, years: clock.year - 1, residents: 1 + (care.achievements?.admitted ?? 0), pages: (eol.pages ?? []).length, hall: achievements.hall.filter((e) => e.runId === (runId ?? seed)).map((e) => e.name), ngPlus: ngPlus ?? 0 }),
+    c10: () => {
+      const a = quality.state.acc.C10;
+      if (a?.won != null) return { status: 'won', day: a.won };
+      if (quality.applied()?.id === 'C10') return { status: 'booked' };
+      if (a?.failed != null) return { status: 'failed', day: a.failed };
+      return null;
+    },
+    livingFound: () => !!secrets?.foundInRun('SEC-NGP-03'),
+  });
   directorLive = true; // (Milestone 28: from here on, every moment goes through the director)
   achievements.catchUp(); // (Milestone 32: an older home earns at once what it already has — quiet Inbox lines)
   return world;

@@ -20,6 +20,7 @@ const PAD = 32;
 export function createSetupScreen({ layout, assets, textPrompt, onBack, onStart }) {
   let slot = 1;
   let replacing = null; // the summary of the facility this slot holds now (START asks before replacing it)
+  let ngPlus = 0; // (Milestone 33: a New Game+ home — its level; the slot picker already asked about replacing)
   let setup = null; // { facility, director, palette, founder }
   let confirming = false;
 
@@ -236,6 +237,7 @@ export function createSetupScreen({ layout, assets, textPrompt, onBack, onStart 
     enter(params = {}) {
       slot = params.slot ?? 1;
       replacing = params.replacing ?? null;
+      ngPlus = params.ngPlus ?? 0;
       confirming = false;
       setup = { facility: '', director: '', palette: PALETTES[0].id, founder: FOUNDERS[0].id };
       scroll.scrollY = 0;
@@ -273,7 +275,7 @@ export function createSetupScreen({ layout, assets, textPrompt, onBack, onStart 
         const L = confirmLayout();
         if (hitRect(p, L.start)) {
           confirming = false;
-          onStart(slot, { ...setup, facility: setup.facility.trim(), director: setup.director.trim() });
+          onStart(slot, { ...setup, facility: setup.facility.trim(), director: setup.director.trim() }, ngPlus);
         } else if (hitRect(p, L.change) || !hitRect(p, L.box)) confirming = false;
         return;
       }
@@ -292,8 +294,8 @@ export function createSetupScreen({ layout, assets, textPrompt, onBack, onStart 
       const hr = headerRect();
       const sr = layout.safeRect;
       drawButton(ctx, hr, '‹ Back', { accent: C.progress });
-      text(ctx, 'Facility Setup', sr.x + sr.w / 2 + 60, hr.y + hr.h / 2 - 20, { size: S.title, bold: true, align: 'center', baseline: 'middle' });
-      const sub = replacing ? `Campaign slot ${slot} · replaces ${replacing.facility}` : `Campaign slot ${slot}`;
+      text(ctx, ngPlus ? `New Game+ ${ngPlus} Setup` : 'Facility Setup', sr.x + sr.w / 2 + 60, hr.y + hr.h / 2 - 20, { size: S.title, bold: true, align: 'center', baseline: 'middle' });
+      const sub = replacing ? `Campaign slot ${slot} · replaces ${replacing.facility}` : `Campaign slot ${slot}${ngPlus ? ' · your finished home is kept' : ''}`;
       text(ctx, sub, sr.x + sr.w / 2 + 60, hr.y + hr.h / 2 + 34, { size: S.small, bold: !!replacing, color: replacing ? C.bad : C.textMuted, align: 'center', baseline: 'middle', maxWidth: sr.w - 320 });
       const r = panelRect();
       ctx.fillStyle = C.panel;

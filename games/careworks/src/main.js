@@ -83,6 +83,10 @@ import { PEERS, peerById } from '../data/peers.js';
 import { ECONOMY_START } from '../data/balance.js';
 import { createCarePops, createDayBeat } from './ui/carePops.js';
 import { createCeremony } from './ui/ceremony.js'; // (Milestone 32b)
+import { createEndingPages } from './ui/endingPages.js'; // (Milestone 33)
+import { ENDING_TEXT, GRADE_COLORS } from '../data/ending.js'; // (Milestone 33)
+import { NGPLUS_TEXT } from '../data/ngplus.js'; // (Milestone 33)
+import { ngOptions, ngProblems, buildNgPlusRun, accountAfterNgPlus, blueprintName, discountName } from './systems/ngplusRun.js'; // (Milestone 33)
 import { panelOf, panelTotal } from './systems/verdicts.js';
 import { castFor, guideSays } from '../data/cast.js'; // (Milestone 32c: the series cast as names)
 // (Milestone 32c) A rival director's line (R07 Crown Haven, R08 once it appears) and a partner's rep.
@@ -200,6 +204,7 @@ const loop = new FixedStepLoop({
     if (bigBeat && (bigBeat.age += dt) >= BIG_BEAT_LIFE) bigBeat = null;
     memorial.update(dt); // (Milestone 27: real time — the moment waits while the game is paused)
     ceremony.update(dt); // (Milestone 32b)
+    endingPages.update(dt); // (Milestone 33)
     tickMoments(dt); // (Milestone 28: the event director's moment on screen)
     autosave.tick(dt);
     hintLine.update(dt); // (Milestone 25c)
@@ -212,6 +217,7 @@ const loop = new FixedStepLoop({
     sheet.render(ctx);
     if (router.currentName === 'home') drawBigBeat(ctx);
     if (ceremony.active) ceremony.render(ctx); // (Milestone 32b: the inspectors, the Open Day, the Awards Evening)
+    else if (endingPages.active) endingPages.render(ctx); // (Milestone 33: the Year-16 ending's pages)
     dialog.render(ctx);
     if (memorial.active) {
       memorial.height = renderer.height;
@@ -255,12 +261,12 @@ debug.log(`seeded rng check: ${rng.int(0, 9999)} (same every reload)`);
 const pauseButton = () => layout.anchor('top-right', 240, THEME.button.minH, 80);
 router.modal = {
   get active() {
-    return loop.paused || dialog.active || memorial.active || ceremony.active; // (Milestone 27: the memorial moment takes every tap; Milestone 32b: a ceremony too)
+    return loop.paused || dialog.active || memorial.active || ceremony.active || endingPages.active; // (Milestone 27: the memorial moment takes every tap; Milestone 32b: a ceremony too; Milestone 33: the ending's pages)
   },
-  onTap: (p) => (loop.paused ? loop.resume('tap') : dialog.active ? dialog.onTap(p) : ceremony.active ? ceremony.onTap() : memorial.onTap()),
+  onTap: (p) => (loop.paused ? loop.resume('tap') : dialog.active ? dialog.onTap(p) : ceremony.active ? ceremony.onTap() : endingPages.active ? endingPages.onTap(p) : memorial.onTap()),
   onDown: (p) => dialog.active && dialog.onDown?.(p),
   onUp: (p) => dialog.active && dialog.onUp?.(p),
-  onBack: () => (loop.paused ? loop.resume('back') : dialog.active ? dialog.onBack() : ceremony.active ? ceremony.onTap() : memorial.onTap()),
+  onBack: () => (loop.paused ? loop.resume('back') : dialog.active ? dialog.onBack() : ceremony.active ? ceremony.onTap() : endingPages.active ? endingPages.onBack() : memorial.onTap()),
 };
 window.addEventListener('keydown', (e) => {
   if (e.key !== 'p' && e.key !== 'P' && e.key !== ' ') return;
@@ -345,7 +351,7 @@ function openRun(n, data) {
   if (world.fixedUp.length) debug.log(`layout fix-up: ${world.fixedUp.map((m) => m.id).join(', ')} moved`);
   if (debug.enabled && PARAMS.get('paused') === '1') clock.speed = 0; // ?debug=1&paused=1: open exactly as saved (tests)
   data.economy ??= { ...ECONOMY_START };
-  open = { n, data, world, seenMissed: new Set() };
+  open = { n, data, world, seenMissed: new Set(), resumeEnding: !!world.ending?.pending || !!world.ending?.livingDue }; // (Milestone 33: a reload mid-ceremony)
   keepPages(world.endOfLife.pages(), data.facility.name); // (Milestone 27: any page this campaign has that the account book hasn't)
   vfx.clear();
   carePops.clear();
@@ -384,6 +390,7 @@ async function prepareSaves() {
   await loadMemoryBook(); // (Milestone 27: the account's Memory Book)
   await loadSecretsAccount(); // (Milestone 29: secrets found in any run, Prestige Tokens, records)
   await loadAchievementsAccount(); // (Milestone 32: achievements, account bests, the Hall of Fame, keepsakes)
+  ngAccount = (await campaigns.slots.loadAccount())?.ngplus ?? null; // (Milestone 33: the finished homes, for the Trophy Case)
   if (debug.enabled) {
     const r = validateResidents(new DataValidator(), RESIDENTS, ROUTINE.map((x) => x.id)).report();
     debug.log(r.ok ? `residents: ${RESIDENTS.length} checked` : `resident data: ${r.errors.join('; ')}`);
@@ -514,13 +521,14 @@ const slotsScreen = createSlotsScreen({
   onPlay: (n) => playSlot(n),
   onDelete: (n) => deleteSlot(n),
   onNewInSlot: (n) => setupFor(n),
+  onNgSlot: (n) => ngSlotPicked(n), // (Milestone 33)
 });
 // Setup's Back: wherever it was opened from (the menu or the slot list). Not router.back(): that asks setup again.
 function leaveSetup() {
   const to = router.backTarget;
   router.go(to?.name ?? 'menu', to?.params ?? {});
 }
-const setupScreen = createSetupScreen({ layout, assets, textPrompt, onBack: () => leaveSetup(), onStart: (n, setup) => startFacility(n, setup) });
+const setupScreen = createSetupScreen({ layout, assets, textPrompt, onBack: () => leaveSetup(), onStart: (n, setup, ng) => (ng ? startNgPlus(n, setup) : startFacility(n, setup)) }); // (Milestone 33: a New Game+ home)
 // The home (Milestones 1–4). Tapping Arthur, a staff member or a place opens its sheet (rebuilt every frame, so it stays
 // live). Arthur's card (Milestone 2): what he is doing now, his six needs and five outcomes as bars, today's log and
 // his likes and dislikes; Milestone 3 adds who helps with each step (a picker, which since Milestone 4 pins that step's
@@ -565,6 +573,7 @@ const topBar = createTopBar({
     ];
   },
   onStats: () => openLedger(),
+  dateLabel: (d, { home }) => (home && open?.world?.ending?.postgame ? `Year ${d.year} · M${d.month} · D${d.day} · ${ENDING_TEXT.postgameTag}` : null), // (Milestone 33)
   onInbox: () => openInbox(),
   inboxCount: () => inboxCountNow(), // (Milestone 25c: + new care equipment; inboxBase() below)
   onHelp: () => openTopSheet('help'),
@@ -606,7 +615,7 @@ const vfx = new VfxSystem({ assets, width: W, height: renderer.height, font: THE
 const dayBeat = createDayBeat();
 // Milestone 25c: the next-step hint line (core/ui/HintLine; the rules are hintRules() below, first match wins)
 // (Milestone 32c: Rosie Hart gives the next-step hints)
-const hintLine = new HintLine({ rect: () => homeScreen.rectOf('hint'), rules: hintRules().map((r) => ({ ...r, text: typeof r.text === 'function' ? () => guideSays(r.text()) : guideSays(r.text) })), quiet: () => !open || !!spawn || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || settings.get('showHints') === false || !!bigBeat || ceremony.active });
+const hintLine = new HintLine({ rect: () => homeScreen.rectOf('hint'), rules: hintRules().map((r) => ({ ...r, text: typeof r.text === 'function' ? () => guideSays(r.text()) : guideSays(r.text) })), quiet: () => !open || !!spawn || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || settings.get('showHints') === false || !!bigBeat || ceremony.active || endingPages.active });
 const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it), onWings: () => openWings(), hint: hintLine, prefs: { nameTags: () => settings.get('nameTags') !== false, taskMarkers: () => settings.get('taskMarkers') !== false, lowFx } });
 const carePops = createCarePops({ bus, fxOn: () => fxOn(), world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused && !lowFx() }); // (Milestone 25c: Low graphics — no pops)
 // The end of each day: the medium beat ("Day 3 — all routine care done" / "2 tasks missed").
@@ -666,11 +675,12 @@ bus.on('staff:trained', ({ id }) => careFx('training', agentAt(open?.world?.byId
 bus.on('research:complete', () => careFx('research', pieceCentre(open?.world?.placed.find((x) => x.defId === 'F01')), 200));
 bus.on('care:compliment', ({ resident }) => careFx('compliment', agentAt(open?.world?.residentById(resident))));
 function momentUi() {
-  return { home: !!open && !spawn && router.currentName === 'home', sheet: sheet.active || homeScreen.buildMode, popup: dialog.active || memorial.active || ceremony.active || loop.paused || textPrompt.active };
+  return { home: !!open && !spawn && router.currentName === 'home', sheet: sheet.active || homeScreen.buildMode, popup: dialog.active || memorial.active || ceremony.active || endingPages.active || loop.paused || textPrompt.active };
 }
 function tickMoments(dt) {
   const ev = open?.world?.events;
   if (!ev) return;
+  endingWaiting(); // (Milestone 33)
   const cur = ev.uiTick(dt, momentUi());
   if ((cur?.uid ?? null) === (shownMoment?.uid ?? null)) return;
   if (shownMoment && bigBeat?.uid === shownMoment.uid) bigBeat = null; // (closed early: a sheet opened)
@@ -678,6 +688,7 @@ function tickMoments(dt) {
   if (cur) presentMoment(cur, ev);
 }
 function presentMoment(m, ev) {
+  if (m.ending && openEnding(m.ending)) return void haptics.medium(); // (Milestone 33: the Year-16 / Living Legacy ceremony)
   if (m.ceremony && ceremony.show(m.ceremony)) return void haptics.medium(); // (Milestone 32b: one tap skips, the next closes)
   if (m.weight === 'big') bigBeat = { uid: m.uid, title: m.title ?? '', text: m.text, art: m.art, badge: m.badge ?? null, aura: !!m.aura, confetti: m.kind === 'quality:award', age: 0 };
   else if (m.weight === 'medium' || m.weight === 'quiet') dayBeat.showText(m.text, m.good);
@@ -2275,10 +2286,223 @@ const ceremony = createCeremony({ width: W, height: () => renderer.height, asset
   w?.clock.pause();
   ceremonyLog.push({ kind: c.kind, title: c.title, total: c.total, tier: c.tier ?? null });
   if (ceremonyLog.length > 20) ceremonyLog.shift();
-}, onClose: () => {
+}, onClose: (was) => {
   if (ceremonyResume) open?.world?.clock.resume();
   ceremonyResume = false;
+  if (was?.kind === 'ending') endingTap('next'); // (Milestone 33: the grade card is one page of the ending)
 } });
+
+// ---------------------------------------------------------------------------
+// Milestone 33: the Year-16 ending (src/systems/ending.js) — a big beat through the M28 director opens its pages: the C10
+// result (if applied for), the 1,000-point grade on the M32b ceremony card (the four inspectors reveal their parts), a look
+// back, Rosie's closing line, then the end choice (keep running / Start New Game+). One tap a page, Skip always there; the
+// page is saved, so a reload comes back to it. The Living Legacy ending (SEC-NGP-03) is its own two pages.
+const endingPages = createEndingPages({ width: W, height: () => renderer.height, assets, onTap: (what) => endingTap(what) });
+const endingLog = []; // (tests: every page shown)
+let endingFlow = null; // { kind: 'year16' | 'living', resume }
+const nf = (n) => Number(n ?? 0).toLocaleString('en-GB');
+function endingPageOf(w, page) {
+  const e = w.ending;
+  const lb = e.lookBack ?? {};
+  if (page === 'c10') {
+    const r = e.c10?.status;
+    return { id: page, title: ENDING_TEXT.c10Title, art: r === 'won' ? QUALITY_ART.finale : accreditationById('C10')?.art ?? QUALITY_ART.finale, lines: [{ text: r === 'won' ? 'Awarded' : r === 'booked' ? 'Still to come' : 'Not this time', big: true }, r === 'won' ? ENDING_TEXT.c10Won : r === 'booked' ? ENDING_TEXT.c10Booked : ENDING_TEXT.c10Failed] };
+  }
+  if (page === 'look') {
+    const hall = lb.hall?.length ? lb.hall.join(', ') : 'nobody yet';
+    return { id: page, title: ENDING_TEXT.lookTitle, art: MEMORIAL.art.book, lines: [{ text: lb.home ?? open.data.facility.name, big: true }, `${lb.years ?? 16} years of care${lb.ngPlus ? ` · New Game+ ${lb.ngPlus}` : ''}`, `${nf(lb.residents)} resident${lb.residents === 1 ? '' : 's'} cared for`, `${nf(lb.pages)} Memory Book page${lb.pages === 1 ? '' : 's'} from this home`, `Hall of Fame: ${hall}`, `Grade ${e.grade.band} · ${e.grade.total} / 1000`] };
+  }
+  if (page === 'closing') return { id: page, title: ENDING_TEXT.closingTitle, art: BRAND.slots, lines: [], quote: ENDING_TEXT.closing, by: ENDING_TEXT.closingBy };
+  if (page === 'choice') return { id: page, title: ENDING_TEXT.choiceTitle, art: BRAND.ngPlus, lines: [ENDING_TEXT.choiceText], choice: { keep: ENDING_TEXT.keep, ngplus: ENDING_TEXT.ngPlus } };
+  if (page === 'living') return { id: page, title: ENDING_TEXT.livingTitle, art: MEMORIAL.art.book, lines: ENDING_TEXT.livingLines };
+  if (page === 'livingClosing') return { id: page, title: ENDING_TEXT.livingTitle, art: BRAND.ngPlus, lines: [], quote: ENDING_TEXT.livingClosing, by: ENDING_TEXT.closingBy };
+  return null;
+}
+const gradeCard = (g, title = ENDING_TEXT.gradeTitle) => ({ kind: 'ending', title, panel: g.panel.map((x) => ({ id: x.id, score: x.score, max: x.max, comment: x.comment })), total: g.total, max: g.max, grade: { letter: g.band, color: GRADE_COLORS[g.band] }, headline: `Grade ${g.band}`, lines: g.categories.slice(0, 3).map((c) => ''+c.name+': '+c.score+' / '+c.max), art: QUALITY_ART.finale });
+function showEndingPage(page) {
+  const w = open?.world;
+  if (!w) return;
+  endingLog.push({ kind: endingFlow?.kind, page });
+  if (endingLog.length > 40) endingLog.shift();
+  if (page === 'grade') {
+    endingPages.hide();
+    ceremony.show(gradeCard(w.ending.grade));
+    return;
+  }
+  endingPages.show(endingPageOf(w, page));
+}
+// → true when the pages opened
+function openEnding(kind = 'year16') {
+  const w = open?.world;
+  if (!w?.ending || endingFlow) return false;
+  if (kind === 'living' ? !w.ending.livingDue : !w.ending.pending) return false;
+  endingFlow = { kind, resume: !w.clock.paused };
+  w.clock.pause();
+  showEndingPage(kind === 'living' ? w.ending.livingPage() : w.ending.page);
+  return true;
+}
+function closeEnding() {
+  const f = endingFlow;
+  endingFlow = null;
+  endingPages.hide();
+  if (f?.resume) open?.world?.clock.resume();
+  saveRun();
+}
+function endingTap(what) {
+  const w = open?.world;
+  if (!w || !endingFlow) return;
+  const e = w.ending;
+  if (endingFlow.kind === 'living') {
+    const next = what === 'next' && e.livingPage() === 'living' ? 'livingClosing' : null;
+    if (next) {
+      e.setLivingPage(next);
+      saveRun();
+      return showEndingPage(next);
+    }
+    e.livingShown();
+    return closeEnding();
+  }
+  if (what === 'keep' || what === 'ngplus') {
+    e.keepRunning();
+    closeEnding();
+    if (what === 'ngplus') openNgPlus();
+    return;
+  }
+  const pages = e.pages();
+  const next = what === 'skip' ? 'choice' : pages[pages.indexOf(e.page) + 1] ?? 'choice';
+  e.setPage(next);
+  saveRun(); // (a reload comes back to this page)
+  showEndingPage(next);
+}
+// A reload mid-ceremony, or a beat the director let go stale: the pages open when the home is free.
+function endingWaiting() {
+  const w = open?.world;
+  if (!w?.ending || endingFlow || shownMoment || bigBeat || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || dialog.active || memorial.active || ceremony.active || loop.paused || textPrompt.active) return;
+  const e = w.ending;
+  const late = (day) => day != null && w.clock.totalDays >= day + 2;
+  if (e.pending && (open.resumeEnding || late(e.state.core?.day))) openEnding('year16');
+  else if (e.livingDue && (open.resumeEnding || late(e.state.living.announced))) openEnding('living');
+  open.resumeEnding = false;
+}
+// Menu → Year-16 Ending: the grade, the look back, the ceremony again, New Game+.
+function openEndingSheet() {
+  sheet.open(() => {
+    const w = open?.world;
+    const e = w?.ending;
+    if (!e?.reached) return { title: 'Year-16 Ending', sections: [{ lines: [{ text: 'Opens at the end of Year 16.', color: COL.textMuted }] }] };
+    const g = e.grade;
+    const lb = e.lookBack ?? {};
+    return {
+      title: 'Year-16 Ending',
+      subtitle: 'Grade ' + g.band + ' · ' + g.total + ' / 1000' + (e.postgame ? ' · playing on (postgame)' : ''),
+      art: QUALITY_ART.finale,
+      accent: accentNow(),
+      sections: [
+        { title: 'The grade', lines: g.categories.map((c) => ({ text: c.name + ': ' + c.score + ' / ' + c.max, color: c.score >= c.max * 0.75 ? COL.good : COL.text })) },
+        { title: 'Looking back', lines: [{ text: (lb.home ?? '') + ' · ' + (lb.years ?? 16) + ' years · ' + nf(lb.residents) + ' residents cared for · ' + nf(lb.pages) + ' Memory Book pages' }, { text: 'Hall of Fame: ' + (lb.hall?.length ? lb.hall.join(', ') : 'nobody yet'), color: COL.textMuted }, ...(e.c10 ? [{ text: ENDING_TEXT.c10Title + ': ' + (e.c10.status === 'won' ? 'awarded' : e.c10.status === 'booked' ? 'still to come' : 'not this time') }] : [])] },
+        { columns: 1, buttons: [
+          { id: 'ending:watch', label: 'See the inspectors again', sub: 'The grade card, as it was given', accent: COL.progress, onTap: () => {
+            sheet.close();
+            ceremony.show({ ...gradeCard(g), kind: 'endingReplay' });
+          } },
+          { id: 'ending:ngplus', label: NGPLUS_TEXT.menuRow, sub: NGPLUS_TEXT.menuSub, accent: COL.purple, onTap: () => openNgPlus() },
+        ] },
+      ],
+    };
+  });
+}
+
+// --- New Game+ (Milestone 33, bible §3.5.8, §37): picks → a slot → Facility Setup → the new home ----------------------
+// The finished home is never written over: its slot is locked on the picker; free slots come first; an occupied slot
+// asks a second time, naming its facility, year and New Game+ level. The new home may have a different Founder; one also
+// picked as Legacy Staff is refused and the picks open again.
+let ngAccount = null; // (the account store's ngplus record: the highest level and the finished homes)
+let ngPlan = null; // { parentSlot, parent (the finished home's save, as it was), options, choices, msg }
+const toggleIn = (list, id, max) => (list.includes(id) ? list.filter((x) => x !== id) : max === 1 ? [id] : list.length < max ? [...list, id] : list);
+async function openNgPlus() {
+  const o = open;
+  if (!o?.world?.ending?.reached) return;
+  await saveRun();
+  const parent = JSON.parse(JSON.stringify(o.data));
+  const options = ngOptions(parent);
+  ngPlan = { parentSlot: o.n, parent, options, choices: { legacyStaff: [], blueprints: [], discount: null }, msg: null };
+  openNgPicks();
+}
+function openNgPicks() {
+  sheet.open(() => {
+    const p = ngPlan;
+    if (!p) return { title: NGPLUS_TEXT.menuRow, sections: [] };
+    const o = p.options;
+    const c = p.choices;
+    const tierName = (t) => TIERS[t]?.name ?? t;
+    const sections = [
+      { lines: [
+        { text: NGPLUS_TEXT.keepsParent(p.parent.facility.name), color: COL.good },
+        { text: NGPLUS_TEXT.research(o.rpPct, o.rp) },
+        ...(o.living ? [{ text: NGPLUS_TEXT.living, color: COL.purple }] : []),
+        { text: NGPLUS_TEXT.carried, color: COL.textMuted },
+        { text: NGPLUS_TEXT.resets, color: COL.textMuted },
+      ] },
+      ...(p.msg ? [{ lines: [{ text: p.msg, color: COL.bad }] }] : []),
+      { title: NGPLUS_TEXT.pickLegacy(o.legacyPicks) + ' (' + c.legacyStaff.length + ' / ' + o.legacyPicks + ')', columns: 1, buttons: o.legacy.map((m) => ({ id: 'ng:legacy:' + m.id, label: (c.legacyStaff.includes(m.id) ? '✓ ' : '') + m.name, sub: ROLES[m.role].name + ' · ' + tierName(m.tier) + ' · Level ' + m.level + (m.chain.length ? ' · Legacy in New Game+ ' + m.chain.join(', ') : ''), accent: c.legacyStaff.includes(m.id) ? COL.good : COL.progress, onTap: () => {
+        c.legacyStaff = toggleIn(c.legacyStaff, m.id, o.legacyPicks);
+        p.msg = null;
+      } })) },
+      { title: NGPLUS_TEXT.pickBlueprints(o.blueprintPicks) + ' (' + c.blueprints.length + ' / ' + o.blueprintPicks + ')', ...(o.blueprints.length ? { columns: 1, buttons: o.blueprints.map((b) => ({ id: 'ng:blueprint:' + b.id, label: (c.blueprints.includes(b.id) ? '✓ ' : '') + b.name, sub: 'Its research lock is open from day one', accent: c.blueprints.includes(b.id) ? COL.good : COL.progress, onTap: () => (c.blueprints = toggleIn(c.blueprints, b.id, o.blueprintPicks)) })) } : { lines: [{ text: 'No specialist program ran in this home, so there is no blueprint to keep.', color: COL.textMuted }] }) },
+      ...(o.discount ? [{ title: NGPLUS_TEXT.pickDiscount, columns: 2, buttons: o.discount.map((f) => ({ id: 'ng:discount:' + f.id, label: (c.discount === f.id ? '✓ ' : '') + f.name, sub: nf(Math.round((f.cost * (100 - f.pct)) / 100 / 50) * 50) + ' (was ' + nf(f.cost) + ')', accent: c.discount === f.id ? COL.good : COL.progress, onTap: () => (c.discount = c.discount === f.id ? null : f.id) })) }] : []),
+      { columns: 1, buttons: [{ id: 'ng:next', label: NGPLUS_TEXT.next, accent: COL.purple, onTap: () => ngToSlots() }] },
+    ];
+    return { title: NGPLUS_TEXT.title(o.level), subtitle: 'From ' + p.parent.facility.name, art: BRAND.ngPlus, accent: COL.purple, sections };
+  });
+}
+async function ngToSlots() {
+  const p = ngPlan;
+  if (!p) return;
+  const bad = ngProblems(p.choices, p.options);
+  if (bad.length) {
+    p.msg = bad.join(' · ');
+    return;
+  }
+  sheet.close();
+  if (open) await leaveHome();
+  await campaigns.refresh();
+  router.go('slots', { mode: 'ngplus', parent: p.parentSlot, note: NGPLUS_TEXT.slotNote });
+}
+// A slot for the New Game+ home: a free one goes straight to Facility Setup; an occupied one asks a second time.
+function ngSlotPicked(n) {
+  const p = ngPlan;
+  if (!p || n === p.parentSlot) return;
+  const c = campaigns.card(n);
+  const go = () => router.go('setup', { slot: n, ngPlus: p.options.level, replacing: c?.summary ?? null });
+  if (!c || c.empty) return go();
+  const s = c.summary ?? { facility: 'the save in it', year: '?', month: '?', ngPlus: 0 };
+  dialog.confirm({ title: NGPLUS_TEXT.overwriteTitle(n), body: NGPLUS_TEXT.overwriteBody({ n, ...s }), yes: NGPLUS_TEXT.overwriteYes, danger: true, onYes: go });
+}
+async function startNgPlus(n, setup) {
+  const p = ngPlan;
+  if (!p || n === p.parentSlot) return;
+  const bad = ngProblems(p.choices, p.options, setup.founder);
+  if (bad.length) {
+    p.msg = bad.join(' · ');
+    dialog.confirm({ title: 'Pick again', body: bad.join(' '), yes: 'Pick Legacy Staff', onYes: () => openNgPicks() });
+    return;
+  }
+  const level = p.options.level;
+  let data = null;
+  await (accountChain = accountChain.then(async () => {
+    const acc = await campaigns.slots.loadAccount();
+    data = buildNgPlusRun({ parent: p.parent, account: acc, choices: p.choices, setup }).data;
+    const next = accountAfterNgPlus(acc, p.parent, level);
+    await campaigns.slots.saveAccount(next);
+    ngAccount = next.ngplus;
+  }));
+  await campaigns.startData(n, data);
+  ngPlan = null;
+  openRun(n, data);
+  debug.log('New Game+ ' + level + ' in slot ' + n + ': ' + setup.facility + ' (from ' + p.parent.facility.name + ')');
+  rememberHome(n);
+  router.go('home');
+}
 const memorial = new MajorFeedback({ layout, width: W, height: renderer.height, pause: () => {}, minShowSec: 1.6, hint: 'Tap to carry on' });
 let memorialResume = false;
 function showMemorial(e, uid = null) {
@@ -2585,6 +2809,8 @@ function openTrophyCase() {
     const sections = [{ lines: [{ text: `Every Month ${OPEN_DAY.month} the home opens its doors for the ${OPEN_DAY.title}, and every Month 12 the ${AWARDS_EVENING.title} shows the year's routine review and the recognition table together. Four inspectors judge each: ${INSPECTORS.map((i) => `${i.name} (${i.looks})`).join(', ')}. A low result is simply "Taking part".`, color: COL.textMuted }] }];
     if (t.length) sections.push(...t.map((x) => trophyRow(w, x)));
     else sections.push({ lines: [{ text: 'No trophies yet.', color: COL.textMuted }] });
+    // (Milestone 33: the Trophy Case is account-wide — the trophies of the homes finished before New Game+)
+    for (const h of (ngAccount?.pastHomes ?? []).filter((x) => x.runId !== open.data.seed && x.trophies?.length)) sections.push({ title: `From ${h.home}${h.ngPlus ? ` (New Game+ ${h.ngPlus})` : ''}${h.grade ? ` · grade ${h.grade}` : ''}`, lines: [...h.trophies].reverse().map((x) => ({ text: `Year ${x.year} · ${x.kind === 'openDay' ? OPEN_DAY.title : AWARDS_EVENING.title}: ${tierById(x.tier)?.name ?? x.tier}`, color: COL.textMuted })) });
     if (debug.enabled) sections.push({ title: 'Debug', columns: 1, buttons: [{ id: 'trophies:debugShow', label: 'Show an inspector reveal (debug)', sub: 'Today’s home as the four inspectors would see it', accent: COL.progress, onTap: () => {
       sheet.close();
       const g = w.quality.gradeNow();
@@ -3971,6 +4197,8 @@ const MENU_OPEN = {
   homeRecords: () => openHomeRecords(),
   hallOfFame: () => openHallOfFame(),
   trophies: () => openTrophyCase(), // (Milestone 32b)
+  ending: () => openEndingSheet(), // (Milestone 33)
+  ngPlus: () => openNgPlus(), // (Milestone 33)
   family: () => placedOf('F09') && openHomeSheet(placedOf('F09').id),
   business: () => openBusiness(),
   partners: () => openPartners(),
@@ -3995,6 +4223,9 @@ function menuState(id) {
   if (id === 'carePlans' && w.stalePlans().length) return { badge: w.stalePlans().length };
   if (id === 'roster' && w.coverage.warnings().length) return { badge: w.coverage.warnings().length };
   if (id === 'memoryBook') return { sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} · kept for good across every home` };
+  if ((id === 'ending' || id === 'ngPlus') && !w.ending?.reached) return { locked: 'Opens at the end of Year 16' }; // (Milestone 33)
+  if (id === 'ending') return { sub: `Grade ${w.ending.grade.band} · ${w.ending.grade.total} / 1000` };
+  if (id === 'ngPlus') return { sub: `${NGPLUS_TEXT.title(Math.min(3, w.ngPlus + 1))} · ${NGPLUS_TEXT.menuSub}` };
   return {};
 }
 function openNavMenu() {
@@ -4312,7 +4543,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { openTrophyCase, ceremony, ceremonyLog, openAchievements, openHomeRecords, openHallOfFame, get achievementsSaving() { return achievementsSaving; }, openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { endingPages, endingLog, openEnding, openEndingSheet, openNgPlus, openNgPicks, get ngPlan() { return ngPlan; }, ngSlotPicked, startNgPlus, openTrophyCase, ceremony, ceremonyLog, openAchievements, openHomeRecords, openHallOfFame, get achievementsSaving() { return achievementsSaving; }, openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

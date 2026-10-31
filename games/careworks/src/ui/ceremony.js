@@ -6,6 +6,8 @@
 //   const ceremony = createCeremony({ width, height: () => H, assets, onOpen, onClose })
 //   ceremony.show(c) · ceremony.active · ceremony.update(dt) · ceremony.render(ctx) · ceremony.onTap()
 //   ceremony.revealed → how many inspectors are showing · ceremony.done → the result is showing · ceremony.current
+// Milestone 33 (the Year-16 ending grade): a panel row may carry its own `max` (points out of that, not 10) and `comment`;
+// `grade: { letter, color }` shows the grade letter in its circle in place of a place tier.
 import { THEME, font } from '../../../../core/Theme.js';
 import { panel, wrapLines } from '../../../../core/ui/Kit.js';
 import { INSPECTORS, inspectorById, commentOf, tierById, VERDICT_TEXT, PANEL_MAX } from '../../data/verdicts.js';
@@ -121,16 +123,17 @@ export function createCeremony({ width = 1080, height = () => 1920, assets = nul
         // the score, a moment later, with the comment
         if (t >= at + SCORE_AFTER || api.done) {
           ctx.textAlign = 'right';
-          ctx.fillStyle = p.score >= 8 ? C.good : p.score >= 5 ? C.actionDark : C.bad;
+          const share = p.score / (p.max ?? PANEL_MAX);
+          ctx.fillStyle = share >= 0.8 ? C.good : share >= 0.5 ? C.actionDark : C.bad;
           ctx.font = font(S.title, true);
-          ctx.fillText(`${p.score}`, x + cardW - 110, ry + 78);
+          ctx.fillText(`${p.score}`, x + cardW - (p.max >= 100 ? 140 : 110), ry + 78);
           ctx.font = font(S.body, false);
           ctx.fillStyle = C.textMuted;
-          ctx.fillText(`/ ${PANEL_MAX}`, x + cardW - 40, ry + 78);
+          ctx.fillText(`/ ${p.max ?? PANEL_MAX}`, x + cardW - 40, ry + 78);
           ctx.textAlign = 'left';
           ctx.fillStyle = C.text;
           ctx.font = font(S.small, false);
-          const lines = wrapLines(`“${commentOf(p.id, p.score)}”`, cardW - (tx - x) - 40, S.small, false).slice(0, 2);
+          const lines = wrapLines(`“${p.comment ?? commentOf(p.id, p.score)}”`, cardW - (tx - x) - 40, S.small, false).slice(0, 2);
           lines.forEach((l, j) => ctx.fillText(l, tx, ry + 134 + j * 36, cardW - (tx - x) - 40));
         }
         ctx.restore();
@@ -146,7 +149,19 @@ export function createCeremony({ width = 1080, height = () => 1920, assets = nul
         ctx.font = font(S.title, true);
         ctx.fillText(`${cur.total} / ${cur.max ?? 40}`, mid, yy + 40);
         yy += 70;
-        if (tier) {
+        if (cur.grade) {
+          ctx.beginPath();
+          ctx.arc(mid, yy + 52, 52, 0, Math.PI * 2);
+          ctx.fillStyle = cur.grade.color;
+          ctx.fill();
+          ctx.lineWidth = 4;
+          ctx.strokeStyle = C.outline;
+          ctx.stroke();
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = font(S.title, true);
+          ctx.fillText(cur.grade.letter, mid, yy + 52 + 22);
+          yy += 118;
+        } else if (tier) {
           ctx.beginPath();
           ctx.arc(mid, yy + 44, 40, 0, Math.PI * 2);
           ctx.fillStyle = tier.color;

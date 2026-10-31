@@ -32,6 +32,8 @@ export const MENU_GROUPS = [
     row('hallOfFame', 'Staff Hall of Fame', 'The people who made your homes what they are', 'care_ui_28'),
     row('trophies', 'Trophy Case', 'Open Days and Awards Evenings, year by year', 'care_ui_28'), // (Milestone 32b: Quality → Records too)
     row('family', 'Family', 'The Reception / Family Desk: visits, meetings and Family Trust', 'care_ui_10'),
+    row('ending', 'Year-16 Ending', 'The 1,000-point grade and a look back at the home', 'care_event_09'), // (Milestone 33)
+    row('ngPlus', 'Start New Game+', 'A new home in another slot, with Legacy Staff and blueprints', 'care_brand_06'), // (Milestone 33)
   ] },
   { title: 'Business', rows: [
     row('business', 'Business', 'Funding, the ledger, partners, grants and supplies', 'care_ui_05'),
