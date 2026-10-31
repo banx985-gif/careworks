@@ -67,7 +67,8 @@ import { AssetManager } from '../../../core/AssetManager.js';
 import { FixedStepLoop } from '../../../core/FixedStepLoop.js';
 import { DebugOverlay } from '../../../core/DebugOverlay.js';
 import { SystemBack } from '../../../core/SystemBack.js';
-import { createStorageAdapter } from '../../../core/StorageAdapter.js';
+import { createStorageAdapter, askPersistentStorage } from '../../../core/StorageAdapter.js';
+import { moveOldLocalSaves } from './app/saveMove.js';
 import { Autosave } from '../../../core/Autosave.js';
 import { TextPrompt } from '../../../core/ui/TextPrompt.js';
 import { BottomSheet } from '../../../core/ui/BottomSheet.js';
@@ -100,7 +101,7 @@ const repWord = (forId) => {
 };
 import { INSPECTORS, inspectorById, tierById, VERDICT_TEXT, OPEN_DAY, AWARDS_EVENING } from '../data/verdicts.js';
 import { ASSETS } from '../data/assets.js';
-import { SAVE } from '../data/save.js';
+import { SAVE, SAVE_TEXT } from '../data/save.js';
 import { createCampaigns } from './app/campaigns.js';
 import { paletteById } from '../data/setup.js';
 import { NEEDS, OUTCOMES, RESIDENTS, validateResidents, supportLevel, ROOM_TEMPLATES, STAYS } from '../data/residents.js';
@@ -389,7 +390,12 @@ bus.on('autosave:failed', ({ error }) => debug.log(`save failed: ${error?.messag
 bus.on('care:band', ({ band }) => debug.log(`band: ${band}`));
 
 async function prepareSaves() {
-  const adapter = await createStorageAdapter({ dbName: SAVE.dbName, prefix: SAVE.localPrefix });
+  // (Milestone 35) IndexedDB first, localStorage behind it (core FallbackAdapter); ?storage=local switches IndexedDB off (a test)
+  const adapter = await createStorageAdapter({ dbName: SAVE.dbName, prefix: SAVE.localPrefix, fallback: true, preferLocal: PARAMS.get('storage') === 'local' });
+  storageKind = adapter.kind;
+  saveMove = await moveOldLocalSaves({ adapter, oldPrefix: SAVE.oldLocalPrefix, newPrefix: SAVE.localPrefix, marker: SAVE.moveMarker, skip: [SETTINGS_KEY] }); // (once: older localStorage saves, the old copies untouched)
+  if (saveMove.moved.length) debug.log(`saves moved into the store: ${saveMove.moved.join(', ')}`);
+  askPersistentStorage(); // (ask the browser to keep this site's saves when the phone runs low on space)
   settings.attachStore(adapter, 'settings'); // (Milestone 25c: the settings slot in the account store too)
   campaigns = createCampaigns({ adapter, save: SAVE, bus });
   if (debug.enabled && PARAMS.get('reset') === '1') for (const n of campaigns.slots.numbers()) await campaigns.slots.remove(n);
@@ -398,6 +404,7 @@ async function prepareSaves() {
   await loadSecretsAccount(); // (Milestone 29: secrets found in any run, Prestige Tokens, records)
   await loadAchievementsAccount(); // (Milestone 32: achievements, account bests, the Hall of Fame, keepsakes)
   ngAccount = (await campaigns.slots.loadAccount())?.ngplus ?? null; // (Milestone 33: the finished homes, for the Trophy Case)
+  accountNote(); // (Milestone 35: an account that had to fall back, or start again)
   if (debug.enabled) {
     const r = validateResidents(new DataValidator(), RESIDENTS, ROUTINE.map((x) => x.id)).report();
     debug.log(r.ok ? `residents: ${RESIDENTS.length} checked` : `resident data: ${r.errors.join('; ')}`);
@@ -444,17 +451,32 @@ async function playSlot(n) {
   } catch (err) {
     console.error('[CAREWORKS] could not load slot', n, err);
   }
+  const lo = campaigns.lastOpen;
   if (!data) {
-    debug.log(`slot ${n}: nothing to load`);
+    debug.log(`slot ${n}: nothing to load${lo?.error ? ` (${lo.error})` : ''}`);
     await campaigns.refresh();
     router.go('slots', { mode: 'browse' });
+    if (lo?.error) dialog.show({ title: lo.newer ? SAVE_TEXT.newerTitle : SAVE_TEXT.damagedTitle(n), body: lo.newer ? SAVE_TEXT.newerBody : SAVE_TEXT.damagedBody, buttons: [{ id: 'ok', label: 'OK', accent: COL.progress }] }); // (Milestone 35: the other slots are untouched)
     return;
   }
   openRun(n, data);
-  debug.log(`slot ${n} opened: ${data.facility.name}`);
+  debug.log(`slot ${n} opened: ${data.facility.name}${lo?.restored ? ' (restored from an older copy)' : ''}`);
   rememberHome(n);
   router.go('home');
+  if (lo?.restored) dialog.show({ title: SAVE_TEXT.restoredTitle, body: SAVE_TEXT.restored, buttons: [{ id: 'ok', label: 'OK', accent: COL.progress }] }); // (Milestone 35: one tap)
 }
+// (Milestone 35) the account store would not read: an older copy was used, or (nothing good) it was kept aside and started again
+function accountNote() {
+  const p = campaigns.slots.accountProblem;
+  const fell = campaigns.slots.account.lastLoad?.fallback;
+  if (!p && !fell) return;
+  debug.log(`account: ${p ? `kept aside (${p.error})` : 'restored from an older copy'}`);
+  if (p?.newer) return; // (a newer game's account: left alone, never written over)
+  pendingAccountNote = p ? SAVE_TEXT.accountReset : SAVE_TEXT.accountRestored;
+}
+let pendingAccountNote = null;
+let storageKind = null;
+let saveMove = null;
 
 // START FACILITY. An occupied slot (read fresh, in case it changed) asks first, naming its facility and year.
 async function startFacility(n, setup) {
@@ -530,6 +552,7 @@ const slotsScreen = createSlotsScreen({
   onDelete: (n) => deleteSlot(n),
   onNewInSlot: (n) => setupFor(n),
   onNgSlot: (n) => ngSlotPicked(n), // (Milestone 33)
+  onNgPlus: (n) => ngFromSlot(n), // (Milestone 35: New Game+ from the Main Menu's slot screen)
 });
 // Setup's Back: wherever it was opened from (the menu or the slot list). Not router.back(): that asks setup again.
 function leaveSetup() {
@@ -2447,6 +2470,17 @@ async function openNgPlus() {
   const parent = JSON.parse(JSON.stringify(o.data));
   const options = ngOptions(parent);
   ngPlan = { parentSlot: o.n, parent, options, choices: { legacyStaff: [], blueprints: [], discount: null }, msg: null };
+  openNgPicks();
+}
+// (Milestone 35, bible §4) the same flow from the Main Menu: a finished home's slot card offers New Game+. Its save is
+// read (not opened); the picks, the slot picker that keeps it, and the second confirmation are the M33 ones.
+async function ngFromSlot(n) {
+  const parent = await campaigns.peek(n);
+  if (!parent?.care?.ending?.core?.reached) {
+    dialog.show({ title: NGPLUS_TEXT.menuRow, body: SAVE_TEXT.notFinished, buttons: [{ id: 'ok', label: 'OK', accent: COL.progress }] });
+    return;
+  }
+  ngPlan = { parentSlot: n, parent, options: ngOptions(parent), choices: { legacyStaff: [], blueprints: [], discount: null }, msg: null };
   openNgPicks();
 }
 function openNgPicks() {
@@ -4736,6 +4770,8 @@ const bootScreen = {
     const n = START_SCREEN === 'menu' ? homeToResume() : null;
     if (n) playSlot(n);
     else router.go(START_SCREEN);
+    if (pendingAccountNote) dialog.show({ title: SAVE_TEXT.accountTitle, body: pendingAccountNote, buttons: [{ id: 'ok', label: 'OK', accent: COL.progress }] }); // (Milestone 35: one tap)
+    pendingAccountNote = null;
   },
   update(dt) {
     this.t += dt;
@@ -4839,7 +4875,7 @@ window.__cwGuide = () => {
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { guide, guideTarget, get guideMark() { return guideMark; }, openHelp, openHelpPage, get qualityBuilder() { return qualityBuilder; }, get rosterPick() { return rosterPick; }, endingPages, endingLog, openEnding, openEndingSheet, openNgPlus, openNgPicks, get ngPlan() { return ngPlan; }, ngSlotPicked, startNgPlus, openTrophyCase, ceremony, ceremonyLog, openAchievements, openHomeRecords, openHallOfFame, get achievementsSaving() { return achievementsSaving; }, openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, openAdmissions, openMainExtras, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { guide, guideTarget, get guideMark() { return guideMark; }, openHelp, openHelpPage, get qualityBuilder() { return qualityBuilder; }, get rosterPick() { return rosterPick; }, endingPages, endingLog, openEnding, openEndingSheet, openNgPlus, openNgPicks, ngFromSlot, get storageKind() { return storageKind; }, get saveMove() { return saveMove; }, get ngPlan() { return ngPlan; }, ngSlotPicked, startNgPlus, openTrophyCase, ceremony, ceremonyLog, openAchievements, openHomeRecords, openHallOfFame, get achievementsSaving() { return achievementsSaving; }, openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, openAdmissions, openMainExtras, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

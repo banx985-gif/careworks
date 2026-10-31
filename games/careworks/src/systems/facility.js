@@ -75,14 +75,14 @@ export function newCampaign(setup, now = Date.now()) {
 // Rank, grade and resident count stay out until those systems exist (card: zero or hidden).
 export function slotSummary(data) {
   const f = data.facility;
-  const founder = founderById(f.founder.id);
+  const founder = founderById(f.founder?.id ?? 'RN01');
   const when = data.clock ?? data.date;
   return {
     facility: f.name,
     director: f.director,
     palette: f.palette,
-    founderId: founder?.id ?? f.founder.id,
-    founderName: founder?.name ?? f.founder.id,
+    founderId: founder?.id ?? f.founder?.id,
+    founderName: founder?.name ?? f.founder?.id,
     founderRole: founder ? ROLES[founder.role].name : '',
     year: when.year,
     month: when.month,
@@ -90,7 +90,37 @@ export function slotSummary(data) {
     residents: Array.isArray(data.residents) ? data.residents.length : 1, // Milestone 6
     rank: ['E', 'D', 'C', 'B', 'A', 'S'][data.care?.quality?.rep?.highestRankIndex ?? 0] ?? 'E', // (Milestone 26)
     playSec: data.playSec ?? 0,
+    stage: data.layout?.stage ?? 1, // (Milestone 35: the stage, and whether the home has finished Year 16 — its slot offers New Game+)
+    finished: !!data.care?.ending?.core?.reached,
+    v: 35,
   };
+}
+
+// Milestone 35: the save check (core SaveSlot validate). A copy whose checksum is fine but whose shape could never open
+// a home is skipped like a damaged one, so the load falls back to the copy before it (a very old save with no Founder is fine: its team gets Maya). → [] when sound, else the problems.
+export function campaignProblems(data) {
+  const out = [];
+  if (!data || typeof data !== 'object') return ['not an object'];
+  if (typeof data.facility?.name !== 'string' || !data.facility.name) out.push('no facility name');
+  const when = data.clock ?? data.date;
+  if (!Number.isFinite(when?.year) || !Number.isFinite(when?.month)) out.push('no date');
+  if (data.residents != null) {
+    if (!Array.isArray(data.residents)) out.push('residents are not a list');
+    else {
+      const ids = data.residents.map((r) => r?.id);
+      if (ids.some((id) => !id)) out.push('a resident has no id');
+      if (new Set(ids).size !== ids.length) out.push('a resident is in the save twice');
+    }
+  }
+  if (data.staff != null) {
+    const team = data.staff.staff;
+    if (!Array.isArray(team) || !team.length) out.push('no staff list');
+    else {
+      const ids = team.map((m) => m?.id);
+      if (new Set(ids).size !== ids.length) out.push('a staff member is in the save twice');
+    }
+  }
+  return out;
 }
 
 // Version 1 → 2 (Milestone 2): a clock from the saved date, starting just before Arthur wakes; Arthur on his defaults.

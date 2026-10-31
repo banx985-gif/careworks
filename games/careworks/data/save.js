@@ -4,7 +4,9 @@
 // account store (Memory Book, achievements, tokens … later) is its own key, never touched by a slot overwrite/delete.
 export const SAVE = {
   dbName: 'careworks',
-  localPrefix: 'careworks:',
+  localPrefix: 'careworks:save:', // (Milestone 35: IndexedDB first, localStorage behind it under its own prefix — never the settings' quick copy)
+  oldLocalPrefix: 'careworks:', // (before Milestone 35: a phone without IndexedDB saved here; moved across once, the old copies left as they were)
+  moveMarker: 'meta:m35move',
   count: 4,
   prefix: 'campaign_',
   accountKey: 'account',
@@ -44,5 +46,22 @@ export const SAVE = {
   // Trophy Case in care.verdicts; inspections keep their four inspectors' panel), 34 = Milestone 33 (the Year-16 ending in
   // care.ending, a New Game+ home's start in care.ngPlusStart, Legacy Staff history in their counters; the account store's
   // ngplus record: the highest NG+ level and the finished homes); src/systems/facility.js
-  // SAVE_MIGRATIONS moves older saves
+  // SAVE_MIGRATIONS moves older saves. Milestone 35 changed no save's shape (the slot summary record gained stage /
+  // finished; an older record is rebuilt once from its save), so the version stays 35.
+};
+
+// Milestone 35: the calm one-tap notes when a save had to fall back (plain words; nothing to fix).
+export const SAVE_TEXT = {
+  restoredTitle: 'Welcome back',
+  restored: 'We restored your home from a few minutes earlier.',
+  damagedTitle: (n) => `Slot ${n} can't be opened`,
+  damagedBody: "This save can't be read. Your other slots and your records are fine. You can delete this one to use the slot again.",
+  newerTitle: 'Update the game',
+  newerBody: 'This home was saved by a newer version of CAREWORKS. Update the game to open it. It is kept as it is.',
+  accountTitle: 'Your records',
+  accountRestored: 'We restored your records from a few minutes earlier.',
+  accountReset: "Your records couldn't be read, so a copy was kept aside and they start fresh. Your homes are fine.",
+  notFinished: 'New Game+ opens once this home has finished Year 16.',
+  ngButton: 'New Game+',
+  finishedLine: 'Year 16 finished',
 };

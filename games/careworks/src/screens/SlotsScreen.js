@@ -8,6 +8,10 @@
 // or Replace on an occupied one; START FACILITY asks again before anything is overwritten).
 // Milestone 33: a third mode, 'ngplus' (bible §3.5.8) — where the New Game+ home goes: free slots first, the finished home's
 // slot locked ("kept"), an occupied one offers Write over (src/main.js asks a second time, naming facility, year, NG+).
+// Milestone 35: each card also shows the stage and when it was last played (all from the small summary record — the slot
+// screen never loads a home); a home that has finished Year 16 offers New Game+ (Play · New Game+ · Delete), which opens
+// the M33 flow (picks → this picker that keeps the parent → a second confirmation to write over). A save from a newer
+// game says so (update to open it); a damaged one can only be deleted (its copies are kept aside first).
 // Layout and tapping share one pass (lay out → draw and/or hit-test), so they can never disagree.
 import { THEME } from '../../../../core/Theme.js';
 import { drawButton, hitRect } from '../../../../core/ui/Button.js';
@@ -15,12 +19,29 @@ import { card, text } from '../../../../core/ui/Kit.js';
 import { founderById, paletteById } from '../../data/setup.js';
 import { drawPortrait, accentStrip, drawArtCrop } from '../ui/careArt.js';
 import { BRAND, ART_CROP } from '../../data/artMoments.js';
+import { SAVE_TEXT } from '../../data/save.js';
+
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+// "today 9:41 pm" / "yesterday" / "31 Oct" (the device's clock; null when the record has no time)
+export function lastPlayedText(at, now = Date.now()) {
+  if (!Number.isFinite(at)) return null;
+  const d = new Date(at);
+  const n = new Date(now);
+  const day = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const ago = Math.round((day(n) - day(d)) / 86400000);
+  if (ago === 0) {
+    const h = d.getHours();
+    return `today ${((h + 11) % 12) + 1}:${String(d.getMinutes()).padStart(2, '0')} ${h < 12 ? 'am' : 'pm'}`;
+  }
+  if (ago === 1) return 'yesterday';
+  return `${d.getDate()} ${MONTHS[d.getMonth()]}${d.getFullYear() !== n.getFullYear() ? ` ${d.getFullYear()}` : ''}`;
+}
 
 const C = THEME.color;
 const S = THEME.size;
 
 // cards(): [{ n, empty, summary, error }]; last(): the last-used slot number or null.
-export function createSlotsScreen({ layout, assets = null, cards, last, onBack, onPlay, onDelete, onNewInSlot, onNgSlot = () => {} }) {
+export function createSlotsScreen({ layout, assets = null, cards, last, onBack, onPlay, onDelete, onNewInSlot, onNgSlot = () => {}, onNgPlus = () => {} }) {
   let mode = 'browse';
   let parent = null; // (Milestone 33: the finished home's slot, locked in 'ngplus' mode)
   let note = null;
@@ -78,10 +99,12 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
     const m = s.summary;
     const isLast = s.n === last();
     const palette = paletteById(m.palette);
-    const bw = 230;
-    const bh = Math.min(110, (r.h - 60) / 2);
-    const b1 = { x: r.x + r.w - bw - 24, y: r.y + r.h / 2 - bh - 10, w: bw, h: bh };
-    const b2 = { x: b1.x, y: r.y + r.h / 2 + 10, w: bw, h: bh };
+    const three = mode === 'browse' && !!m.finished; // (Milestone 35: Play · New Game+ · Delete)
+    const bw = three ? 260 : 230;
+    const bh = three ? Math.min(100, (r.h - 56) / 3) : Math.min(110, (r.h - 60) / 2);
+    const b1 = three ? { x: r.x + r.w - bw - 24, y: r.y + r.h / 2 - bh * 1.5 - 12, w: bw, h: bh } : { x: r.x + r.w - bw - 24, y: r.y + r.h / 2 - bh - 10, w: bw, h: bh };
+    const b2 = three ? { x: b1.x, y: b1.y + bh + 12, w: bw, h: bh } : { x: b1.x, y: r.y + r.h / 2 + 10, w: bw, h: bh };
+    const b3 = three ? { x: b1.x, y: b2.y + bh + 12, w: bw, h: bh } : null;
     if (mode === 'ngplus') {
       const rep = { x: b1.x, y: r.y + (r.h - bh) / 2, w: bw, h: bh };
       if (s.n !== parent) box(rep, () => onNgSlot(s.n), `replace${s.n}`);
@@ -95,12 +118,14 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
       if (ctx) drawButton(ctx, rep, 'Replace', { accent: C.bad });
     } else {
       box(b1, () => onPlay(s.n), `play${s.n}`);
-      box(b2, () => onDelete(s.n), `delete${s.n}`);
+      if (three) box(b2, () => onNgPlus(s.n), `ngplus${s.n}`);
+      box(three ? b3 : b2, () => onDelete(s.n), `delete${s.n}`);
       box(r, () => onPlay(s.n), `card${s.n}`);
       if (ctx) {
         layoutCard();
         drawButton(ctx, b1, 'Play');
-        drawButton(ctx, b2, 'Delete', { accent: C.bad });
+        if (three) drawButton(ctx, b2, SAVE_TEXT.ngButton, { accent: C.purple ?? C.progress });
+        drawButton(ctx, three ? b3 : b2, 'Delete', { accent: C.bad });
       }
     }
     function layoutCard() {
@@ -120,14 +145,15 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
       let ty = r.y + 22 * k;
       if (ngW) drawArtCrop(ctx, assets, BRAND.ngPlus, ART_CROP[BRAND.ngPlus], { x: b1.x - 16 - ngW, y: r.y + 16, w: ngW, h: r.h - 32 }); // (Milestone 28b: New Game+)
       text(ctx, `SLOT ${s.n}${mode === 'ngplus' && s.n === parent ? ' · THIS FINISHED HOME IS KEPT' : isLast ? ' · LAST PLAYED' : ''}${ng > 0 ? ` · NEW GAME+ ${ng}` : ''}`, tx, ty, { size: S.small, bold: true, color: isLast ? C.progress : C.textMuted, maxWidth: tw });
+      const played = lastPlayedText(s.savedAt);
       ty += 42 * k;
       text(ctx, m.facility, tx, ty, { size: S.heading, bold: true, color: palette.dark, maxWidth: tw });
       ty += 60 * k;
       text(ctx, `Facility Director ${m.director}`, tx, ty, { size: S.body, maxWidth: tw });
       ty += 52 * k;
-      text(ctx, `Founder: ${m.founderRole}`, tx, ty, { size: S.small, color: C.textMuted, maxWidth: tw });
+      text(ctx, `Stage ${m.stage ?? 1}${played ? ` · Played ${played}` : ` · Founder: ${m.founderRole}`}`, tx, ty, { size: S.small, color: C.textMuted, maxWidth: tw }); // (Milestone 35: stage, last played)
       ty += 46 * k;
-      text(ctx, `Year ${m.year} · Month ${m.month} · Rank ${m.rank ?? 'E'}`, tx, ty, { size: S.body, bold: true, color: C.actionDark, maxWidth: tw }); // (Milestone 26: Rank)
+      text(ctx, m.finished ? `${SAVE_TEXT.finishedLine} · Rank ${m.rank ?? 'E'}` : `Year ${m.year} · Month ${m.month} · Rank ${m.rank ?? 'E'}`, tx, ty, { size: S.body, bold: true, color: m.finished ? C.good : C.actionDark, maxWidth: tw }); // (Milestone 26: Rank; Milestone 35: finished)
     }
   }
 
@@ -158,8 +184,9 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
     box(del, () => onDelete(s.n), `delete${s.n}`);
     if (!ctx) return;
     card(ctx, r, 'bad');
-    text(ctx, `Slot ${s.n}: this save can't be read`, r.x + 40, r.y + r.h / 2 - 30, { size: S.heading, bold: true, color: C.bad, baseline: 'middle', maxWidth: del.x - r.x - 60 });
-    text(ctx, 'Delete it to use the slot again.', r.x + 40, r.y + r.h / 2 + 30, { size: S.body, color: C.textMuted, baseline: 'middle', maxWidth: del.x - r.x - 60 });
+    const newer = /newer/i.test(s.error ?? '');
+    text(ctx, newer ? `Slot ${s.n}: saved by a newer version` : `Slot ${s.n}: this save can't be read`, r.x + 40, r.y + r.h / 2 - 30, { size: S.heading, bold: true, color: C.bad, baseline: 'middle', maxWidth: del.x - r.x - 60 });
+    text(ctx, newer ? 'Update the game to open it.' : 'Your other slots are fine.', r.x + 40, r.y + r.h / 2 + 30, { size: S.body, color: C.textMuted, baseline: 'middle', maxWidth: del.x - r.x - 60 });
     drawButton(ctx, del, 'Delete', { accent: C.bad });
   }
 
@@ -178,7 +205,7 @@ export function createSlotsScreen({ layout, assets = null, cards, last, onBack, 
     render(ctx) {
       pass(ctx, null);
     },
-    // Screen rect of a tappable thing (tests): 'back', 'play1', 'delete2', 'new3', 'replace4', 'slot1'…
+    // Screen rect of a tappable thing (tests): 'back', 'play1', 'delete2', 'new3', 'replace4', 'slot1', 'ngplus1'…
     rectOf(id) {
       pass(null, null);
       return rects[id] ?? null;
