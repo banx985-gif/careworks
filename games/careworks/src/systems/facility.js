@@ -257,7 +257,11 @@ export const SAVE_MIGRATIONS = {
   31: (record) => record, // (Milestone 32: no achievements state = nothing earned in this home yet; it catches up at once on load from what the home already has (quiet Inbox lines); records start from the next day)
   32: (record) => record, // (Milestone 32b: no verdicts state = no Open Day or Awards Evening held yet; older inspections simply have no inspectors' panel)
   33: (record) => record, // (Milestone 33: no ending state = the ending not reached yet — a home already past Year 16 gets it at its next month close; no NG+ start = an ordinary home)
+  34: (record) => ({ ...record, data: record.data?.guide ? record.data : { ...record.data, guide: OLD_HOME_GUIDE() } }), // (Milestone 34: a home saved before the first-week guide is already under way — its guide starts off; Settings can switch it on)
 };
+
+// Milestone 34: an older home's first-week guide — off, its welcome card never shown (src/systems/guide.js).
+const OLD_HOME_GUIDE = () => ({ done: [], seen: [], events: [], off: true, current: null, welcome: 'done', why: 'old', ended: false, hints: [] });
 
 // "Facility Director Aaron — Banks Care" (bible §3.5.2).
 export const directorLine = (director, facility) => `Facility Director ${director || '…'} — ${facility || '…'}`;

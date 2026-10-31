@@ -3659,6 +3659,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         const p = byResident(c.id);
         return !p || eolOf(p).offer !== 'open';
       }
+      case 'guide':
+        return false; // (Milestone 34: Rosie's first card — only the player's answer ends it)
       default:
         return true;
     }

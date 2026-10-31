@@ -154,6 +154,9 @@ import { createSlotsScreen } from './screens/SlotsScreen.js';
 import { createSetupScreen } from './screens/SetupScreen.js';
 import { createHomeScreen } from './screens/HomeScreen.js';
 import { createTestScreen } from './screens/TestScreen.js';
+import { GUIDE_TEXT, HELP_TEXT, HELP_TOPICS, helpTopicById } from '../data/guide.js'; // (Milestone 34: Rosie's first-week guide, the Help pages)
+import { createFirstWeekGuide, guideStart } from './systems/guide.js';
+import { createGuideMark } from './ui/guideMark.js';
 const COL = THEME.color;
 
 const W = 1080;
@@ -208,6 +211,7 @@ const loop = new FixedStepLoop({
     tickMoments(dt); // (Milestone 28: the event director's moment on screen)
     autosave.tick(dt);
     hintLine.update(dt); // (Milestone 25c)
+    tickGuide(dt); // (Milestone 34)
     dialog.update(dt);
     sheet.update(dt);
   },
@@ -215,6 +219,7 @@ const loop = new FixedStepLoop({
     const ctx = renderer.begin(COL.bg);
     router.render(ctx, alpha);
     sheet.render(ctx);
+    if (router.currentName === 'home') drawGuide(ctx); // (Milestone 34: the glow and Rosie's line; never with a pop-up)
     if (router.currentName === 'home') drawBigBeat(ctx);
     if (ceremony.active) ceremony.render(ctx); // (Milestone 32b: the inspectors, the Open Day, the Awards Evening)
     else if (endingPages.active) endingPages.render(ctx); // (Milestone 33: the Year-16 ending's pages)
@@ -356,6 +361,7 @@ function openRun(n, data) {
   vfx.clear();
   carePops.clear();
   dayBeat.current = null;
+  openGuide(data); // (Milestone 34)
 }
 // The run save: the page's campaign data with the world's clock and residents written in (and the slot's summary).
 function saveRun() {
@@ -365,6 +371,7 @@ function saveRun() {
   o.data = { ...o.data, ...o.world.serialize(), date: { year: c.year, month: c.month, day: c.day } };
   o.data.economy = { ...(o.data.economy ?? ECONOMY_START), credits: o.world.ledger.balance }; // (the ledger is the truth; this is the summary)
   o.world.achievements?.flush(); // (Milestone 32: records that only grew go to the account store with the run save)
+  o.data.guide = guide.save(); // (Milestone 34: the first-week guide's progress)
   return campaigns.save(o.n, o.data);
 }
 // Autosave (core/Autosave): the series cadence (every game day, a rolling save, and when the app goes to the
@@ -511,6 +518,7 @@ const menuScreen = createMenuScreen({
   onSlots: () => router.go('slots', { mode: 'browse' }),
   onNewGame: () => newGame(),
   onSettings: () => openSettings(), // (Milestone 25c: the full series list)
+  onMore: () => openMainExtras(), // (Milestone 34)
 });
 const slotsScreen = createSlotsScreen({
   layout,
@@ -615,7 +623,7 @@ const vfx = new VfxSystem({ assets, width: W, height: renderer.height, font: THE
 const dayBeat = createDayBeat();
 // Milestone 25c: the next-step hint line (core/ui/HintLine; the rules are hintRules() below, first match wins)
 // (Milestone 32c: Rosie Hart gives the next-step hints)
-const hintLine = new HintLine({ rect: () => homeScreen.rectOf('hint'), rules: hintRules().map((r) => ({ ...r, text: typeof r.text === 'function' ? () => guideSays(r.text()) : guideSays(r.text) })), quiet: () => !open || !!spawn || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || settings.get('showHints') === false || !!bigBeat || ceremony.active || endingPages.active });
+const hintLine = new HintLine({ rect: () => homeScreen.rectOf('hint'), rules: hintRules().map((r) => ({ ...r, text: typeof r.text === 'function' ? () => guideSays(r.text()) : guideSays(r.text) })), quiet: () => !open || !!spawn || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || settings.get('showHints') === false || !!bigBeat || ceremony.active || endingPages.active || guide.showing }); // (Milestone 34: quiet while Rosie's guide shows a step)
 const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it), onWings: () => openWings(), hint: hintLine, prefs: { nameTags: () => settings.get('nameTags') !== false, taskMarkers: () => settings.get('taskMarkers') !== false, lowFx } });
 const carePops = createCarePops({ bus, fxOn: () => fxOn(), world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused && !lowFx() }); // (Milestone 25c: Low graphics — no pops)
 // The end of each day: the medium beat ("Day 3 — all routine care done" / "2 tasks missed").
@@ -688,6 +696,7 @@ function tickMoments(dt) {
   if (cur) presentMoment(cur, ev);
 }
 function presentMoment(m, ev) {
+  if (m.choice?.kind === 'guide') return showGuideWelcome(m, ev); // (Milestone 34: Rosie's first card, in the director's queue)
   if (m.ending && openEnding(m.ending)) return void haptics.medium(); // (Milestone 33: the Year-16 / Living Legacy ceremony)
   if (m.ceremony && ceremony.show(m.ceremony)) return void haptics.medium(); // (Milestone 32b: one tap skips, the next closes)
   if (m.weight === 'big') bigBeat = { uid: m.uid, title: m.title ?? '', text: m.text, art: m.art, badge: m.badge ?? null, aura: !!m.aura, confetti: m.kind === 'quality:award', age: 0 };
@@ -767,12 +776,21 @@ function openResidents() {
           const room = w.placed.find((x) => x.defId === 'F03');
           if (room) openHomeSheet(room.id);
         } }] },
-        { title: 'Admissions', columns: 1, buttons: [{ id: 'admissions', label: 'Admissions', sub: `${adm.board.length} applying · ${adm.waiting.length} on the waiting list`, icon: CARE_ICONS.admissions, badge: adm.board.length || null, accent: COL.action, onTap: () => openAdmissions() }] },
+        { title: 'Admissions', columns: 1, buttons: [{ id: 'admissions', label: 'Admissions', sub: `${adm.board.length} applying · ${adm.waiting.length} on the waiting list`, icon: CARE_ICONS.admissions, badge: adm.board.length || null, accent: COL.action, onTap: () => openAdmissions() }, ...readyApplicants(w)] },
         ...(debug.enabled && !spawn ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'debug:spawn60', label: 'Spawn all 60', sub: 'A test home (never saved): everyone comes in, walks to a spot, has their card opened once, then it clears', accent: COL.progress, onTap: () => startSpawnCheck() }] }] : []),
       ],
     };
   });
 }
+// Milestone 34 (UI audit): applicants who can move in now, straight under Care (two taps to their card, not three).
+function readyApplicants(w) {
+  const ctx = admitCtxNow();
+  return w.admissions.board.filter((a) => w.admissions.canAdmit(a, ctx).ok).slice(0, CARE_READY_SHOWN).map((a) => {
+    const def = w.admissions.defOf(a);
+    return { id: `app:${a.id}`, label: `${def.name}, ${def.age}`, sub: `Ready to move in · ${def.support} · ${stayWords(def, a.stayDays)}`, icon: def.art, iconCrop: PORTRAIT_CROP, accent: COL.good, onTap: () => openApplicant(a.id) };
+  });
+}
+const CARE_READY_SHOWN = 3;
 // Staff (Milestone 7): the roster sheet. Three shift columns and Off, each with who is on it (portrait + role badge);
 // tap someone, then a column, to move them. A Safe Coverage bar per shift (green ≥ 100%, amber 80–99%, red below), the
 // warnings, a Float toggle and card per team member, the Night on-call flag and the coverage log.
@@ -1019,6 +1037,7 @@ function openSlotPicker(dow, slot) {
         const r = w.setSlot(dow, slot, a.id);
         message = r.ok ? null : r.reason;
         if (r.ok) {
+          bus.emit('guide:activity', { activity: a.id }); // (Milestone 34)
           autosave.request('activities');
           openActivities();
         }
@@ -1077,6 +1096,7 @@ function openInbox() {
           const r = w.answerNotice(n.uid, true);
           message = r.ok ? null : r.reason;
           if (r.ok) autosave.request('inbox');
+          if (r.ok) bus.emit('guide:activity', { activity: n.def.activity }); // (Milestone 34: a booked visitor activity counts)
         } },
         { id: `notice:decline:${n.uid}`, label: 'Decline', sub: 'Politely, with thanks', accent: COL.progress, onTap: () => {
           w.answerNotice(n.uid, false);
@@ -1574,6 +1594,7 @@ function openQuality(tab = null) {
     const low = SCORES.reduce((m, sc) => (s[sc.id] < s[m.id] ? sc : m), SCORES[0]);
     return { title: 'Quality', subtitle: `Rank ${w.quality.rank} · ${w.quality.wonIds().length} accreditation${w.quality.wonIds().length === 1 ? '' : 's'} · lowest: ${low.name} ${Math.round(s[low.id])}`, art: QUALITY_ART.icon, accent: accentNow(), tabs: qualityTabs(w) };
   });
+  qualityBuilder = sheet.builder; // (Milestone 34: closing it counts as reading it — the guide's last step)
   if (tab) sheet.setTab(tab);
 }
 function openScoreParts() {
@@ -3358,6 +3379,7 @@ function openLedger() {
   });
 }
 function openTopSheet(id) {
+  if (id === 'help') return openHelp(); // (Milestone 34: the Help archive)
   const t = TOP_SHEETS[id];
   // (Milestone 25c: Help always reaches Settings and the Menu, even with the Menu button turned off)
   const more = id === 'help' ? [{ columns: 2, buttons: [
@@ -3366,6 +3388,15 @@ function openTopSheet(id) {
     { id: 'help:credits', label: 'Credits', sub: 'Who made CAREWORKS', icon: BRAND.title, accent: COL.progress, onTap: () => openCredits() }, // (Milestone 28b)
   ] }] : [];
   sheet.open(() => ({ title: t.title, subtitle: t.text, accent: COL.progress, sections: open ? more : more.map((x) => ({ ...x, columns: 1, buttons: x.buttons.filter((b) => b.id !== 'help:menu') })) }));
+}
+// Milestone 34 (UI audit, bible §4): the Main Menu's Records / Memory Book, Help and Credits / Legal — one sheet, each a tap.
+function openMainExtras() {
+  sheet.open(() => ({ title: 'Records, Help & Credits', subtitle: 'Kept on this device, for every home', art: MENU_TEXT.icon, accent: COL.progress, sections: [{ columns: 1, buttons: [
+    { id: 'main:book', label: BOOK.title, sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} · kept for good across every home`, icon: 'memory_book_emblem', accent: COL.progress, onTap: () => openMemoryBook() },
+    { id: 'main:help', label: HELP_TEXT.title, sub: 'Short pages on running the home', icon: GUIDE_ART, accent: COL.progress, onTap: () => openHelp() },
+    { id: 'main:credits', label: 'Credits', sub: 'Who made CAREWORKS', icon: BRAND.title, accent: COL.progress, onTap: () => openCredits() },
+    { id: 'main:legal', label: SETTINGS_TEXT.legal, sub: SETTINGS_TEXT.legalLine, icon: 'care_ui_28', accent: COL.progress, onTap: () => dialog.show({ title: SETTINGS_TEXT.legal, body: SETTINGS_TEXT.legalBody, buttons: [{ id: 'ok', label: 'OK', accent: COL.progress }] }) },
+  ] }] }));
 }
 // Milestone 28b: the Credits, closed by the series end mark (care_brand_07) as the sheet's picture.
 function openCredits() {
@@ -4264,6 +4295,241 @@ function inboxCountNow() {
   return inboxBase() + (open?.world?.events?.unread().length ?? 0); // (Milestone 28: the waiting choices plus every unread line — equipment, results, care stages… are lines now)
 }
 
+// ---------------------------------------------------------------------------
+// Milestone 34 — Rosie's first-week guide (core/GuideSystem through src/systems/guide.js, data/guide.js): five steps as
+// next-step hints, one at a time, each with a soft glow on the button to tap (in the home: a bottom-bar slot; in a
+// sheet: the button the step needs, scrolled into view; any other sheet: its ✕). A step finishes itself when the player
+// does the thing, any way they like. Never a pause, never a blocked tap, nothing while a pop-up is up; the first card
+// waits its turn in the event director's queue like every other pop-up.
+const guideMark = createGuideMark();
+const guideFree = () => !!open && !spawn && router.currentName === 'home' && !homeScreen.buildMode && !dialog.active && !memorial.active && !ceremony.active && !endingPages.active && !bigBeat && !loop.paused && !textPrompt.active && !(open.world.events?.showing?.weight === 'blocking');
+const guide = createFirstWeekGuide({
+  bus,
+  canShow: guideFree,
+  applies: (s) => (s.when === 'admit' ? !!open && open.world.freeRooms().length > 0 && open.world.admissions.board.length > 0 : true),
+});
+let qualityBuilder = null; // the Quality sheet while it is open (closing it = read)
+let shiftsOk = null; // every shift has someone on it (the shifts step's event fires when it becomes true)
+let guideTargetId = null; // the button the glow is on (scrolled into view once, when it changes)
+let lastHintId = null;
+bus.on('care:plan', () => bus.emit('guide:plan'));
+bus.on('care:review', () => bus.emit('guide:plan'));
+bus.on('guide:done', () => open && autosave.request('guide'));
+// A home opens: its saved guide, or a fresh one — off for a New Game+ home and for a player who has finished (or
+// skipped) it before; on, with Rosie's welcome card queued, for everyone else.
+function openGuide(data) {
+  guide.load(guideStart({ saved: data.guide ?? null, ngPlus: data.ngPlus ?? 0, finishedBefore: !!settings.get('guideDone') }));
+  shiftsOk = null;
+  guideTargetId = null;
+  qualityBuilder = null;
+  lastHintId = null;
+  if (guide.welcome !== 'done' && !guideCardWaiting()) {
+    open.world.events.commit('facility', 'guide', { weight: 'blocking', title: GUIDE_TEXT.speaker, text: GUIDE_TEXT.welcome, choice: { kind: 'guide' } });
+    guide.welcome = 'asked';
+  }
+}
+const guideCardWaiting = () => {
+  const ev = open?.world?.events;
+  return !!ev && (ev.active?.choice?.kind === 'guide' || ev.waiting.some((x) => x.choice?.kind === 'guide'));
+};
+// The director hands the welcome card over when nothing else is up: Show me, or Skip guide (tapping outside = Show me).
+function showGuideWelcome(m, ev) {
+  const answer = (skip) => {
+    ev.ack(m.uid);
+    if (skip) {
+      guide.skip();
+      settings.set('guideDone', true); // (a player who skips it knows their way: the next home starts with it off)
+    } else guide.turnOn();
+    autosave.request('guide');
+  };
+  dialog.show({ title: m.title, body: m.text, art: GUIDE_ART, onCancel: () => answer(false), buttons: [
+    { id: 'guide:show', label: GUIDE_TEXT.showMe, accent: COL.action, onTap: () => answer(false) },
+    { id: 'guide:skip', label: GUIDE_TEXT.skip, accent: COL.progress, onTap: () => answer(true) },
+  ] });
+}
+const GUIDE_ART = 'care_ui_28';
+function tickGuide(dt) {
+  guideMark.update(dt);
+  if (!open || spawn) return;
+  const w = open.world;
+  const ok = SHIFT_IDS.every((sid) => w.team.some((q) => w.roster.shiftOf(q.id)?.id === sid && !w.roster.isAgency?.(q.id)));
+  if (ok !== shiftsOk) {
+    shiftsOk = ok;
+    if (ok) bus.emit('guide:shifts');
+  }
+  if (qualityBuilder && sheet.builder !== qualityBuilder) {
+    qualityBuilder = null;
+    bus.emit('guide:quality');
+  }
+  guide.update();
+  if (guide.finished && !guide.ended) {
+    guide.ended = true;
+    settings.set('guideDone', true);
+    w.events.commit('facility', 'guideDone', { weight: 'medium', text: guideSays(GUIDE_TEXT.done), good: true });
+    autosave.request('guide');
+  }
+  // every next-step hint Rosie gives is kept for Help
+  const h = hintLine.current;
+  if (h && h.id !== lastHintId) {
+    lastHintId = h.id;
+    if (guide.noteHint(h.id, typeof h.text === 'function' ? h.text() : h.text)) autosave.request('guide');
+  } else if (!h) lastHintId = null;
+}
+// '*' buttons in data/guide.js: which one, given what the sheet shows (ids) and the home.
+const GUIDE_PICK = {
+  'app:*': (ids) => {
+    const w = open.world;
+    const a = w.admissions.board.find((x) => ids.includes(`app:${x.id}`) && w.admissions.canAdmit(x, admitCtxNow()).ok);
+    return a ? { id: `app:${a.id}` } : null;
+  },
+  'resident:*': (ids) => {
+    const w = open.world;
+    const here = w.residents.filter((p) => !p.state.guest && !p.state.leaving && ids.includes(`resident:${p.id}`));
+    const p = [...here].reverse().find((x) => x.state.review?.day == null) ?? here[here.length - 1];
+    return p ? { id: `resident:${p.id}`, arg: first(p.name) } : null;
+  },
+  'roster:*': (ids) => {
+    if (rosterPick) return null;
+    const w = open.world;
+    const founder = open.data.facility.founder?.id;
+    const on = (sid) => w.team.filter((q) => w.roster.shiftOf(q.id)?.id === sid && !w.roster.isAgency?.(q.id));
+    const from = [...SHIFT_IDS].sort((a, b) => on(b).length - on(a).length)[0];
+    const pick = [...on(from)].reverse().find((q) => q.id !== founder && ids.includes(`roster:${from}:${q.id}`)) ?? on(from).find((q) => ids.includes(`roster:${from}:${q.id}`));
+    return on(from).length > 1 && pick ? { id: `roster:${from}:${pick.id}`, arg: first(pick.name) } : null;
+  },
+  'lane:*': (ids) => {
+    if (!rosterPick) return null;
+    const w = open.world;
+    const sid = SHIFT_IDS.find((x) => !w.team.some((q) => w.roster.shiftOf(q.id)?.id === x && q.id !== rosterPick));
+    return sid && ids.includes(`lane:${sid}`) ? { id: `lane:${sid}`, arg: SHIFTS[sid].name } : null;
+  },
+  'slot:*': (ids) => {
+    const w = open.world;
+    const tt = w.activities.timetable();
+    const today = ((w.clock.totalDays % 7) + 7) % 7;
+    const hour = w.hour ?? 0;
+    const id = ids.find((x) => {
+      const m = /^slot:(\d):(\w+)$/.exec(x);
+      if (!m || tt[+m[1]][m[2]]) return false;
+      return !(+m[1] === today && hour >= TIMETABLE.slots[m[2]].at); // (not a slot already past today)
+    });
+    return id ? { id } : null;
+  },
+  'pick:*': (ids) => {
+    const w = open.world;
+    const here = w.residents.filter((r) => !r.state.leaving && !r.state.guest);
+    const keen = (a) => here.filter((r) => ['love', 'like'].includes(w.feelingOf(r.id, a.id))).length;
+    const a = SCHEDULABLE.filter((x) => ids.includes(`pick:${x.id}`)).sort((x, y) => keen(y) - keen(x))[0];
+    return a ? { id: `pick:${a.id}` } : null;
+  },
+};
+// Where the glow goes now, and what Rosie says: inside a sheet the deepest step button there; else the sheet's ✕; in
+// the home, the step's bottom-bar slot.
+function guideTarget() {
+  const s = guide.step;
+  if (!s || !open) return null;
+  if (sheet.active) {
+    const ids = (sheet.rects ?? []).map((x) => x.id);
+    for (const p of s.path) {
+      let id = p.button;
+      let arg = null;
+      if (id === 'close:quality') {
+        if (qualityBuilder && sheet.builder === qualityBuilder) return { id, rect: sheet.closeRect(), say: p.say };
+        continue;
+      }
+      if (id.endsWith('*')) {
+        const r = GUIDE_PICK[id]?.(ids);
+        if (!r) continue;
+        id = r.id;
+        arg = r.arg ?? null;
+      } else if (!ids.includes(id)) continue;
+      return { id, scroll: id, rect: sheet.buttonRect(id), say: typeof p.say === 'function' ? p.say(arg) : p.say };
+    }
+    return { id: 'close', rect: sheet.closeRect(), say: GUIDE_TEXT.close };
+  }
+  return { id: `home:${s.home}`, rect: homeScreen.rectOf(s.home), say: s.text, home: s.home };
+}
+function drawGuide(ctx) {
+  const g = guide.showing ? guideTarget() : null;
+  if (!g) return void guideMark.hide();
+  if (g.scroll && g.id !== guideTargetId) sheet.scrollTo(g.scroll);
+  guideTargetId = g.id;
+  guideMark.render(ctx, { target: g.rect, text: guideSays(g.say), lineRect: homeScreen.rectOf('hint') });
+}
+// Rosie's line takes a tap like the hint line: in the home it opens the step's place; over a sheet it does nothing.
+router.layers.unshift({
+  get active() {
+    return router.currentName === 'home' && guide.showing && !!guideMark.lineRect;
+  },
+  handleInput: (hook, p) => {
+    if (hook !== 'onTap' || !hitRect(p, guideMark.lineRect)) return false;
+    if (!sheet.active && guide.step) openBottom(guide.step.home);
+    return true;
+  },
+});
+
+// The Help archive (Menu → Help, the top bar's Help, Settings → Help): one short page per main system, Rosie's hints
+// once seen, the guide's switch. Every page opens in one tap and closes with one tap (✕).
+function openHelp() {
+  sheet.open(() => {
+    const seen = [...guide.seenSteps().map((s) => ({ text: `${s.title}: ${guideStepText(s.id)}`, color: COL.actionDark })), ...guide.hints.map((h) => ({ text: h.text, color: COL.textMuted }))];
+    const sections = [
+      { lines: [{ text: HELP_TEXT.intro, color: COL.textMuted }] },
+      { columns: 1, buttons: HELP_TOPICS.map((t) => ({ id: `help:${t.id}`, label: t.title, sub: t.line, icon: t.icon, accent: COL.progress, onTap: () => openHelpPage(t.id) })) },
+      { title: HELP_TEXT.hintsTitle, lines: seen.length ? seen : [{ text: HELP_TEXT.hintsNone, color: COL.textMuted }] },
+    ];
+    if (open) sections.push({ columns: 1, buttons: [guideButton()] });
+    sections.push({ columns: 2, buttons: [
+      { id: 'help:settings', label: SETTINGS_TEXT.title, sub: 'Sound, graphics, text, the Menu button and hints', icon: MENU_TEXT.icon, accent: COL.progress, onTap: () => openSettings() },
+      ...(open ? [{ id: 'help:menu', label: MENU_TEXT.title, sub: 'Every screen in the home', icon: MENU_TEXT.icon, accent: COL.progress, onTap: () => openNavMenu() }] : []),
+      { id: 'help:credits', label: 'Credits', sub: 'Who made CAREWORKS', icon: BRAND.title, accent: COL.progress, onTap: () => openCredits() }, // (Milestone 28b)
+    ] });
+    return { title: HELP_TEXT.title, subtitle: HELP_TEXT.subtitle, art: GUIDE_ART, accent: COL.progress, sections };
+  });
+}
+const guideStepText = (id) => GUIDE_STEPS_TEXT[id] ?? '';
+const GUIDE_STEPS_TEXT = Object.fromEntries(guide.core.steps.map((s) => [s.id, s.text]));
+function openHelpPage(id) {
+  const t = helpTopicById(id);
+  if (!t) return openHelp();
+  sheet.open(() => ({ title: t.title, subtitle: HELP_TEXT.title, art: t.icon, accent: COL.progress, sections: [
+    { lines: t.paras.map((x) => ({ text: x })) },
+    { columns: 1, buttons: [{ id: 'help:back', label: HELP_TEXT.back, accent: COL.progress, onTap: () => openHelp() }] },
+  ] }));
+}
+// Show guide again (Help and Settings): Rosie walks the first week again from the start in this home.
+function guideButton() {
+  return { id: 'guide:again', label: GUIDE_TEXT.again, sub: GUIDE_TEXT.againLine, icon: GUIDE_ART, accent: COL.action, onTap: () => {
+    guide.restart();
+    shiftsOk = null;
+    sheet.close();
+    autosave.request('guide');
+  } };
+}
+const GUIDE_STEPS_COUNT = guide.core.steps.length;
+// Settings → Menu and hints: this home's guide (Off / On) and Show guide again.
+function guideSettingsSection() {
+  if (!open) return { title: GUIDE_TEXT.settingTitle, lines: [{ text: GUIDE_TEXT.settingNoHome, color: COL.textMuted }] };
+  return {
+    title: GUIDE_TEXT.settingTitle,
+    lines: [{ text: `${GUIDE_TEXT.settingLine} ${GUIDE_TEXT.progress(guide.doneCount, GUIDE_STEPS_COUNT)}.`, color: COL.textMuted }],
+    columns: 2,
+    buttons: [
+      { id: 'set_guide_off', label: `${guide.off ? '✓ ' : ''}Off`, accent: guide.off ? COL.good : COL.progress, onTap: () => {
+        guide.turnOff();
+        autosave.request('guide');
+      } },
+      { id: 'set_guide_on', label: `${guide.off ? '' : '✓ '}On`, accent: guide.off ? COL.progress : COL.good, onTap: () => {
+        guide.turnOn();
+        autosave.request('guide');
+      } },
+    ],
+  };
+}
+function guideAgainSection() {
+  return open ? { columns: 1, buttons: [{ ...guideButton(), id: 'set_guide_again' }] } : null;
+}
+
 // The next-step hint line (data/menu.js NEXT_HINTS): the first that holds is shown; tapping it opens the right sheet.
 function hintRules() {
   const W = () => open.world;
@@ -4306,11 +4572,12 @@ function openSettings() {
     for (const d of SETTINGS.filter((x) => !x.extra)) {
       heading(d.group);
       sections.push(optionRow(d));
+      if (d.id === 'showHints') sections.push(guideSettingsSection(), ...[guideAgainSection()].filter(Boolean)); // (Milestone 34: this home's first-week guide)
     }
     heading(SETTINGS_TEXT.helpGroup);
     const ok = [{ id: 'ok', label: 'OK', accent: COL.progress }];
     sections.push({ columns: 1, buttons: [
-      { id: 'setHelp', label: SETTINGS_TEXT.help, sub: SETTINGS_TEXT.helpLine, icon: 'care_ui_28', accent: COL.progress, onTap: () => openTopSheet('help') },
+      { id: 'setHelp', label: SETTINGS_TEXT.help, sub: SETTINGS_TEXT.helpLine, icon: 'care_ui_28', accent: COL.progress, onTap: () => openHelp() },
       { id: 'setLegal', label: SETTINGS_TEXT.legal, sub: SETTINGS_TEXT.legalLine, icon: 'care_ui_28', accent: COL.progress, onTap: () => dialog.show({ title: SETTINGS_TEXT.legal, body: SETTINGS_TEXT.legalBody, buttons: ok }) },
       { id: 'setCredits', label: SETTINGS_TEXT.credits, sub: SETTINGS_TEXT.creditsLine, icon: 'care_reward_05', accent: COL.progress, onTap: () => dialog.show({ title: SETTINGS_TEXT.credits, body: SETTINGS_TEXT.creditsBody, buttons: ok }) },
     ] });
@@ -4541,9 +4808,38 @@ router
   .register('home', homeScreen)
   .register('test', createTestScreen({ renderer, layout, assets, openSheet: () => sheet.open(testSheet), onTapLogged: (p) => window.__cw?.taps.push({ x: p.x, y: p.y }) }));
 
+// Milestone 34: a read-only look at what a player sees of the guide (the fresh-tester check runs with no debug switch:
+// it taps only where this says the glow, Rosie's card or a pop-up's button is). It changes nothing. CSS pixels.
+window.__cwGuide = () => {
+  const box = renderer.cssBox;
+  const sc = renderer.scale;
+  const css = (r) => (r ? { x: box.x + r.x * sc, y: box.y + r.y * sc, w: r.w * sc, h: r.h * sc } : null);
+  const g = guide.showing && router.currentName === 'home' ? guideTarget() : null;
+  return {
+    screen: router.currentName,
+    home: !!open,
+    day: open?.world.clock.totalDays ?? null,
+    hour: open ? Math.round(open.world.hour * 10) / 10 : null,
+    showing: !!g,
+    step: guide.step?.id ?? null,
+    done: open ? guide.core.state.done.slice() : [],
+    off: guide.off,
+    welcome: guide.welcome,
+    ended: guide.ended,
+    say: g ? guideSays(g.say) : null,
+    target: css(g?.rect ?? null),
+    targetId: g?.id ?? null,
+    sheet: sheet.active ? { title: sheet.menu?.title ?? '', close: css(sheet.closeRect()) } : null,
+    dialog: dialog.active ? { title: dialog.spec.title ?? '', buttons: (dialog.spec.buttons ?? []).map((b) => ({ id: b.id, label: b.label, rect: css(dialog.buttonRect(b.id)) })) } : null,
+    popup: !!bigBeat || ceremony.active || endingPages.active || memorial.active,
+    hint: hintLine.current ? (typeof hintLine.current.text === 'function' ? hintLine.current.text() : hintLine.current.text) : null,
+    helpSeen: guide.seenSteps().map((s) => s.id),
+  };
+};
+
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { endingPages, endingLog, openEnding, openEndingSheet, openNgPlus, openNgPicks, get ngPlan() { return ngPlan; }, ngSlotPicked, startNgPlus, openTrophyCase, ceremony, ceremonyLog, openAchievements, openHomeRecords, openHallOfFame, get achievementsSaving() { return achievementsSaving; }, openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { guide, guideTarget, get guideMark() { return guideMark; }, openHelp, openHelpPage, get qualityBuilder() { return qualityBuilder; }, get rosterPick() { return rosterPick; }, endingPages, endingLog, openEnding, openEndingSheet, openNgPlus, openNgPicks, get ngPlan() { return ngPlan; }, ngSlotPicked, startNgPlus, openTrophyCase, ceremony, ceremonyLog, openAchievements, openHomeRecords, openHallOfFame, get achievementsSaving() { return achievementsSaving; }, openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, openAdmissions, openMainExtras, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

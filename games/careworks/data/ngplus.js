@@ -57,6 +57,7 @@ export const NG_PLUS = {
       { id: 'ending', label: 'The Year-16 ending ceremony' },
       { id: 'homeLife', label: 'Activities, meals, mobility, memory support, families and community (this home’s)' },
       { id: 'ngPlusStart', label: 'The last New Game+ start', hidden: true },
+      { id: 'guide', label: 'The first-week guide (a New Game+ home starts with it off)', hidden: true }, // (Milestone 34)
       { id: 'seed', label: 'Random seed', hidden: true },
       { id: 'playSec', label: 'Play time', hidden: true },
       { id: 'level', label: 'New Game+ level (the new home is one higher)', hidden: true },
@@ -93,6 +94,7 @@ export const RUN_FIELDS = {
   layout: 'layout',
   playSec: 'playSec',
   ngPlus: 'level',
+  guide: 'guide', // (Milestone 34)
 };
 export const CARE_FIELDS = {
   tasks: 'care', nextId: 'care', gen: 'care', bells: 'care', relations: 'care', friendships: 'care', keyWorkers: 'care', counts: 'care', plans: 'care', reviews: 'care', rewards: 'care',

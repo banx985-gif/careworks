@@ -18,6 +18,10 @@
 import { Rng } from '../../../../core/Rng.js';
 import { KINDS, CAPS, INBOX, NEW_EVENTS, categoryById } from '../../data/events.js';
 
+// Choices that end only when the player acknowledges them (no system of their own settles them): the memorial moment,
+// and (Milestone 34) Rosie's first-week guide card.
+const ACKED = ['memorial', 'guide'];
+
 export function newEventsState(day = 0) {
   return {
     rng: null, // the director's own stream (core/Rng state), saved: a reload replays the same rolls
@@ -162,16 +166,16 @@ export function createEvents({ state, seed = 'careworks', now = () => 0, today =
   function tick() {
     const t = now();
     for (const w of [...s.waiting]) {
-      if (w.choice?.kind !== 'memorial' && resolved(w.choice)) {
+      if (!ACKED.includes(w.choice?.kind) && resolved(w.choice)) {
         s.waiting = s.waiting.filter((x) => x !== w);
         s.settled.push({ uid: w.uid, kind: w.choice?.kind, day: today(), waited: Math.round((t - w.at) * 10) / 10 });
         if (s.settled.length > 20) s.settled.shift();
       }
     }
     const a = s.active;
-    if (a && a.choice?.kind !== 'memorial' && resolved(a.choice)) end(a, 'settled');
+    if (a && !ACKED.includes(a.choice?.kind) && resolved(a.choice)) end(a, 'settled');
     // a choice the player has seen and left in the Inbox lets the next one come after a while (it stays answerable)
-    else if (a && a.seen && a.choice?.kind !== 'memorial' && t - a.seenAt >= CAPS.releaseHours) end(a, 'inInbox');
+    else if (a && a.seen && !ACKED.includes(a.choice?.kind) && t - a.seenAt >= CAPS.releaseHours) end(a, 'inInbox');
     s.queue = s.queue.filter((q) => q.weight === 'big' || t - q.at <= (CAPS.wait[q.weight] ?? 12));
   }
   function end(a, how) {
@@ -226,7 +230,7 @@ export function createEvents({ state, seed = 'careworks', now = () => 0, today =
     a.seen = true;
     a.seenAt = now();
     if (s.showing?.uid === uid) s.showing = null;
-    if (a.choice?.kind === 'memorial') end(a, 'ack');
+    if (ACKED.includes(a.choice?.kind)) end(a, 'ack');
     return true;
   }
   const ack = (uid) => later(uid);

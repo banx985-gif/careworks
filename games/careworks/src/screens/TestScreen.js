@@ -103,7 +103,7 @@ function drawFrame(ctx, W, H, sr) {
   ctx.lineWidth = 8;
   ctx.strokeRect(4, 4, W - 8, H - 8);
   ctx.fillStyle = C.bad;
-  ctx.font = 'bold 26px ui-monospace, Consolas, monospace';
+  ctx.font = 'bold 28px ui-monospace, Consolas, monospace'; // (Milestone 34: never below the small size)
   const m = 16;
   ctx.textBaseline = 'top';
   ctx.textAlign = 'left';

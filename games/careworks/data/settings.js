@@ -29,6 +29,7 @@ export const SETTINGS = [
 export const SETTINGS_DEFAULTS = {
   muted: false, music: 75, musicMuted: false, sfx: 100, sfxMuted: false, haptics: true, fpsMode: 'auto', textSize: 'normal', reducedFlashes: false, screenShake: 'normal',
   showMenu: true, showHints: true, nameTags: true, taskMarkers: true, bellSound: true,
+  guideDone: false, // (Milestone 34: this player has finished or skipped Rosie's first-week guide — a new home starts with it off; not a row)
 };
 export const SETTINGS_KEY = 'careworks:settings';
 export const TEXT_SCALE = { normal: 1, large: 1.15, larger: 1.3 };
@@ -37,7 +38,7 @@ export const SETTINGS_TEXT = {
   subtitle: 'This device · every home',
   helpGroup: 'Help and about',
   help: 'Help / tutorial replay',
-  helpLine: 'How to run the home. The first-time guide comes in a later update.',
+  helpLine: 'Short pages on every part of the home, and Rosie’s hints',
   legal: 'Privacy & legal',
   legalLine: 'How your homes are kept',
   legalBody: 'CAREWORKS keeps your homes on this device. It has no account and collects no personal data of its own. Everyone in the home is fictional.',

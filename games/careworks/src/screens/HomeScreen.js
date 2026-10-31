@@ -1052,7 +1052,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = '#FFFFFF';
-      ctx.font = font(26, true);
+      ctx.font = font(THEME.size.small, true); // (Milestone 34 audit: the small size, as font() already gave)
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
       ctx.fillText(ROMAN[lv - 1], cx, cy + 2);

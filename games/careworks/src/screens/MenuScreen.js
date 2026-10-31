@@ -17,7 +17,7 @@ const GAP = 28;
 // continueInfo(): { n, summary } of the last-used slot, or null.
 const TITLE_H = 640; // the logo and the line under it
 
-export function createMenuScreen({ layout, assets = null, continueInfo, onContinue, onSlots, onNewGame, onSettings }) {
+export function createMenuScreen({ layout, assets = null, continueInfo, onContinue, onSlots, onNewGame, onSettings, onMore = null }) {
   const rects = {};
 
   function pass(ctx, tap) {
@@ -31,6 +31,7 @@ export function createMenuScreen({ layout, assets = null, continueInfo, onContin
       ['slots', 'Campaign Slots', onSlots, C.progress],
       ['new', 'New Game', onNewGame, li ? C.progress : C.action],
       ['settings', 'Settings', onSettings, C.progress],
+      onMore && ['more', 'Records, Help & Credits', onMore, C.progress], // (Milestone 34: bible §4's Records / Memory Book and Credits / Legal)
     ].filter(Boolean);
     const blockH = TITLE_H + 60 + rows.length * (BTN_H + GAP) + (li ? 60 : 0);
     let y = sr.y + Math.max(60, (sr.h - blockH) / 2 - 40);
@@ -98,7 +99,7 @@ export function createMenuScreen({ layout, assets = null, continueInfo, onContin
     render(ctx) {
       pass(ctx, null);
     },
-    // Screen rect of a button (tests): 'continue', 'slots', 'new', 'settings'.
+    // Screen rect of a button (tests): 'continue', 'slots', 'new', 'settings', 'more'.
     rectOf(id) {
       pass(null, null);
       return rects[id] ?? null;

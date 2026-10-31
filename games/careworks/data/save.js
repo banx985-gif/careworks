@@ -8,7 +8,7 @@ export const SAVE = {
   count: 4,
   prefix: 'campaign_',
   accountKey: 'account',
-  version: 34, // 2 = Milestone 2 (the clock and the residents' state), 3 = Milestone 3 (the staff), 4 = Milestone 4 (care
+  version: 35, // 2 = Milestone 2 (the clock and the residents' state), 3 = Milestone 3 (the staff), 4 = Milestone 4 (care
   // plans, tasks, call bells, familiarity), 5 = Milestone 5 (the Dining Room and Staff Room, the props, Credits / Care
   // Tokens), 6 = Milestone 6 (every resident, the 24 × 16 home, applicants, the ledger), 7 = Milestone 7 (three
   // shifts, floats, wings, on call, coverage history, agency hires), 8 = Milestone 8 (plan reviews, stale reasons,
