@@ -185,6 +185,7 @@ import { createSecrets, ensureSecretsState } from './secrets.js'; // (Milestone 
 import { createCareAchievements, ensureAchievementsState } from './achievements.js'; // (Milestone 32)
 import { createVerdicts, ensureVerdictsState } from './verdicts.js'; // (Milestone 32b)
 import { OPEN_DAY } from '../../data/verdicts.js';
+import { poolOf, CROWD_POOL, CROWD_SIZE, castById } from '../../data/cast.js'; // (Milestone 32c)
 import { stageById, EOL_STAGES, PACE, GOOD_CARE, COMFORT, SIGNAL, MEMORIAL, BOOK, PLAN as EOL_PLAN, WISHES } from '../../data/endOfLife.js';
 import { ensureEolState, ensureResidentEol, eligible as eolEligible, weeklyChance, stageLength, nextStage, newAcc, comfortOf, signalLift, familyResult, betterNote, wishesOf, timeAt } from './endOfLife.js';
 
@@ -1564,6 +1565,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (!s.counted) {
       s.counted = true;
       if (s.program === 'PRG04') partners?.record('fallsSession', { kind: 'balanceClass' });
+      if (act.id === 'communityVisit' || s.event) s.cast ??= new Rng(`${seed}:communityCast:${day}:${step.slot}`).shuffle(poolOf('community')).slice(0, 2); // (Milestone 32c: the volunteers who come)
       if (act.id === 'communityVisit' || s.event) partners?.record('communityActivity', { activity: act.id, event: s.event ?? null }); // (a visitor or community session — gardening is its own counter)
       if (act.id === 'gardening') partners?.record('gardenSession', {});
       // (Milestone 25c: a partner-hosted event held — the partner leaves a piece of care equipment)
@@ -2022,7 +2024,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     let at = VISIT.arriveFrom + rng.next() * (VISIT.arriveTo - VISIT.arriveFrom);
     if (party) at = Math.min(at, (dayStep(p, 'cards', day)?.at ?? 13.5) - 0.25); // (in time for the birthday tea)
     if (meeting) at = Math.min(at, MEETING.at);
-    const v = { id: `v${fh.nextId++}`, resident: p.id, day, at: absHour(day, at), phase: 'due', meeting, party, start: null, end: null, room: false, roomTile: null, greeter: null, favourite: null, communicatorPct: 0, task: null, follow: null, ...(openDay ? { openDay: true } : {}) };
+    // (Milestone 32c) who walks in once the series sprite sheets come: the family's visitor is picked once (seeded) and kept;
+    // a birthday party brings a small crowd
+    const rec = familyOf(p);
+    if (rec) rec.cast ??= new Rng(`${seed}:familyCast:${p.id}`).pick(poolOf('family'));
+    const cast = { cast: rec?.cast ?? null, ...(party ? { crowd: new Rng(`${seed}:partyCrowd:${p.id}:${day}`).shuffle(CROWD_POOL).slice(0, CROWD_SIZE.party) } : {}) };
+    const v = { id: `v${fh.nextId++}`, resident: p.id, day, at: absHour(day, at), phase: 'due', meeting, party, ...cast, start: null, end: null, room: false, roomTile: null, greeter: null, favourite: null, communicatorPct: 0, task: null, follow: null, ...(openDay ? { openDay: true } : {}) };
     fh.visits.push(v);
     return v;
   }
@@ -5037,6 +5044,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       st.level = levelOfNeeds(app.needs);
       st.outcomes = { ...app.outcomes };
       st.admittedDay = clock.totalDays;
+      // (Milestone 32c) Arthur Bell looks round with his family on an admission day (a figure only: never a resident)
+      care.tours = [...(care.tours ?? []), { day: clock.totalDays, resident: def.id, cast: castById('arthur').id }].slice(-20);
       // Milestone 9: the stay's length from their application, their tags; a returning resident is marked
       st.stay = newStay(def, app.stayDays ?? stayLengthFor(def, seed, app.rolls?.[0] ?? 0), clock.totalDays);
       st.tags = [...(def.tags ?? [])];

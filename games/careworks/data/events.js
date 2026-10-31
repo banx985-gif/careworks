@@ -23,6 +23,8 @@ import { residentById } from './residents.js';
 import { stageById } from './endOfLife.js';
 import { FIRST_ART, FIRSTS_TEXT, REWARD_ART, PRESTIGE_RANKS } from './artMoments.js';
 import { VERDICT_TEXT } from './verdicts.js';
+import { castFor } from './cast.js';
+const BUILDER = castFor('builder'); // (Milestone 32c: Bruno Kowalski builds the stages and the level-ups)
 
 // (Milestone 32b) An accreditation inspection's four inspectors, revealed one at a time before the result.
 const inspectionCeremony = (x, headline, lines, art) => (x.panel ? { kind: 'accreditation', title: `${x.name ?? accreditationById(x.id)?.name ?? 'Inspection'}: the inspection`, panel: x.panel, total: x.panel.reduce((t, p) => t + p.score, 0), max: 40, tier: null, headline, lines, art } : null);
@@ -103,12 +105,12 @@ export const KINDS = {
     const wings = (st?.wings ?? []).map((id) => wingById(id).short);
     return { weight: 'big', title: x.name, text: `Stage ${x.stage}: more floor and room for ${Math.min(st?.capacity ?? 0, LOGICAL_CAP)} residents${wings.length ? ` · the ${wings.join(' and ')} wings can be painted` : ''}`, art: x.art ?? 'care_event_06', good: true, opens: { type: 'develop' } };
   } },
-  'home:building': { cat: 'facility', inbox: false, make: (x) => ({ weight: 'medium', text: `Building Stage ${x.stage}: ${x.name} — the home carries on as usual`, good: true }) },
+  'home:building': { cat: 'facility', inbox: false, make: (x) => ({ weight: 'medium', text: `${BUILDER.name}'s team starts building Stage ${x.stage}: ${x.name} — the home carries on as usual`, good: true }) },
   'home:wing': { cat: 'facility', inbox: true, make: (x) => ({ weight: 'big', title: `The ${x.name} opens`, text: x.later ? `${x.hub} placed · ${x.later}` : `${x.hub} placed: the wing is ready for its residents and staff`, art: x.art, good: true, opens: { type: 'wings' } }) },
   'care:incident': { cat: 'emergency', inbox: true, make: (x) => ({ weight: 'blocking', title: x.name, text: `${x.name} (${SEVERITY.names[x.band]?.toLowerCase() ?? ''}): choose a response`, line: `${x.name} (${SEVERITY.names[x.band]?.toLowerCase() ?? ''}) began`, good: false, opens: { type: 'inbox' }, choice: { kind: 'incident', id: x.id } }) },
   'care:incidentEnd': { cat: 'emergency', inbox: true, make: (x) => ({ weight: 'quiet', text: `${x.name}: over — the after-report is in the Inbox`, good: true, opens: { type: 'inbox' } }) },
   'care:fall': { cat: 'emergency', inbox: false, make: (x) => ({ weight: 'medium', text: `${first(x.name)} had a fall: help is on the way`, good: false, opens: res(x.resident) }) },
-  'home:upgrading': { cat: 'facility', inbox: false, make: (x) => ({ weight: 'medium', text: `${x.name}: upgrading to Level ${LEVELS.names[x.level - 1]} — it carries on as usual`, good: true }) },
+  'home:upgrading': { cat: 'facility', inbox: false, make: (x) => ({ weight: 'medium', text: `${x.name}: ${BUILDER.name.split(' ')[0]} is upgrading it to Level ${LEVELS.names[x.level - 1]} — it carries on as usual`, good: true }) },
   'home:levelUp': { cat: 'facility', inbox: true, make: (x) => ({ weight: 'medium', text: `${x.name} is now Level ${LEVELS.names[x.level - 1]}`, good: true, haptic: true }) },
   'items:arrived': { cat: 'facility', inbox: true, make: (x) => ({ weight: 'quiet', text: x.item ? 'New care equipment in the store (Inbox)' : 'The equipment store is full (Inbox)', line: x.text ?? (x.item ? 'New care equipment in the store' : 'The equipment store is full'), good: !!x.item, opens: { type: 'itemStore' } }) },
   'care:notice': { cat: 'community', inbox: true, make: (x) => ({ weight: 'blocking', title: 'A community notice', text: 'A notice in the Inbox: accept or decline', line: 'A community notice: accept or decline', good: true, opens: { type: 'inbox' }, choice: { kind: 'notice', id: x.uid } }) },

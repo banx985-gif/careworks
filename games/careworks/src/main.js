@@ -84,6 +84,16 @@ import { ECONOMY_START } from '../data/balance.js';
 import { createCarePops, createDayBeat } from './ui/carePops.js';
 import { createCeremony } from './ui/ceremony.js'; // (Milestone 32b)
 import { panelOf, panelTotal } from './systems/verdicts.js';
+import { castFor, guideSays } from '../data/cast.js'; // (Milestone 32c: the series cast as names)
+// (Milestone 32c) A rival director's line (R07 Crown Haven, R08 once it appears) and a partner's rep.
+const directorWord = (peerId) => {
+  const c = castFor(peerId);
+  return c ? `${c.job.startsWith('Chair') ? 'Chair' : 'Director'}: ${c.name}` : null;
+};
+const repWord = (forId) => {
+  const c = castFor(forId);
+  return c ? `Your contact: ${c.name}, ${c.job.toLowerCase()}` : null;
+};
 import { INSPECTORS, inspectorById, tierById, VERDICT_TEXT, OPEN_DAY, AWARDS_EVENING } from '../data/verdicts.js';
 import { ASSETS } from '../data/assets.js';
 import { SAVE } from '../data/save.js';
@@ -595,7 +605,8 @@ const bottomBar = createBottomBar({
 const vfx = new VfxSystem({ assets, width: W, height: renderer.height, font: THEME.family, maxTexts: 4, maxEffects: 16 });
 const dayBeat = createDayBeat();
 // Milestone 25c: the next-step hint line (core/ui/HintLine; the rules are hintRules() below, first match wins)
-const hintLine = new HintLine({ rect: () => homeScreen.rectOf('hint'), rules: hintRules(), quiet: () => !open || !!spawn || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || settings.get('showHints') === false || !!bigBeat || ceremony.active });
+// (Milestone 32c: Rosie Hart gives the next-step hints)
+const hintLine = new HintLine({ rect: () => homeScreen.rectOf('hint'), rules: hintRules().map((r) => ({ ...r, text: typeof r.text === 'function' ? () => guideSays(r.text()) : guideSays(r.text) })), quiet: () => !open || !!spawn || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || settings.get('showHints') === false || !!bigBeat || ceremony.active });
 const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it), onWings: () => openWings(), hint: hintLine, prefs: { nameTags: () => settings.get('nameTags') !== false, taskMarkers: () => settings.get('taskMarkers') !== false, lowFx } });
 const carePops = createCarePops({ bus, fxOn: () => fxOn(), world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused && !lowFx() }); // (Milestone 25c: Low graphics — no pops)
 // The end of each day: the medium beat ("Day 3 — all routine care done" / "2 tasks missed").
@@ -1508,7 +1519,7 @@ function qualityTabs(w) {
   const benchSections = [
     { lines: [{ text: peers.length ? `Your home against the ${peers.length} peer home${peers.length === 1 ? '' : 's'} in the network. They are a yardstick only: they never take residents, staff or funding.` : 'No peer homes yet.', color: COL.textMuted }], bars: bench.map((b) => ({ label: b.name, value: b.home, color: scoreColour(b.home), text: `${Math.round(b.home)}`, tick: b.peerAvg ?? undefined })) },
     { title: 'Score by score', lines: bench.map((b) => ({ text: b.of ? `${b.name}: you ${Math.round(b.home)} · peers ${Math.round(b.peerAvg)} on average · best ${b.best.name} ${Math.round(b.best.v)}${b.ahead ? ` (${b.ahead} of ${b.of} ahead)` : ' (you lead)'}` : `${b.name}: you ${Math.round(b.home)}`, color: b.ahead ? COL.actionDark : COL.good })) },
-    { title: 'Peer homes', columns: 1, buttons: peers.map((p) => ({ id: `peer:${p.def.id}`, label: p.def.name, sub: `${p.def.identity} · strong in ${p.def.strength} · average ${Math.round(p.avg)}`, icon: p.def.logo, accent: COL.progress, onTap: () => openPeer(p.def.id) })) },
+    { title: 'Peer homes', columns: 1, buttons: peers.map((p) => ({ id: `peer:${p.def.id}`, label: p.def.name, sub: `${p.def.identity} · strong in ${p.def.strength} · average ${Math.round(p.avg)}${directorWord(p.def.id) ? ` · ${directorWord(p.def.id)}` : ''}`, icon: p.def.logo, accent: COL.progress, onTap: () => openPeer(p.def.id) })) },
     { title: 'Recognition table', lines: lastYear ? [{ text: `Year ${lastYear.year}: ${lastYear.table.map((r) => `${r.place}. ${nameOfPeer(r.id)} ${Math.round(r.avg)}`).join(' · ')}`, color: COL.actionDark }, { text: `All years (points): ${rec.table.map((r) => `${nameOfPeer(r.id)} ${r.points}`).join(' · ')}`, color: COL.textMuted }] : [{ text: 'The first table comes at the end of Year 1: every home placed by the average of its five scores.', color: COL.textMuted }] },
   ];
   const insp = [...Q.inspections()].reverse();
@@ -1599,7 +1610,7 @@ function openPeer(id) {
     const p = w?.quality.peers().find((x) => x.def.id === id);
     if (!p) return { title: '', sections: [] };
     const s = w.quality.scores();
-    return { title: p.def.name, subtitle: `${p.def.identity} · strong in ${p.def.strength} · in the network since Year ${p.def.year ?? w.clock.dateOf(p.joined).year}`, art: p.def.logo, accent: COL.progress, sections: [
+    return { title: p.def.name, subtitle: `${p.def.identity} · strong in ${p.def.strength} · in the network since Year ${p.def.year ?? w.clock.dateOf(p.joined).year}${directorWord(p.def.id) ? ` · ${directorWord(p.def.id)}` : ''}`, art: p.def.logo, accent: COL.progress, sections: [
       { lines: [{ text: p.def.adaptive ? 'A prestige benchmark: it keeps a step ahead of your home on every score. A yardstick, never a rival for your residents, staff or funding.' : 'A peer home in the benchmark network: a yardstick, never a rival for your residents, staff or funding.', color: COL.textMuted }], bars: SCORES.map((sc) => ({ label: sc.name, value: p.scores[sc.id], color: COL.progress, text: `${Math.round(p.scores[sc.id])}`, tick: s[sc.id] })) },
       { lines: [{ text: 'The mark on each bar is your home.', color: COL.textMuted }] },
     ] };
@@ -2902,6 +2913,7 @@ function openPartner(id) {
     const T = x.tier;
     const next = PARTNER_TIERS[Math.min(PARTNER_TIERS.length - 1, PARTNER_TIERS.indexOf(T) + 1)];
     const head = [{ text: `${d.theme} · relationship: ${T.name}`, color: COL.actionDark }, { text: `Perk: ${d.perks.map((k) => k.text).join(' · ')}${T.perkMult > 1 ? ` (× ${T.perkMult} at ${T.name})` : ''}`, color: COL.good }, { text: `Obligation: ${d.obligation.text}`, color: COL.actionDark }, { text: `Support: ${credits(T.supportPerMonth)} Credits a month while a deal runs${next !== T ? ` · at ${next.name}: perk × ${next.perkMult}, ${credits(next.supportPerMonth)} a month` : ''}`, color: COL.textMuted }];
+    if (repWord(d.id)) head.push({ text: repWord(d.id), color: COL.textMuted }); // (Milestone 32c)
     if (x.locked) head.unshift({ text: x.locked, color: COL.warn });
     if (d.pilot) head.push({ text: 'The pilot is offered to every resident here; only those who say yes take part, and they can still say no on the day. If nobody wants to, the deal simply isn’t met.', color: COL.textMuted });
     const hist = w.partners.history(20).filter((h) => h.id === id).slice(-4).reverse();
@@ -3049,7 +3061,7 @@ function offerSection(w, o, say) {
   const D = DEBT;
   if (o.kind === 'loan') {
     const owed = Math.round(D.loan.amount * (1 + D.loan.interestPct / 100));
-    return { title: 'Emergency Credit', lines: [{ text: `The home is in deep debt (${credits(w.ledger.balance)} Credits). A loan of ${credits(D.loan.amount)} now, repaid as ${D.loan.months} monthly payments of ${credits(Math.ceil(owed / D.loan.months))} (${D.loan.interestPct}% on top).`, color: COL.actionDark }, { text: 'Nobody is let go and nothing changes for the residents either way.', color: COL.textMuted }], columns: 2, buttons: [
+    return { title: 'Emergency Credit', lines: [{ text: `${castFor('bank').name} from the community bank has come to help.`, color: COL.textMuted }, { text: `The home is in deep debt (${credits(w.ledger.balance)} Credits). A loan of ${credits(D.loan.amount)} now, repaid as ${D.loan.months} monthly payments of ${credits(Math.ceil(owed / D.loan.months))} (${D.loan.interestPct}% on top).`, color: COL.actionDark }, { text: 'Nobody is let go and nothing changes for the residents either way.', color: COL.textMuted }], columns: 2, buttons: [
       { id: 'offer:loan:yes', label: 'Take the loan', sub: `+${credits(D.loan.amount)} now`, accent: COL.good, onTap: () => {
         const r = w.economy.accept('loan');
         say(r.ok ? null : r.reason);
@@ -3061,7 +3073,7 @@ function offerSection(w, o, say) {
       } },
     ] };
   }
-  return { title: 'A Rescue Investor', lines: [{ text: `The balance has kept sinking. An investor will clear the debt (to ${credits(D.investor.buffer)} Credits, and any Emergency Credit still owed) for ${D.investor.sharePct}% of each month's profit for ${D.investor.months} months.`, color: COL.actionDark }, { text: 'The home and everyone in it carry on as they are.', color: COL.textMuted }], columns: 2, buttons: [
+  return { title: 'A Rescue Investor', lines: [{ text: `${castFor('bank').name} from the community bank has found an investor.`, color: COL.textMuted }, { text: `The balance has kept sinking. An investor will clear the debt (to ${credits(D.investor.buffer)} Credits, and any Emergency Credit still owed) for ${D.investor.sharePct}% of each month's profit for ${D.investor.months} months.`, color: COL.actionDark }, { text: 'The home and everyone in it carry on as they are.', color: COL.textMuted }], columns: 2, buttons: [
     { id: 'offer:investor:yes', label: 'Accept the investor', sub: `Debt cleared · ${D.investor.sharePct}% of profit`, accent: COL.good, onTap: () => {
       const r = w.economy.accept('investor');
       say(r.ok ? null : r.reason);

@@ -5,15 +5,17 @@
 //
 // PLACEHOLDERS (DECISIONS.md, M32b): the comments, the Open Day's day, every place threshold and reward.
 
-// The inspectors (names from the series chibi cast, M32c_CHIBI_CAST.md). `categories` are ROUTINE_GRADE category ids:
+import { castFor, guideSays } from './cast.js';
+
+// The inspectors (names and series chibi ids from data/cast.js, Milestone 32c). `categories` are ROUTINE_GRADE category ids:
 // each category belongs to exactly one inspector, so their points add up to the review's own total. Portraits are name
 // badges drawn in code until the series sprite sheets come (chibi 14, 27, 25, 07) — no new art keys.
 export const INSPECTORS = [
-  { id: 'clinical', name: 'Dev Anand', chibi: 'chibi_14', role: 'Clinical inspector', looks: 'Clinical Safety and essential care', categories: ['clinical', 'care'], color: '#3E7CB1', openDay: 'a calm, well-run day: essential care done, programs running' },
-  { id: 'wellbeing', name: 'Nina Brooks', chibi: 'chibi_27', role: 'Wellbeing inspector', looks: 'Resident Wellbeing', categories: ['wellbeing'], color: '#6FA86A', openDay: 'how the residents seemed' },
-  { id: 'family', name: 'Margaret Cole', chibi: 'chibi_25', role: 'Family inspector', looks: 'Family Trust', categories: ['family'], color: '#C8634E', openDay: 'how welcome the families felt' },
-  { id: 'environment', name: 'Ray Dunn', chibi: 'chibi_07', role: 'Environment inspector', looks: 'Environment & Compliance and Staff Wellbeing', categories: ['environment', 'staff'], color: '#8A6CC0', openDay: 'the rooms, the grounds and the team' },
-];
+  { id: 'clinical', role: 'Clinical inspector', looks: 'Clinical Safety and essential care', categories: ['clinical', 'care'], color: '#3E7CB1', openDay: 'a calm, well-run day: essential care done, programs running' },
+  { id: 'wellbeing', role: 'Wellbeing inspector', looks: 'Resident Wellbeing', categories: ['wellbeing'], color: '#6FA86A', openDay: 'how the residents seemed' },
+  { id: 'family', role: 'Family inspector', looks: 'Family Trust', categories: ['family'], color: '#C8634E', openDay: 'how welcome the families felt' },
+  { id: 'environment', role: 'Environment inspector', looks: 'Environment & Compliance and Staff Wellbeing', categories: ['environment', 'staff'], color: '#8A6CC0', openDay: 'the rooms, the grounds and the team' },
+].map((i) => ({ ...i, name: castFor(i.id).name, chibi: castFor(i.id).chibi, cast: castFor(i.id).id }));
 export const inspectorById = (id) => INSPECTORS.find((i) => i.id === id) ?? null;
 export const PANEL_MAX = 10; // each inspector's score is out of 10; four of them out of 40
 
@@ -80,7 +82,7 @@ export const AWARDS_EVENING = {
 export const VERDICT_TEXT = {
   trophyCase: 'Trophy Case',
   trophyCaseSub: 'Open Days and Awards Evenings, year by year',
-  openDayToday: 'Open Day today: families and neighbours are visiting, and four inspectors are coming to see how the home feels',
+  openDayToday: guideSays('Open Day today: families and neighbours are visiting, and four inspectors are coming to see how the home feels'),
   skip: 'Tap to see the result',
   close: 'Tap to carry on',
 };
@@ -90,7 +92,7 @@ export function validateVerdicts(v, gradeCategories) {
   const owned = INSPECTORS.flatMap((i) => i.categories);
   v.check(INSPECTORS.length === 4, 'verdicts: four inspectors');
   v.check(owned.length === ids.length && ids.every((id) => owned.filter((x) => x === id).length === 1), 'verdicts: every routine-grade category belongs to exactly one inspector');
-  for (const i of INSPECTORS) v.check(COMMENTS[i.id]?.length === BANDS.length && /^chibi_\d\d$/.test(i.chibi), `verdicts: ${i.id} comments / chibi`);
+  for (const i of INSPECTORS) v.check(COMMENTS[i.id]?.length === BANDS.length && /^chibi_\d\d_/.test(i.chibi), `verdicts: ${i.id} comments / chibi`);
   for (const k of ['gold', 'silver', 'bronze', 'part']) v.check(OPEN_DAY.rewards[k] && AWARDS_EVENING.rewards[k], `verdicts: rewards for ${k}`);
   v.check(OPEN_DAY.month >= 1 && OPEN_DAY.month <= 12 && OPEN_DAY.day >= 1 && OPEN_DAY.day <= 28, 'verdicts: the Open Day date');
   return v;

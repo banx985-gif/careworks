@@ -12,6 +12,7 @@
 //   bus: 'care:openDayToday' { year } · 'care:openDay' { year, ceremony } · 'care:awardsEvening' { year, ceremony }
 import { Rng } from '../../../../core/Rng.js';
 import { INSPECTION } from '../../data/quality.js';
+import { CROWD_POOL, CROWD_SIZE, hostLine } from '../../data/cast.js';
 import { INSPECTORS, PANEL_MAX, SCORE10, OPEN_DAY, AWARDS_EVENING, tierById } from '../../data/verdicts.js';
 
 const clamp10 = (x) => Math.max(0, Math.min(PANEL_MAX, Math.round(x)));
@@ -57,6 +58,8 @@ export function createVerdicts({ state, seed = 'careworks', bus = null, quality,
     for (const k of ['gold', 'silver', 'bronze']) if (place <= AWARDS_EVENING.place[k].place && AWARDS_EVENING.place[k].grades.includes(grade)) return k;
     return 'part';
   };
+  // (Milestone 32c) the crowd that comes: series cast ids from the family and community pools, seeded, kept on the record
+  const crowdOf = (kind, year) => new Rng(`${seed}:crowd:${kind}:${year}`).shuffle(CROWD_POOL).slice(0, CROWD_SIZE[kind]);
   const rewardWords = (got) => [got.reputation ? `Reputation +${got.reputation}` : null, got.item ? `an item: ${got.item}` : null].filter(Boolean).join(' · ');
 
   // --- the Open Day: judged at the midnight after it, on that day's readings -----------------------------------------
@@ -82,7 +85,7 @@ export function createVerdicts({ state, seed = 'careworks', bus = null, quality,
     const place = 1 + peers.filter((p) => p.total > total).length; // (a tie goes to the home)
     const tier = tierOfOpenDay(place, total);
     const got = reward(OPEN_DAY, tier, `Open Day: ${tierById(tier).name}`, day);
-    const rec = { kind: 'openDay', year, day: day - 1, tier, total, place, of: peers.length + 1, panel, best: [...peers].sort((a, b) => b.total - a.total)[0] ?? null, ...got };
+    const rec = { kind: 'openDay', year, day: day - 1, tier, total, place, of: peers.length + 1, panel, best: [...peers].sort((a, b) => b.total - a.total)[0] ?? null, crowd: crowdOf('openDay', year), ...got };
     st.openDays[year] = rec;
     st.trophies.push(rec);
     bus?.emit('care:openDay', { year, ceremony: ceremonyOf(rec) });
@@ -98,7 +101,7 @@ export function createVerdicts({ state, seed = 'careworks', bus = null, quality,
     const place = home?.place ?? 1;
     const tier = tierOfEvening(place, review.grade);
     const got = reward(AWARDS_EVENING, tier, `Awards Evening: ${tierById(tier).name}`, day);
-    const rec = { kind: 'awards', year, day, tier, place, of: table.length || 1, grade: review.grade, total100: review.total, panel: review.panel ?? null, total: panelTotal(review.panel), routineRep: review.reputation ?? 0, top: table.slice(0, 3).map((r) => ({ id: r.id, place: r.place })), ...got };
+    const rec = { kind: 'awards', year, day, tier, place, of: table.length || 1, grade: review.grade, total100: review.total, panel: review.panel ?? null, total: panelTotal(review.panel), routineRep: review.reputation ?? 0, top: table.slice(0, 3).map((r) => ({ id: r.id, place: r.place })), crowd: crowdOf('awards', year), ...got };
     st.evenings[year] = rec;
     st.trophies.push(rec);
     bus?.emit('care:awardsEvening', { year, ceremony: ceremonyOf(rec) });
@@ -110,9 +113,9 @@ export function createVerdicts({ state, seed = 'careworks', bus = null, quality,
     const t = tierById(rec.tier);
     const reward = rewardWords(rec);
     if (rec.kind === 'openDay') {
-      return { kind: 'openDay', title: `${OPEN_DAY.title} · Year ${rec.year}`, panel: rec.panel, total: rec.total, max: 40, tier: rec.tier, headline: t.name, lines: [rec.of > 1 ? `${ordinal(rec.place)} of ${rec.of} homes on the day` : 'The first Open Day in the network', reward || 'Thank you for opening your doors'], art: OPEN_DAY.art };
+      return { kind: 'openDay', host: hostLine('openDay'), title: `${OPEN_DAY.title} · Year ${rec.year}`, panel: rec.panel, total: rec.total, max: 40, tier: rec.tier, headline: t.name, lines: [rec.of > 1 ? `${ordinal(rec.place)} of ${rec.of} homes on the day` : 'The first Open Day in the network', reward || 'Thank you for opening your doors'], art: OPEN_DAY.art };
     }
-    return { kind: 'awards', title: `${AWARDS_EVENING.title} · Year ${rec.year}`, panel: rec.panel, total: rec.total, max: 40, tier: rec.tier, headline: `Grade ${rec.grade} · ${t.name}`, lines: [`Routine review ${rec.total100} / 100${rec.routineRep ? ` · Reputation +${rec.routineRep}` : ''}`, `${ordinal(rec.place)} of ${rec.of} in the recognition table`, ...(reward ? [reward] : [])], art: AWARDS_EVENING.art };
+    return { kind: 'awards', host: hostLine('awards'), title: `${AWARDS_EVENING.title} · Year ${rec.year}`, panel: rec.panel, total: rec.total, max: 40, tier: rec.tier, headline: `Grade ${rec.grade} · ${t.name}`, lines: [`Routine review ${rec.total100} / 100${rec.routineRep ? ` · Reputation +${rec.routineRep}` : ''}`, `${ordinal(rec.place)} of ${rec.of} in the recognition table`, ...(reward ? [reward] : [])], art: AWARDS_EVENING.art };
   }
 
   function daily(day) {
