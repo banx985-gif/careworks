@@ -127,6 +127,7 @@ import { createHomeWorld, makeClock, theirOf } from './systems/homeWorld.js';
 import { AccountBook } from '../../../core/AccountBook.js';
 import { MajorFeedback } from '../../../core/MajorFeedback.js';
 import { BOOK, MEMORIAL, PLAN as EOL_PLAN, ACCOUNT_KEY as EOL_ACCOUNT_KEY, COMFORT } from '../data/endOfLife.js';
+import { ACCOUNT_KEY as ACH_ACCOUNT_KEY, ACH_TEXT, VISIBLE_COUNT, HALL } from '../data/achievements.js'; // (Milestone 32)
 import { categoryById, INBOX as INBOX_RULES } from '../data/events.js';
 import { BRAND, FIRST_ART, FIRSTS_TEXT, REWARD_ART, PLAQUES, CARE_FX, SCORE_ICONS, SECTION_ICONS, ART_CROP } from '../data/artMoments.js';
 import { drawArtCrop } from './ui/careArt.js';
@@ -320,9 +321,12 @@ let spawn = null; // Milestone 9: ?debug=1 "Spawn all 60" while it runs: { real 
 function openRun(n, data) {
   const clock = makeClock(bus);
   if (data.clock) clock.load(data.clock);
-  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, residents: data.residents, staff: data.staff, care: data.care, seed: data.seed, bus, admissions: data.admissions, ledger: data.ledger, layout: data.layout, startCredits: data.economy?.credits ?? ECONOMY_START.credits, ngPlus: data.ngPlus ?? 0, runId: data.seed, homeName: data.facility.name, secretsStrict: debug.enabled, secretsAccount }); // (Milestone 29: New Game+, the run's id, the secrets' account half; a bad secret rule stops ?debug=1)
+  const world = createHomeWorld({ founderId: data.facility.founder?.id, clock, residents: data.residents, staff: data.staff, care: data.care, seed: data.seed, bus, admissions: data.admissions, ledger: data.ledger, layout: data.layout, startCredits: data.economy?.credits ?? ECONOMY_START.credits, ngPlus: data.ngPlus ?? 0, runId: data.seed, homeName: data.facility.name, secretsStrict: debug.enabled, secretsAccount, achievementsAccount }); // (Milestone 29: New Game+, the run's id, the secrets' account half; a bad secret rule stops ?debug=1; Milestone 32: the achievements' account half)
   world.secrets.setAccountStore({ save: (d) => saveSecretsAccount(d) });
   world.secrets.setAccountFacts({ memoryBook: () => memoryBook.count });
+  world.achievements.setAccountStore({ save: (d) => saveAchievementsAccount(d) }); // (Milestone 32)
+  world.achievements.bookChanged(); // (the Memory Book's milestones and #29, now its page count can be read)
+  saveAchievementsAccount(world.achievements.accountData()); // (anything the home caught up on as it opened)
   if (world.fixedUp.length) debug.log(`layout fix-up: ${world.fixedUp.map((m) => m.id).join(', ')} moved`);
   if (debug.enabled && PARAMS.get('paused') === '1') clock.speed = 0; // ?debug=1&paused=1: open exactly as saved (tests)
   data.economy ??= { ...ECONOMY_START };
@@ -339,6 +343,7 @@ function saveRun() {
   const c = o.world.clock;
   o.data = { ...o.data, ...o.world.serialize(), date: { year: c.year, month: c.month, day: c.day } };
   o.data.economy = { ...(o.data.economy ?? ECONOMY_START), credits: o.world.ledger.balance }; // (the ledger is the truth; this is the summary)
+  o.world.achievements?.flush(); // (Milestone 32: records that only grew go to the account store with the run save)
   return campaigns.save(o.n, o.data);
 }
 // Autosave (core/Autosave): the series cadence (every game day, a rolling save, and when the app goes to the
@@ -363,6 +368,7 @@ async function prepareSaves() {
   await campaigns.refresh();
   await loadMemoryBook(); // (Milestone 27: the account's Memory Book)
   await loadSecretsAccount(); // (Milestone 29: secrets found in any run, Prestige Tokens, records)
+  await loadAchievementsAccount(); // (Milestone 32: achievements, account bests, the Hall of Fame, keepsakes)
   if (debug.enabled) {
     const r = validateResidents(new DataValidator(), RESIDENTS, ROUTINE.map((x) => x.id)).report();
     debug.log(r.ok ? `residents: ${RESIDENTS.length} checked` : `resident data: ${r.errors.join('; ')}`);
@@ -1517,7 +1523,7 @@ function qualityTabs(w) {
 function recordSections(w) {
   const results = [...w.endOfLife.results()].reverse().slice(0, 6);
   return [
-    { lines: [{ text: 'Your records across every home. A resident passing is never scored: only their comfort, the plan, the family’s support and their wishes are.', color: COL.textMuted }], columns: 1, buttons: [{ id: 'records:book', label: BOOK.title, sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} · ${BOOK.subtitle.toLowerCase()}`, icon: MEMORIAL.art.book, accent: COL.progress, onTap: () => openMemoryBook() }, { id: 'records:secrets', label: 'Secrets', sub: secretsSub(w), icon: SECRETS_ICON, accent: COL.progress, onTap: () => openSecrets() }] }, // (Milestone 29: Records → Secrets)
+    { lines: [{ text: 'Your records across every home. A resident passing is never scored: only their comfort, the plan, the family’s support and their wishes are.', color: COL.textMuted }], columns: 1, buttons: [{ id: 'records:book', label: BOOK.title, sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} · ${BOOK.subtitle.toLowerCase()}`, icon: MEMORIAL.art.book, accent: COL.progress, onTap: () => openMemoryBook() }, { id: 'records:secrets', label: 'Secrets', sub: secretsSub(w), icon: SECRETS_ICON, accent: COL.progress, onTap: () => openSecrets() }, { id: 'records:achievements', label: ACH_TEXT.title, sub: achievementsSub(w), icon: ACH_ICON, accent: COL.progress, onTap: () => openAchievements() }, { id: 'records:home', label: ACH_TEXT.records, sub: ACH_TEXT.recordsSub, icon: ACH_ICON, accent: COL.progress, onTap: () => openHomeRecords() }, { id: 'records:hall', label: ACH_TEXT.hall, sub: `${w.achievements.hall.length} in the Hall of Fame${w.achievements.candidates().length ? ` · ${w.achievements.candidates().length} can be added` : ''}`, icon: ACH_ICON, accent: COL.progress, onTap: () => openHallOfFame() }] }, // (Milestone 29: Records → Secrets; Milestone 32: Achievements, Home Records, Staff Hall of Fame)
     { title: 'End-of-life care in this home', lines: results.length ? results.flatMap((r) => [{ text: `${dateWord(w, r.day)} · ${r.name}: comfort ${r.score}${r.good ? ' · a well-supported time' : ''}`, color: r.good ? COL.good : COL.actionDark }, ...(r.note ? [{ text: `What could have been better: ${r.note}`, color: COL.textMuted }] : [])]) : [{ text: 'Nothing yet.', color: COL.textMuted }] },
   ];
 }
@@ -2217,6 +2223,7 @@ function drawBigBeat(ctx) {
 // slot, so a new campaign or New Game+ keeps every page; there is no delete).
 const memoryBook = new AccountBook({ name: EOL_ACCOUNT_KEY, bus });
 let bookSaving = Promise.resolve();
+let accountChain = Promise.resolve(); // (Milestone 32: the Memory Book, the secrets and the achievements write the account store in turn)
 async function loadMemoryBook() {
   try {
     const acc = await campaigns.slots.loadAccount();
@@ -2229,7 +2236,7 @@ async function loadMemoryBook() {
 function keepPages(pages, home) {
   const n = memoryBook.merge((pages ?? []).map((p) => ({ ...p, home: p.home ?? home ?? null })));
   if (n && campaigns) {
-    bookSaving = bookSaving
+    bookSaving = accountChain = accountChain // (Milestone 32: one queue for every account-store write, so none overwrites another)
       .then(async () => {
         const acc = await campaigns.slots.loadAccount();
         memoryBook.load(acc?.[EOL_ACCOUNT_KEY]); // (never drops a page another tab kept)
@@ -2237,6 +2244,7 @@ function keepPages(pages, home) {
       })
       .catch((err) => debug.log(`memory book not saved: ${err?.message ?? err}`));
   }
+  if (n) open?.world?.achievements?.bookChanged(); // (Milestone 32: Memory Book milestones and #29)
   return n;
 }
 const memorial = new MajorFeedback({ layout, width: W, height: renderer.height, pause: () => {}, minShowSec: 1.6, hint: 'Tap to carry on' });
@@ -2363,7 +2371,7 @@ function openMemoryBook() {
     const pages = [...memoryBook.list].reverse();
     return {
       title: BOOK.title,
-      subtitle: pages.length ? `${pages.length} page${pages.length === 1 ? '' : 's'} · ${BOOK.subtitle}` : BOOK.subtitle,
+      subtitle: `${pages.length ? `${pages.length} page${pages.length === 1 ? '' : 's'} · ${BOOK.subtitle}` : BOOK.subtitle}${open?.world?.achievements?.cover() ? ` · the ${open.world.achievements.cover()}` : ''}`, // (Milestone 32: the cover keepsake)
       art: MEMORIAL.art.book,
       accent: '#B06A3E',
       sections: [...(pages.length
@@ -2393,7 +2401,7 @@ async function loadSecretsAccount() {
 function saveSecretsAccount(data) {
   secretsAccount = data;
   if (!campaigns) return secretsSaving;
-  secretsSaving = secretsSaving
+  secretsSaving = accountChain = accountChain
     .then(async () => {
       const acc = await campaigns.slots.loadAccount();
       await campaigns.slots.saveAccount({ ...acc, secrets: data });
@@ -2443,6 +2451,98 @@ function openSecretsDebug() {
     }));
     if (w.secrets.dropped.length) sections.unshift({ title: 'Refused by the forbid-harm guard', lines: w.secrets.dropped.map((t) => ({ text: t, color: COL.bad })) });
     return { title: 'Secrets debug', subtitle: `${all.length} rules · ${all.filter((r) => r.found).length} found`, art: SECRETS_ICON, accent: accentNow(), sections };
+  });
+}
+// --- Milestone 32: Records → Achievements, Home Records, Staff Hall of Fame (src/systems/achievements.js) ---------------------
+// The account half (achievements earned in any home, account bests, the Hall of Fame, keepsakes) is the account store's
+// achievements record; each home's own half is in its save. Achievements give no power: a small Reputation lift or a keepsake.
+let achievementsAccount = null; // the account store's achievements record (read at boot; every world starts from it)
+let achievementsSaving = Promise.resolve();
+async function loadAchievementsAccount() {
+  try {
+    const acc = await campaigns.slots.loadAccount();
+    achievementsAccount = acc?.[ACH_ACCOUNT_KEY] ?? null;
+  } catch (err) {
+    debug.log(`achievements account: ${err?.message ?? err}`);
+  }
+}
+function saveAchievementsAccount(data) {
+  achievementsAccount = data;
+  if (!campaigns) return achievementsSaving;
+  achievementsSaving = accountChain = accountChain
+    .then(async () => {
+      const acc = await campaigns.slots.loadAccount();
+      await campaigns.slots.saveAccount({ ...acc, [ACH_ACCOUNT_KEY]: data });
+    })
+    .catch((err) => debug.log(`achievements not saved: ${err?.message ?? err}`));
+  return achievementsSaving;
+}
+const ACH_ICON = 'care_ui_28';
+// A date from any home: its own year / month / day (the game's calendar is the same in every home).
+const anyDate = (w, d) => (d == null ? '' : dateWord(w, d));
+function achievementsSub(w) {
+  const a = w.achievements;
+  return `${a.count} of ${VISIBLE_COUNT} earned · ${a.countHere} in this home`;
+}
+function openAchievements() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: ACH_TEXT.title, sections: [] };
+    const a = w.achievements;
+    a.system.markAllSeen();
+    const rows = a.rows();
+    const earned = rows.filter((r) => r.earned);
+    const locked = rows.filter((r) => !r.earned);
+    const runId = open.data.seed;
+    const earnedLine = (r) => {
+      const where = r.when?.runId && r.when.runId !== runId && r.when.home ? ` at ${r.when.home}` : '';
+      const here = r.scope === 'run' ? (r.here ? ' · this home ✓' : ' · not yet in this home') : ' · account';
+      return [{ text: `${r.n}. ${r.name} · ${anyDate(w, r.when?.day)}${where}${here}`, color: COL.good }, { text: `${r.text}${r.reward ? ` · ${r.reward}` : ''}`, color: COL.textMuted }];
+    };
+    const sections = [
+      { lines: [{ text: 'Goals for a caring home. Once earned they stay earned in every home; each one’s small reward comes only once. Ranks, stages and scores are earned again in each home, and count on your account.', color: COL.textMuted }] },
+      { title: `Earned (${earned.length})`, lines: earned.length ? earned.flatMap(earnedLine) : [{ text: 'None yet: admitting your first resident is a good start.', color: COL.textMuted }] },
+      { title: `Still to earn (${locked.length})`, lines: locked.flatMap((r) => [{ text: `${r.hidden ? '?' : r.n}. ${r.name}`, color: COL.actionDark }, { text: r.text, color: COL.textMuted }]) },
+    ];
+    const keeps = a.keepsakes();
+    if (keeps.length) sections.push({ title: 'Keepsakes', lines: keeps.map((k) => ({ text: `${k.name} · ${k.where}`, color: COL.actionDark })) });
+    if (debug.enabled) sections.push({ title: 'Debug', columns: 1, buttons: [{ id: 'ach:debug', label: 'Earn the next one (debug)', sub: 'As if its goal were met: its reward once', accent: COL.progress, onTap: () => { const next = locked.find((r) => !r.hidden); if (next) a.debugUnlock(next.id); } }] });
+    return { title: ACH_TEXT.title, subtitle: achievementsSub(w), art: ACH_ICON, accent: accentNow(), sections };
+  });
+}
+function openHomeRecords() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: ACH_TEXT.records, sections: [] };
+    const groups = w.achievements.recordRows();
+    const sections = [{ lines: [{ text: 'This home’s best, and the best across all your homes. Records are kept from real care: they only ever go up.', color: COL.textMuted }] }];
+    for (const g of groups) {
+      sections.push({
+        title: g.title,
+        lines: g.rows.flatMap((r) => [
+          { text: `${r.name}: ${r.run ? `${r.runText}${r.run.info?.who ? ` · ${r.run.info.who}` : ''}` : 'not yet'}`, color: r.run ? COL.actionDark : COL.textMuted },
+          { text: `Best ever: ${r.account ? `${r.accountText}${r.account.info?.who ? ` · ${r.account.info.who}` : ''}${r.account.info?.home && r.account.runId !== open.data.seed ? ` (${r.account.info.home})` : ''}` : '—'}`, color: COL.textMuted },
+        ]),
+      });
+    }
+    return { title: ACH_TEXT.records, subtitle: ACH_TEXT.recordsSub, art: ACH_ICON, accent: accentNow(), sections };
+  });
+}
+function openHallOfFame() {
+  sheet.open(() => {
+    const w = open?.world;
+    if (!w) return { title: ACH_TEXT.hall, sections: [] };
+    const a = w.achievements;
+    const hall = a.hall;
+    const cands = a.candidates();
+    const frame = a.frame();
+    const yearsWord = (y) => (y >= 1 ? `${y} year${y === 1 ? '' : 's'}` : 'under a year');
+    const sections = [{ lines: [{ text: `A keepsake across every home: legends join when they first arrive, anyone with five years’ service joins then, and anyone who leaves can be added here.${frame ? ` Portraits wear the ${frame}.` : ''}`, color: COL.textMuted }] }];
+    sections.push(hall.length
+      ? { title: `In the Hall of Fame (${hall.length})`, columns: 1, buttons: hall.map((e) => ({ id: `hof:${e.id}`, label: e.name, sub: `${HALL.tag[e.why] ?? e.why} · ${yearsWord(e.years)}${e.home && e.home !== open.data.facility.name ? ` at ${e.home}` : ''} · ${e.best}`, icon: e.art, iconCrop: PORTRAIT_CROP, accent: COL.progress, onTap: () => {} })) }
+      : { title: 'In the Hall of Fame', lines: [{ text: 'Nobody yet.', color: COL.textMuted }] });
+    if (cands.length) sections.push({ title: 'Can be added', columns: 1, buttons: cands.map((c) => ({ id: `hof:add:${c.id}`, label: `Add ${c.name}`, sub: `Left · ${yearsWord(Math.round((c.days / 336) * 10) / 10)}${c.home && c.home !== open.data.facility.name ? ` at ${c.home}` : ''} · Level ${c.level}`, icon: c.art, iconCrop: PORTRAIT_CROP, accent: COL.good, onTap: () => a.addToHall(c.id) })) });
+    return { title: ACH_TEXT.hall, subtitle: ACH_TEXT.hallSub, art: ACH_ICON, accent: accentNow(), sections };
   });
 }
 // A face for a name on a page (pages keep names; the art is found from the home's people or the data).
@@ -3801,6 +3901,9 @@ const MENU_OPEN = {
   complaints: () => openComplaints(), // (Milestone 26: Quality is the hub now)
   memoryBook: () => openMemoryBook(), // (Milestone 27: account-wide)
   secrets: () => openSecrets(), // (Milestone 29: Records → Secrets)
+  achievements: () => openAchievements(), // (Milestone 32: Records → Achievements, Home Records, Staff Hall of Fame)
+  homeRecords: () => openHomeRecords(),
+  hallOfFame: () => openHallOfFame(),
   family: () => placedOf('F09') && openHomeSheet(placedOf('F09').id),
   business: () => openBusiness(),
   partners: () => openPartners(),
@@ -4142,7 +4245,7 @@ router
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { openAchievements, openHomeRecords, openHallOfFame, get achievementsSaving() { return achievementsSaving; }, openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

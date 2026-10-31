@@ -182,6 +182,7 @@ import { createQuality, ensureQualityState } from './quality.js';
 import { READINGS } from '../../data/quality.js';
 import { createEvents, ensureEventsState } from './events.js';
 import { createSecrets, ensureSecretsState } from './secrets.js'; // (Milestone 29)
+import { createCareAchievements, ensureAchievementsState } from './achievements.js'; // (Milestone 32)
 import { stageById, EOL_STAGES, PACE, GOOD_CARE, COMFORT, SIGNAL, MEMORIAL, BOOK, PLAN as EOL_PLAN, WISHES } from '../../data/endOfLife.js';
 import { ensureEolState, ensureResidentEol, eligible as eolEligible, weeklyChance, stageLength, nextStage, newAcc, comfortOf, signalLift, familyResult, betterNote, wishesOf, timeAt } from './endOfLife.js';
 
@@ -218,7 +219,7 @@ const ARTHUR = RESIDENT.id;
 // A resident's pronoun for the card lines (Milestone 9: story data on each row, data/lifeStories.js).
 export const theirOf = (id) => (residentById(id)?.pronoun === 'she' ? 'her' : 'his');
 
-export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, residents: savedResidents = null, staff = null, care: careSaved = null, seed = 'careworks', bus = null, admissions: admissionsSaved = null, ledger: ledgerSaved = null, layout: layoutSaved = null, startCredits = ECONOMY_START.credits, shortStaffing = true, ngPlus = 0, runId = null, homeName = null, secretsStrict = false, secretsAccount = null, secretRules = null } = {}) {
+export function createHomeWorld({ founderId = 'RN01', clock = null, resident = null, residents: savedResidents = null, staff = null, care: careSaved = null, seed = 'careworks', bus = null, admissions: admissionsSaved = null, ledger: ledgerSaved = null, layout: layoutSaved = null, startCredits = ECONOMY_START.credits, shortStaffing = true, ngPlus = 0, runId = null, homeName = null, secretsStrict = false, secretsAccount = null, secretRules = null, achievementsAccount = null } = {}) {
   clock ??= makeClock();
   // Milestone 28: every moment the home raises also goes to the event director (src/systems/events.js), which decides how
   // and when it is shown. Moments raised while the world is being made (a load) are never raised again.
@@ -226,6 +227,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   let director = null;
   let directorLive = false;
   let secrets = null; // (Milestone 29: the secrets read every moment too, once the world is made)
+  let achievements = null; // (Milestone 32: achievements, records and the Hall of Fame read every moment too)
   // Milestone 31: the prestige chain. Is what a secret's unlock flag opens open here (C11 / C12, F34 / F35, PRG11 / PRG12,
   // R08)? Only the secrets say so (src/systems/secrets.js unlocked) — nothing is bought, ?debug=1's unlocks never open it.
   const prestigeOpen = (flag) => !!flag && !!secrets?.unlocked(flag);
@@ -239,6 +241,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     emit(name, payload) {
       if (directorLive) director?.raise(name, payload);
       if (directorLive) secrets?.onEmit(name, payload);
+      if (directorLive) achievements?.onEmit(name, payload); // (Milestone 32)
       appBus?.emit(name, payload);
     },
     on: (name, fn) => appBus?.on(name, fn),
@@ -734,8 +737,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       assignSys.unassign(t, helper);
       closeTask(care, t, 'done');
       t.slots = [helper];
+      const kitchenSpot = q.task?.spot ?? null; // (Milestone 32: the Most-used facility record)
       crew.finishTask(helper);
-      bus?.emit('care:task', { id: t.id, type: t.type, status: 'done', staff: helper, resident: null });
+      bus?.emit('care:task', { id: t.id, type: t.type, status: 'done', staff: helper, resident: null, spot: kitchenSpot });
       return;
     }
     const p = byResident(t.resident);
@@ -775,8 +779,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const share = t.source === 'round' ? HYDRATION.stopShare : 1;
     const famShare = t.source === 'routine' && mealOfStep(t.stepId) ? HYDRATION.serveShare : share; // (Milestone 16: an 8-minute serve is a short contact)
     if (!q.agency) addFamiliarity(care, t.resident, helper, FAMILIARITY.perTask * famShare * (1 + familiarPct(q.model.traits) / 100) * (1 + rb('familiarPct') / 100) * legacyMult(t.resident, LEGACY_HOUSE.familiarMult), clock.totalDays, 1 - famShare); // (Milestone 31: Legacy House)
+    const spotRef = q.task?.spot ?? null; // (Milestone 32: where it was done — the Most-used facility record)
     crew.finishTask(helper, share);
-    bus?.emit('care:task', { id: t.id, type: t.type, status: 'done', staff: helper, resident: t.resident });
+    bus?.emit('care:task', { id: t.id, type: t.type, status: 'done', staff: helper, resident: t.resident, spot: spotRef });
   }
 
   // --- the routine ---------------------------------------------------------------------------------------------
@@ -4011,10 +4016,12 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       partners.monthClosed(day);
       if (monthRp(`Month ${d.month}, Year ${d.year}`) > 0) economy.award('goodMonth'); // (Milestone 21; Milestone 22: a Care Token)
       economy.monthClosed({ month: `Month ${d.month}, Year ${d.year}` }); // (Milestone 22: loan, investor, history, offers)
-      secrets?.monthClosed(); // (Milestone 29: the month's record for the secrets, then the month's secret rules)
+      const secretMonth = secrets?.monthClosed(); // (Milestone 29: the month's record for the secrets, then the month's secret rules)
+      achievements?.monthClosed(secretMonth); // (Milestone 32: the month's records, Safe Month / Safe Year)
       for (const p of residents) delete p.state.moodMonth; // (a new month's Mood)
     }
     secrets?.daily(day); // (Milestone 29: each midnight, after the quality scores and any month close: the day's secret rules)
+    achievements?.daily(); // (Milestone 32: the day's records, achievements, Memory Book milestones and the Hall of Fame)
   }
 
   // --- rostering and Safe Coverage (Milestone 7) -----------------------------------------------------------------
@@ -4084,6 +4091,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     blessings, // (Milestone 30b: the Works Gods' blessings — src/systems/blessings.js)
     get secrets() {
       return secrets; // (Milestone 29: the secret engine, its clue stages, rewards and why-false inspector)
+    },
+    get achievements() {
+      return achievements; // (Milestone 32: achievements, Home Records, Memory Book milestones, the Hall of Fame)
     },
     get quality() {
       return quality; // (Milestone 26: headline scores, Rank, accreditations, inspections, peers)
@@ -5381,6 +5391,36 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   secrets = createSecrets({ env: secretEnv, state: care.secrets, rules: secretRules ?? undefined, bus, strict: secretsStrict, runId: runId ?? seed, account: secretsAccount });
   // (Milestone 31: a reload after a prestige award — its rewards again, keyed, so whichever half wasn't saved is put right)
   for (const id of quality.wonIds()) prestigeAwardRewards(accreditationById(id));
+  // Milestone 32: achievements, Home Records, Memory Book milestones and the Staff Hall of Fame (src/systems/achievements.js):
+  // they only read the home and the secrets' facts; a reward is a small Reputation lift or a cosmetic keepsake.
+  care.achievements = ensureAchievementsState(care.achievements);
+  const staffInfoOf = (q) => (q ? { id: q.id, name: q.model?.name ?? q.name, role: q.role, tier: q.model?.tier ?? staffById(q.id)?.tier ?? null, level: q.model?.level ?? 1, art: q.model?.art ?? staffById(q.id)?.art ?? null } : null);
+  const achEnv = {
+    care,
+    secrets,
+    runId: runId ?? seed,
+    today: () => clock.totalDays,
+    year: () => clock.year,
+    monthOf: (day) => clock.dateOf(Math.max(0, day - 1)).month,
+    homeName: () => homeName ?? null,
+    ngPlus: () => ngPlus ?? 0,
+    firsts: () => economy?.state?.firsts ?? [],
+    residentsHere: secretEnv.residentsHere,
+    residentArt: (id) => residentById(id)?.art ?? null,
+    ageOf: (p) => ageNow(p, clock.totalDays, birthdayOf),
+    team: () => team().map(staffInfoOf),
+    staffInfo: (id) => staffInfoOf(crew.byId(id)),
+    daysEmployed: (id) => (secrets.log.joined?.[id] == null ? 0 : Math.max(0, clock.totalDays - secrets.log.joined[id])),
+    facilities: () => layout.pieces.filter((pc) => facilityById(pc.defId) && !roomById(pc.defId)).map((pc) => ({ uid: pc.uid, defId: pc.defId, name: facilityById(pc.defId).name, level: layout.levelOf(pc.uid) ?? 1 })),
+    pieceOfSpot: (ref) => {
+      const pc = layout.pieceOfSpot(ref);
+      return pc && facilityById(pc.defId) && !roomById(pc.defId) ? { uid: pc.uid, defId: pc.defId, name: facilityById(pc.defId).name } : null;
+    },
+    addReputation: (amount, reason) => quality.addReputation(amount, clock.totalDays, reason),
+    legacyEnding: () => false, // (Milestone 33: the Year-16 ending)
+  };
+  achievements = createCareAchievements({ env: achEnv, state: care.achievements, account: achievementsAccount, bus });
   directorLive = true; // (Milestone 28: from here on, every moment goes through the director)
+  achievements.catchUp(); // (Milestone 32: an older home earns at once what it already has — quiet Inbox lines)
   return world;
 }

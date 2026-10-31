@@ -130,6 +130,11 @@ export const KINDS = {
   'secret:clue': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'inbox', text: `A rumour: ${x.text}`, good: true, opens: { type: 'secrets' } }) },
   'secret:found': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'big', title: `Secret found: ${x.name}`, text: x.reward, line: `Secret found: ${x.name} · ${x.reward}`, art: REWARD_ART.prestige, aura: true, good: true, opens: { type: 'secrets' } }) },
   'secret:pantheon': { cat: 'recognition', inbox: true, make: (x) => ({ weight: 'big', title: x.name, text: x.text, line: `${x.name}: all five Works Gods have worked here`, art: REWARD_ART.prestige, aura: true, good: true, opens: { type: 'secrets' } }) }, // (Milestone 30b)
+  // Milestone 32: an achievement is a quiet Inbox line; the big beat only for Rank S, C10 and Year-16 Legacy (the first time on
+  // the account). A Hall of Fame entry or candidate, a Memory Book keepsake: quiet lines.
+  'care:achievement': { cat: 'recognition', inbox: true, make: (x) => (x.beat === 'big' ? { weight: 'big', title: `Achievement: ${x.name}`, text: x.reward || 'Kept in every home', line: `Achievement: ${x.name}${x.reward ? ` · ${x.reward}` : ''}`, art: REWARD_ART.trophy, aura: true, good: true, opens: { type: 'achievements' } } : { weight: 'inbox', text: `Achievement${x.first ? '' : ' (this home)'}: ${x.name}${x.reward ? ` · ${x.reward}` : ''}`, good: true, opens: { type: 'achievements' } }) },
+  'care:hallOfFame': { cat: 'staff', inbox: true, make: (x) => ({ weight: x.candidate ? 'inbox' : 'quiet', text: x.candidate ? `${first(x.name)} can join the Staff Hall of Fame (Records)` : `${first(x.name)} joins the Staff Hall of Fame · ${x.why}`, good: true, opens: { type: 'hallOfFame' } }) },
+  'care:keepsake': { cat: 'memorial', inbox: true, make: (x) => ({ weight: 'quiet', text: x.line, line: `${x.line} · a keepsake: the ${x.name}`, good: true, opens: { type: 'memoryBook' } }) },
   'care:passed': { cat: 'memorial', inbox: true, make: (x) => ({ weight: 'blocking', title: x.name, text: x.card, line: x.line ?? x.card, good: true, opens: { type: 'memoryBook' }, choice: { kind: 'memorial', id: x.page?.id ?? x.resident } }) },
 };
 

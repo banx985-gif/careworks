@@ -286,6 +286,16 @@ export function createLayout({ saved = null, bus = null } = {}) {
 
   // --- spots ---------------------------------------------------------------------------------------------------------
   const firstOf = (defId) => ofDef(defId)[0] ?? null;
+  // (Milestone 32) The placed piece a spot ref stands at ('lounge.lc', 'F04.cook2', an alias) — null for a tile or a name.
+  function pieceOfSpot(ref) {
+    if (!ref || typeof ref !== 'string' || ref.startsWith('tile:')) return null;
+    const alias = ALIASES[ref];
+    if (alias) return byId(alias[0]) ?? (alias[0] === 'RM01' ? null : firstOf(alias[0]));
+    const dot = ref.indexOf('.');
+    if (dot <= 0) return null;
+    const key = ref.slice(0, dot);
+    return byId(key) ?? (facilityById(key) ? firstOf(key) : null);
+  }
   function openTile(t) {
     const b = blockedFor(pieces());
     const reached = reachFrom(b, ENTRANCE);
@@ -502,6 +512,7 @@ export function createLayout({ saved = null, bus = null } = {}) {
     canSell,
     findSpot,
     spotTile,
+    pieceOfSpot, // (Milestone 32)
     sellValue: (uid) => (fs.get(uid) ? fs.sellValue(fs.get(uid)) : 0),
     costOf: (defId) => defs[defId]?.cost ?? 0,
     effectTotal: (k) => fs.total(k),

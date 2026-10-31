@@ -27,6 +27,9 @@ export const MENU_GROUPS = [
     row('quality', 'Quality', 'Headline scores, Rank, accreditation, benchmarks and inspections', 'care_ui_28'),
     row('complaints', 'Compliments and complaints', 'Family feedback and the improvement tasks it sets', 'care_ui_04'),
     row('memoryBook', 'Memory Book', 'Residents who lived out their days with you, kept for good', 'memory_book_emblem'), // (Milestone 28b: its own emblem) // (Milestone 27: Quality → Records too)
+    row('achievements', 'Achievements', 'Thirty goals for a caring home, kept in every home', 'care_ui_28'), // (Milestone 32: Quality → Records too)
+    row('homeRecords', 'Home Records', 'This home’s best and the best across all your homes', 'care_ui_28'),
+    row('hallOfFame', 'Staff Hall of Fame', 'The people who made your homes what they are', 'care_ui_28'),
     row('family', 'Family', 'The Reception / Family Desk: visits, meetings and Family Trust', 'care_ui_10'),
   ] },
   { title: 'Business', rows: [

@@ -407,6 +407,7 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
     daily,
     prime,
     scores,
+    addReputation: (amount, day, reason) => amount > 0 && addRep(amount, day, reason), // (Milestone 32: an achievement's small lift)
     parts: (id) => st.samples.at(-1)?.parts[id] ?? [],
     measure,
     history,

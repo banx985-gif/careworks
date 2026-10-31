@@ -8,7 +8,7 @@ export const SAVE = {
   count: 4,
   prefix: 'campaign_',
   accountKey: 'account',
-  version: 31, // 2 = Milestone 2 (the clock and the residents' state), 3 = Milestone 3 (the staff), 4 = Milestone 4 (care
+  version: 32, // 2 = Milestone 2 (the clock and the residents' state), 3 = Milestone 3 (the staff), 4 = Milestone 4 (care
   // plans, tasks, call bells, familiarity), 5 = Milestone 5 (the Dining Room and Staff Room, the props, Credits / Care
   // Tokens), 6 = Milestone 6 (every resident, the 24 × 16 home, applicants, the ledger), 7 = Milestone 7 (three
   // shifts, floats, wings, on call, coverage history, agency hires), 8 = Milestone 8 (plan reviews, stale reasons,
@@ -38,6 +38,8 @@ export const SAVE = {
   // (the event director: its saved stream, the Inbox log, beats and choices waiting, the choice in play, caps' timers, the
   // new categories' records), 30 = Milestone 29 (secrets: the run records the facts read, clue stages, found secrets and fired
   // rewards in care.secrets; the account half is the account store's secrets record), 31 = Milestone 30b (the Works Gods:
-  // their arrivals and the secrets' new records; the account remembers which gods were hired); src/systems/facility.js
+  // their arrivals and the secrets' new records; the account remembers which gods were hired), 32 = Milestone 32 (achievements earned in this home, the counters the Home Records read, its run bests in
+  // care.achievements; the account half — achievements, account bests, the Hall of Fame, keepsakes — is the account store's
+  // achievements record); src/systems/facility.js
   // SAVE_MIGRATIONS moves older saves
 };
