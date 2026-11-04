@@ -26,6 +26,7 @@ export const NG_PLUS = {
       { id: 'highestNgPlus', label: 'Highest New Game+ level', hidden: true },
       { id: 'pastHomes', label: 'Finished homes (their summaries)', hidden: true },
       { id: 'settings', label: 'Settings (this device)', hidden: true },
+      { id: 'store', label: 'Purchases: Remove Ads, the Supporter Pack, the Sunrise accent (the account)', hidden: true }, // (Milestone 36)
     ],
     // §37 selectable
     chosen: [
@@ -62,6 +63,7 @@ export const NG_PLUS = {
       { id: 'playSec', label: 'Play time', hidden: true },
       { id: 'level', label: 'New Game+ level (the new home is one higher)', hidden: true },
       { id: 'ledger', label: 'The ledger', hidden: true },
+      { id: 'storeHome', label: 'This home’s token accents and rewarded-ad counts (Care Tokens reset with the economy)', hidden: true }, // (Milestone 36)
     ],
   },
   // §37: 1 / 2 / 3 Legacy Staff; any staff member employed at the ending (Legendary, Secret, Divine too) keeps their level,
@@ -95,6 +97,7 @@ export const RUN_FIELDS = {
   playSec: 'playSec',
   ngPlus: 'level',
   guide: 'guide', // (Milestone 34)
+  monetisation: 'storeHome', // (Milestone 36)
 };
 export const CARE_FIELDS = {
   tasks: 'care', nextId: 'care', gen: 'care', bells: 'care', relations: 'care', friendships: 'care', keyWorkers: 'care', counts: 'care', plans: 'care', reviews: 'care', rewards: 'care',
@@ -109,6 +112,7 @@ export const ACCOUNT_FIELDS = {
   achievements: 'achievements',
   ngplus: 'pastHomes',
   settings: 'settings',
+  monetisation: 'store', // (Milestone 36)
 };
 
 export const NGPLUS_TEXT = {

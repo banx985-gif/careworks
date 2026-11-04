@@ -377,6 +377,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       const w = iso.toWorld(x, y);
       return { x: w.x, y: w.y - lift };
     },
+    get drawStats() { return drawStats; }, // (Milestone 39: people drawn / culled / simpler this frame)
     // On screen inside the home's view (tests).
     inView(sx, sy) {
       return sx >= 0 && sx <= W && sy >= camera.viewY && sy <= camera.viewY + camera.viewH;
@@ -553,11 +554,13 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       assets.detail = detailFor(camera.zoom); // sprites cached near the size they are drawn: sharp, and a plain copy each frame
       if (buildMode) drawBuildFloor(ctx);
       if (buildMode) drawWingEdges(ctx); // (Milestone 24)
+      if (buildMode) drawCombos(ctx); // (overnight Stage 6: placement combos — a soft line between each pair)
       drawWalkPath(ctx); // (Milestone 17: the safe walking path — stepping stones; the loop being traced in Build Mode)
       if (buildMode) drawPicked(ctx);
+      cullPeople(); // (Milestone 39: only people near the view are drawn; past the full-detail cap, simpler figures)
       drawPersonShadows(ctx);
       drawSelectionMark(ctx);
-      const items = [...world.placed, ...world.props, ...(world.decor ?? []), ...walls, ...shownPeople(), ...shownVisitors()].sort((a, b) => depthOf(a) - depthOf(b));
+      const items = [...world.placed, ...world.props, ...(world.decor ?? []), ...walls, ...framePeople].sort((a, b) => depthOf(a) - depthOf(b));
       const pictures = [];
       const people = [];
       for (const it of items) {
@@ -583,7 +586,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       // Name tags in screen space: always the small text size (28), whatever the zoom.
       if (pref('nameTags')) {
         layoutTags(ctx);
-        for (const p of [...shownPeople(), ...shownVisitors()]) drawTag(ctx, p);
+        for (const p of framePeople) drawTag(ctx, p);
       }
       drawSiteSign(ctx); // (Milestone 24: a stage being built)
       if (pref('taskMarkers')) drawMarkers(ctx); // a status icon over each staff member (their task, resting, tired); the call bell over Arthur
@@ -858,11 +861,74 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     const p = iso.cellCenter(c, r);
     return p.x > camera.x - HW * 2 && p.x < camera.x + camera.visibleW + HW * 2 && p.y > camera.y - HH * 2 && p.y < camera.y + camera.visibleH + HH * 2;
   }
+  // Overnight Stage 6: each placement combo in Build Mode — a soft dashed line between the two pieces and a small heart
+  // at its middle (the Build list names it). A bonus only; nothing is drawn outside Build Mode.
+  function drawCombos(ctx) {
+    const list = world?.combos?.() ?? [];
+    if (!list.length) return;
+    const mid = (pc) => {
+      const b = pc.box ?? pc.fp;
+      return iso.toWorld((b.col + b.w / 2) * HOME.cellSize, (b.row + b.h / 2) * HOME.cellSize);
+    };
+    ctx.save();
+    ctx.lineWidth = 8;
+    ctx.setLineDash([22, 16]);
+    ctx.lineCap = 'round';
+    for (const x of list) {
+      const a = mid(x.a);
+      const b = mid(x.b);
+      ctx.strokeStyle = 'rgba(46, 154, 148, 0.55)';
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.fillStyle = 'rgba(255, 250, 240, 0.95)';
+      ctx.beginPath();
+      ctx.arc((a.x + b.x) / 2, (a.y + b.y) / 2, 22, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#2E9A94';
+      ctx.font = font(30, true);
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('+', (a.x + b.x) / 2, (a.y + b.y) / 2 + 1);
+      ctx.setLineDash([22, 16]);
+    }
+    ctx.restore();
+  }
+  // Milestone 39: culling and the full-detail cap (bible: 28 residents + 24 staff drawn in full; the rest as the simpler
+  // Low-graphics figures). Anyone whose feet are well outside the view is not drawn at all (taps still find everyone).
+  const DETAIL_CAP = { resident: 28, staff: 24 };
+  const CULL_MARGIN = 260;
+  let framePeople = [];
+  const simpleSet = new Set();
+  const drawStats = { drawn: 0, culled: 0, simple: 0 };
+  const inViewWorld = (pt) => pt.x > camera.x - CULL_MARGIN && pt.x < camera.x + camera.visibleW + CULL_MARGIN && pt.y > camera.y - CULL_MARGIN && pt.y < camera.y + camera.visibleH + PERSON.height + CULL_MARGIN;
+  function cullPeople() {
+    framePeople = [];
+    simpleSet.clear();
+    let res = 0;
+    let crew = 0;
+    let culled = 0;
+    for (const p of shownPeople()) {
+      if (!inViewWorld(feetOf(p))) {
+        culled++;
+        continue;
+      }
+      framePeople.push(p);
+      if (p.kind === 'resident' ? ++res > DETAIL_CAP.resident : ++crew > DETAIL_CAP.staff) simpleSet.add(p);
+    }
+    for (const v of shownVisitors()) if (inViewWorld(feetOf(v))) framePeople.push(v);
+    else culled++;
+    drawStats.drawn = framePeople.length;
+    drawStats.culled = culled;
+    drawStats.simple = simpleSet.size;
+  }
   // A soft shadow at each person's feet — it stays on the floor while they hop, so the hop reads as a hop.
   function drawPersonShadows(ctx) {
     ctx.save();
     ctx.fillStyle = L.personShadow;
-    for (const p of [...shownPeople(), ...shownVisitors()]) {
+    for (const p of framePeople) {
       const f = feetOf(p);
       ctx.beginPath();
       ctx.ellipse(f.x, f.y - 4, 40, 15, 0, 0, Math.PI * 2);
@@ -886,8 +952,8 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     poseAgent.facing = m.flip;
     const t = poseAgent.state === 'walking' ? m.stride / (MOTION.stride * WALK.speedMultiplier) : animT; // (Milestone 14: longer hops at 5× speed)
     characterPose(poseAgent, t, m.seed, pose, p.kind === 'resident' ? MOTION.resident : MOTION.staff);
-    if (lowFx()) {
-      // (Milestone 25c: Low graphics — simpler figures: no sway or breathing, just a small hop while walking)
+    if (lowFx() || simpleSet.has(p)) {
+      // (Milestone 39: past the full-detail cap too) (Milestone 25c: Low graphics — simpler figures: no sway or breathing, just a small hop while walking)
       pose.tilt = 0;
       if (poseAgent.state !== 'walking') pose.bob = 0;
     }

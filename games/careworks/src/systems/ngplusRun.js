@@ -64,13 +64,14 @@ export function ngSnapshot(parent, account = {}) {
   snap.blueprints = o.blueprints;
   snap.discount = Object.fromEntries((o.discount ?? []).map((d) => [d.id, { id: d.id, pct: d.pct }]));
   // §37 reset fields that live inside other parts of the save (named on purpose)
-  for (const f of ['rank', 'research', 'partners', 'quality', 'programs', 'economy', 'events', 'incidents', 'endOfLife', 'homeSecrets', 'homeAchievements', 'verdicts', 'ending', 'homeLife', 'ngPlusStart', 'care', 'calendar', 'layout', 'credits', 'ledger', 'level', 'playSec', 'seed', 'facility', 'admissions', 'staff', 'guide']) snap[f] ??= null; // (Milestone 34: guide — a home saved without one)
+  for (const f of ['rank', 'research', 'partners', 'quality', 'programs', 'economy', 'events', 'incidents', 'endOfLife', 'homeSecrets', 'homeAchievements', 'verdicts', 'ending', 'homeLife', 'ngPlusStart', 'care', 'calendar', 'layout', 'credits', 'ledger', 'level', 'playSec', 'seed', 'facility', 'admissions', 'staff', 'guide', 'storeHome']) snap[f] ??= null; // (Milestone 34: guide — a home saved without one; Milestone 36: storeHome — a home with nothing bought)
   snap.rank = parent.care?.quality?.rep ?? null;
   // the account store: every key under its declared field
   for (const [k, v] of Object.entries(account ?? {})) put(ACCOUNT_FIELDS[k] ?? `account.${k}`, k, v);
   const sec = account.secrets?.flags ?? account.secrets?.account?.flags ?? {};
   const ach = account.achievements ?? {};
   snap.memoryBook ??= null;
+  snap.store ??= null; // (Milestone 36: an account that never used the store)
   snap.secrets ??= null;
   snap.achievements ??= null;
   snap.pastHomes ??= null;

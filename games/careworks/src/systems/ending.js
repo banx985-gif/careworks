@@ -14,30 +14,33 @@
 import { CampaignEnding } from '../../../../core/CampaignEnding.js';
 import { gradeRun, checkGrade } from '../../../../core/GradeEngine.js';
 import { ENDING_GRADE, ENDING_PANEL, END_YEAR, endingComment } from '../../data/ending.js';
+import { LATE_TWIST } from '../../data/quality.js'; // (overnight Stage 7)
 
 const avg = (xs) => (xs.length ? xs.reduce((t, x) => t + x, 0) / xs.length : null);
 const r1 = (x) => Math.round(x * 10) / 10;
 const num = (v) => (Array.isArray(v) ? v.length : Number(v) || 0);
 export const MONTHS_PER_YEAR = 12;
 
-export function endingFacts({ months = [], fact = () => 0, score = () => null }) {
+// (overnight Stage 7) focus: the Year-16 inspectors' focus score — its year average counts LATE_TWIST.raise lower.
+export function endingFacts({ months = [], fact = () => 0, score = () => null, focus = null }) {
   const last = months.slice(-MONTHS_PER_YEAR);
   const scoreAvg = (list, id) => avg(list.map((m) => m.scores?.[id]).filter((x) => typeof x === 'number')) ?? score(id) ?? 0;
   const fieldAvg = (list, f, fallback) => avg(list.map((m) => m[f]).filter((x) => typeof x === 'number')) ?? fallback;
+  const yearOf = (id) => r1(Math.max(0, scoreAvg(last, id) - (id === focus ? LATE_TWIST.raise : 0)));
   return {
-    wellbeingYear: r1(scoreAvg(last, 'residentWellbeing')),
+    wellbeingYear: yearOf('residentWellbeing'),
     wellbeingRun: r1(scoreAvg(months, 'residentWellbeing')),
     birthdays: num(fact('run.birthdaysHeld')),
-    clinicalYear: r1(scoreAvg(last, 'clinicalSafety')),
+    clinicalYear: yearOf('clinicalSafety'),
     safeYear: r1(fieldAvg(last.filter((m) => (m.shiftsAll ?? 0) > 0), 'safeAllPct', fieldAvg(last, 'safePct', 0))),
-    familyYear: r1(scoreAvg(last, 'familyTrust')),
+    familyYear: yearOf('familyTrust'),
     familyHighMonths: months.filter((m) => (m.scores?.familyTrust ?? 0) >= 85).length,
-    staffYear: r1(scoreAvg(last, 'staffWellbeing')),
+    staffYear: yearOf('staffWellbeing'),
     trained: num(fact('run.trainedStaff')),
     longestYears: r1(num(fact('run.longestServing')) / 336),
     awards: num(fact('run.awardCount')),
     programs: num(fact('run.programsEver')),
-    environmentYear: r1(scoreAvg(last, 'environment')),
+    environmentYear: yearOf('environment'),
     stage: num(fact('run.stage')) || 1,
     profitMonths: last.filter((m) => m.profit).length,
     credits: Math.max(0, num(fact('credits'))),

@@ -185,3 +185,16 @@ export const RANK_BEAT = {
   A: 'Stage 4, National Search and wing hubs',
   S: 'Stage 5 and the national finale',
 };
+
+// --- the late twist (overnight Stage 7, Kairosoft gap #5: the late game stays hard) -------------------------------------
+// From Year 12: each year the four inspectors pick a focus (one headline score, never the same two years running) and
+// expect more of it — that score is graded as if it were `raise` points lower in the year's routine review, and the
+// Year-16 focus does the same in the ending's grade. And Crown Haven (R07) copies the home's best-running program: each
+// month its score on that program's headline score moves toward the home's own plus a little, so a home that stands
+// still slips down the recognition table. PLACEHOLDERS (DECISIONS.md, overnight Stage 7 / Stage 8 tuning).
+export const LATE_TWIST = {
+  fromYear: 12,
+  raise: 8,
+  copy: { peer: 'R07', lead: 2, pull: 0.3, ceiling: 96 },
+  programScore: { PRG01: 'residentWellbeing', PRG02: 'residentWellbeing', PRG03: 'residentWellbeing', PRG04: 'clinicalSafety', PRG05: 'residentWellbeing', PRG06: 'familyTrust', PRG07: 'clinicalSafety', PRG08: 'clinicalSafety', PRG09: 'residentWellbeing', PRG10: 'familyTrust', PRG11: 'residentWellbeing', PRG12: 'residentWellbeing' },
+};

@@ -40,6 +40,7 @@ export const MENU_GROUPS = [
     row('partners', 'Community partners', 'Partnership deals, their goals and rewards', 'care_ui_14'),
     row('grants', 'Grants', 'Grants on offer and the goals they pay for', 'care_ui_14'),
     row('ledger', 'Ledger', 'Every Credit in and out, month by month', 'care_reward_01'),
+    row('store', 'Store', 'Remove Ads, Care Tokens and the Supporter Pack', 'care_reward_01'), // (Milestone 36)
   ] },
   { title: 'More', rows: [
     row('inbox', 'Inbox', 'Notices, offers, alerts and family news', 'care_ui_23'),

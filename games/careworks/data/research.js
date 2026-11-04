@@ -87,6 +87,8 @@ export const EFFECT_KEYS = ['roundSafety', 'resolvePct', 'falls', 'rehabPct', 'm
 // Queues (§26): one slot to start. The second opens with the Staff Education Centre (F27) — facility progression. VIP
 // (Milestone 36) is only a hook here: an entitlement that can open the second slot, never skip a prerequisite (core
 // ResearchSystem checks prerequisites for every start, whichever queue). Nothing sets it yet.
+// (Milestone 36: retired — there is no VIP or subscription (series rule 9), and a second queue is never sold. Kept only
+// so the M21 test still reads it; no game code imports it.)
 export const VIP = { entitlement: 'vip', milestone: 'M36', queueSlots: 1 };
 export const QUEUES = [
   { id: 'q1', name: 'Research' },

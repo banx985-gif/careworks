@@ -40,7 +40,7 @@ export const FEES = {
   careSupportFundingByLevel: FUNDING,
 };
 export const LEDGER = {
-  categories: { opening: 'Opening balance', fees: 'Accommodation fees', funding: 'Care Support Funding', wages: 'Wages', agency: 'Agency cover', careRecovery: 'Care recovery', build: 'Building', sell: 'Sold (50% back)', food: 'Food', rehabFunding: 'Rehab funding', programs: 'Specialist programs', research: 'Research', respiteFunding: 'Respite funding', programFunding: 'Program funding', supplies: 'Supplies', equipment: 'Equipment upkeep', upkeep: 'Rooms and facilities upkeep', utilities: 'Utilities and maintenance', training: 'Training', recruit: 'Recruitment', clinical: 'Clinician and hospital', loan: 'Emergency Credit', loanRepay: 'Emergency Credit repayment', investor: 'Rescue Investor', investorShare: 'Rescue Investor share', tokens: 'Care Tokens', grants: 'Grants and service contracts', partnerSupport: 'Partner support', partnerPerk: 'Partner perks (savings)', emergency: 'Emergency supplies and responses' }, // (Milestone 25) // (Milestone 23) // (Milestone 22) // (Milestone 21: Research Points in and out, currency 'rp') // (Milestone 20: each running program's weekly cost — data/programs.js) // (Milestone 16: rehab funding — data/mobility.js REHAB_FUNDING) // (Milestone 15: food, per meal served — data/dining.js FOOD_COST)
+  categories: { opening: 'Opening balance', fees: 'Accommodation fees', funding: 'Care Support Funding', wages: 'Wages', agency: 'Agency cover', careRecovery: 'Care recovery', build: 'Building', sell: 'Sold (50% back)', food: 'Food', rehabFunding: 'Rehab funding', programs: 'Specialist programs', research: 'Research', respiteFunding: 'Respite funding', programFunding: 'Program funding', supplies: 'Supplies', equipment: 'Equipment upkeep', upkeep: 'Rooms and facilities upkeep', utilities: 'Utilities and maintenance', training: 'Training', recruit: 'Recruitment', clinical: 'Clinician and hospital', loan: 'Emergency Credit', loanRepay: 'Emergency Credit repayment', investor: 'Rescue Investor', investorShare: 'Rescue Investor share', tokens: 'Care Tokens', grants: 'Grants and service contracts', partnerSupport: 'Partner support', partnerPerk: 'Partner perks (savings)', emergency: 'Emergency supplies and responses', purchase: 'Care Tokens bought', ad: 'Care Tokens from ads', store: 'Care Tokens spent' }, // (Milestone 25) // (Milestone 23) // (Milestone 22) // (Milestone 21: Research Points in and out, currency 'rp') // (Milestone 20: each running program's weekly cost — data/programs.js) // (Milestone 16: rehab funding — data/mobility.js REHAB_FUNDING) // (Milestone 15: food, per meal served — data/dining.js FOOD_COST)
   maxLines: 400, // older lines fold into one (core/EconomySystem)
 };
 
@@ -92,3 +92,19 @@ export const WALK = {
   aids: { frame: 0.8, wheelchair: 0.85 },
   aidBySupport: { 'Mobility Support': 'frame', Rehabilitation: 'frame', 'High Care': 'wheelchair' },
 };
+
+// Milestone 39b (Kairosoft gap #6, things improve with use): a program grows with the sessions it has held in this home
+// (across stops and restarts), a facility with the care tasks done at its spots (M32's use count). A small lift at each
+// step, shown on its card. Never needed to win, never sold. PLACEHOLDERS (DECISIONS.md, overnight Stage 5).
+export const USE_GROWTH = {
+  steps: [50, 150, 400],
+  names: ['Practised', 'Well loved', 'A home tradition'],
+  programPct: [3, 6, 10], // on a session's lift for those who join (group and one-to-one)
+  facilityPct: [2, 4, 6], // on the facility's own effect (with its level)
+};
+export function growthOf(n, pcts) {
+  const S = USE_GROWTH;
+  let i = -1;
+  while (i + 1 < S.steps.length && n >= S.steps[i + 1]) i++;
+  return { n, step: i + 1, name: i >= 0 ? S.names[i] : null, pct: i >= 0 ? pcts[i] : 0, next: S.steps[i + 1] ?? null, nextName: S.names[i + 1] ?? null };
+}

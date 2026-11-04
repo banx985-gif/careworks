@@ -26,7 +26,7 @@ import { rankIndexOf } from '../../../../core/CompanyRank.js';
 import { Rankings } from '../../../../core/Rankings.js';
 import { gradeRun } from '../../../../core/GradeEngine.js';
 import { Rng } from '../../../../core/Rng.js';
-import { SCORES, SCORE_IDS, WINDOW, READINGS, RANKS, REPUTATION, INSPECTION, ROUTINE_GRADE, SPEED_UNLOCKS } from '../../data/quality.js';
+import { SCORES, SCORE_IDS, WINDOW, READINGS, RANKS, REPUTATION, INSPECTION, ROUTINE_GRADE, SPEED_UNLOCKS, LATE_TWIST } from '../../data/quality.js';
 import { ALL_ACCREDITATIONS, accreditationById, COUNTER_NAMES, MEASURE_NAMES } from '../../data/accreditations.js';
 import { PEERS, PRESTIGE_PEERS, ALL_PEERS, peerById, PEER_DRIFT, RECOGNITION } from '../../data/peers.js';
 import { facilityById } from '../../data/facilities.js';
@@ -116,7 +116,7 @@ export function dayScores(readings) {
   return { scores, parts };
 }
 
-export function createQuality({ state, seed = 'careworks', bus = null, today = () => 0, year = () => 1, onAward = null, secretOpen = () => false, hasFacility = () => false }) {
+export function createQuality({ state, seed = 'careworks', bus = null, today = () => 0, year = () => 1, onAward = null, secretOpen = () => false, hasFacility = () => false, bestProgram = () => null }) {
   const st = state;
   const ranks = RANKS.map((r) => ({ id: r.id, min: r.min }));
   const wonIds = () => ALL_ACCREDITATIONS.filter((a) => st.acc[a.id]?.won != null).map((a) => a.id);
@@ -288,7 +288,32 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
     if (st.inspections.length > 24) st.inspections.splice(0, st.inspections.length - 24);
   }
   // (Milestone 32b) the four inspectors' view of the home today: the routine grade's own maths in four parts
-  const gradeNow = () => gradeRun({ categories: ROUTINE_GRADE.categories, bands: ROUTINE_GRADE.bands, facts: { ...scores(), essentialDone: history().essentialDone } });
+  // (overnight Stage 7) from Year 12 the year's focus score is graded as if it were LATE_TWIST.raise lower
+  const gradeNow = (y = year()) => {
+    const facts = { ...scores(), essentialDone: history().essentialDone };
+    const f = focusOf(y);
+    if (f) facts[f] = Math.max(0, facts[f] - LATE_TWIST.raise);
+    return gradeRun({ categories: ROUTINE_GRADE.categories, bands: ROUTINE_GRADE.bands, facts });
+  };
+  // The inspectors' focus in year y (null before Year 12): seeded by the home, never the same two years running.
+  function focusOf(y) {
+    if (y < LATE_TWIST.fromYear) return null;
+    let prev = null;
+    let f = null;
+    for (let k = LATE_TWIST.fromYear; k <= y; k++) {
+      const pool = SCORE_IDS.filter((id) => id !== prev);
+      f = pool[Math.floor(new Rng(`${seed}:focus:${k}`).next() * pool.length)];
+      prev = f;
+    }
+    return f;
+  }
+  // Crown Haven copying the home's best-running program (from Year 12, once it has joined): { program, score } or null
+  function copying() {
+    if (year() < LATE_TWIST.fromYear || !st.peers[LATE_TWIST.copy.peer]) return null;
+    const id = bestProgram();
+    const score = id ? LATE_TWIST.programScore[id] : null;
+    return score ? { program: id, score } : null;
+  }
   function inspect(day) {
     const a = accreditationById(st.applied.id);
     st.applied = null;
@@ -310,12 +335,15 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
 
   // --- the yearly routine review ----------------------------------------------------------------------------------------
   function routineReview(day) {
-    const g = gradeNow();
+    const ry = Math.max(1, Math.round(day / INSPECTION.routineEvery)); // (overnight Stage 7: the year just finished)
+    const g = gradeNow(ry);
     const lines = g.categories.map((c) => ({ text: `${c.name}: ${c.score} / ${c.max}`, ok: c.score >= c.max * 0.6 }));
     const h = history();
     lines.push({ text: h.incidents ? `${h.incidents} incident${h.incidents === 1 ? '' : 's'} this month, handled (never counted against the home)` : 'No incidents this month', ok: true, info: true });
     const gain = REPUTATION.routine[g.band] ?? 0;
-    record({ kind: 'routine', day, pass: true, grade: g.band, total: g.total, reputation: gain, lines, panel: panelOf(g) }); // (Milestone 32b: the four inspectors)
+    const focus = focusOf(ry);
+    if (focus) lines.unshift({ text: `This year the inspectors looked hardest at ${nameOf(focus)} (they expected ${LATE_TWIST.raise} more)`, ok: true, info: true }); // (overnight Stage 7)
+    record({ kind: 'routine', day, pass: true, grade: g.band, total: g.total, reputation: gain, lines, panel: panelOf(g), ...(focus ? { focus } : {}) }); // (Milestone 32b: the four inspectors)
     st.lastRoutine = day;
     if (gain) addRep(gain, day, `Routine review: grade ${g.band}`);
     bus?.emit('quality:inspection', { id: null, kind: 'routine', pass: true, grade: g.band, total: g.total, day });
@@ -359,6 +387,16 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
         const move = (strong ? D.strongUp : 0) + rng.range(-D.noise, D.noise);
         return r1(Math.max(D.floor, Math.min(D.ceiling, v + move)));
       });
+    }
+    // (overnight Stage 7) Crown Haven copies the home's best-running program: part of the way to the home's own score + a little
+    const cp = copying();
+    const rec7 = cp && st.peers[LATE_TWIST.copy.peer];
+    if (rec7) {
+      const C = LATE_TWIST.copy;
+      const i = SCORE_IDS.indexOf(cp.score);
+      const target = Math.min(C.ceiling, scores()[cp.score] + C.lead);
+      if (target > rec7.scores[i]) rec7.scores[i] = r1(rec7.scores[i] + (target - rec7.scores[i]) * C.pull);
+      rec7.copying = cp.program;
     }
   }
   const peerAvg = (id) => r1(avg(st.peers[id].scores));
@@ -412,6 +450,8 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
     scores,
     addReputation: (amount, day, reason) => amount > 0 && addRep(amount, day ?? today(), reason), // (Milestone 32: an achievement's small lift; Milestone 32b: a show's place)
     gradeNow, // (Milestone 32b: the routine grade of the home today — the inspectors' panel and the tests)
+    focusOf, // (overnight Stage 7: the inspectors' focus in a year, null before Year 12)
+    copying, // (overnight Stage 7: what Crown Haven is copying now, or null)
     parts: (id) => st.samples.at(-1)?.parts[id] ?? [],
     measure,
     history,

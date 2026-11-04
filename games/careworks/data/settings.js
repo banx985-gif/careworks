@@ -2,14 +2,14 @@
 // SETTINGS_KEY (and in the account store), never in a campaign slot, so every home on this device shares them. The
 // series list in its order and names (Robot Workshop's Settings screen; RACEWORKS and DEVWORKS follow it), then Help /
 // tutorial replay, Privacy & legal and Credits (main.js), then CAREWORKS's own extras at the bottom.
-// CAREWORKS has no sound yet (Milestone 38): the sound switches are kept and read through core/Settings all the same.
+// Milestone 38: the sound switches drive core/AudioManager (data/audio.js); Reduced motion and Low worker detail are extras.
 //   Each entry: { id, label, group, options: [{ id, label }], line? } · extra: true = a CAREWORKS extra
 const onOff = [{ id: false, label: 'Off' }, { id: true, label: 'On' }];
 const lvl = (ids) => ids.map((id) => ({ id, label: id === 0 ? 'Off' : `${id}%` }));
 const muteOpts = [{ id: false, label: 'Playing' }, { id: true, label: 'Muted' }];
 
 export const SETTINGS = [
-  { id: 'muted', label: 'Sound', group: 'Sound and music', options: [{ id: true, label: 'Off' }, { id: false, label: 'On' }], line: 'All music and sound effects on or off (the home’s sounds arrive in a later update).' },
+  { id: 'muted', label: 'Sound', group: 'Sound and music', options: [{ id: true, label: 'Off' }, { id: false, label: 'On' }], line: 'All music and sound effects on or off. Every moment also shows in words and colour.' },
   { id: 'music', label: 'Music volume', group: 'Sound and music', options: lvl([0, 25, 50, 75, 100]) },
   { id: 'musicMuted', label: 'Music mute', group: 'Sound and music', options: muteOpts },
   { id: 'sfx', label: 'Sound effects volume', group: 'Sound and music', options: lvl([0, 25, 50, 75, 100]) },
@@ -24,11 +24,14 @@ export const SETTINGS = [
   // CAREWORKS extras (after the series list).
   { id: 'nameTags', label: 'Show name tags', group: 'In the home', extra: true, options: onOff, line: 'Everyone’s first name over their head.' },
   { id: 'taskMarkers', label: 'Show task markers', group: 'In the home', extra: true, options: onOff, line: 'The small icon over each staff member (their task, resting, tired) and the call bell.' },
-  { id: 'bellSound', label: 'Call-bell alert sound', group: 'In the home', extra: true, options: onOff, line: 'A soft chime when a call bell rings (with the home’s sounds, in a later update).' },
+  { id: 'bellSound', label: 'Call-bell alert sound', group: 'In the home', extra: true, options: onOff, line: 'A soft chime when a call bell rings.' },
+  // (Milestone 38: accessibility — after the series list, like every CAREWORKS extra)
+  { id: 'reducedMotion', label: 'Reduced motion', group: 'Accessibility', extra: true, options: onOff, line: 'Effects appear and fade in place, nothing drifts, grows or sways; the big moments simply fade in.' },
+  { id: 'lowDetail', label: 'Low worker detail', group: 'Accessibility', extra: true, options: onOff, line: 'Simpler figures in the home (no sway or breathing): smoother on slower phones.' },
 ];
 export const SETTINGS_DEFAULTS = {
   muted: false, music: 75, musicMuted: false, sfx: 100, sfxMuted: false, haptics: true, fpsMode: 'auto', textSize: 'normal', reducedFlashes: false, screenShake: 'normal',
-  showMenu: true, showHints: true, nameTags: true, taskMarkers: true, bellSound: true,
+  showMenu: true, showHints: true, nameTags: true, taskMarkers: true, bellSound: true, reducedMotion: false, lowDetail: false,
   guideDone: false, // (Milestone 34: this player has finished or skipped Rosie's first-week guide — a new home starts with it off; not a row)
 };
 export const SETTINGS_KEY = 'careworks:settings';

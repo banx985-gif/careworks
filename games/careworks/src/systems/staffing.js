@@ -270,6 +270,20 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
       refreshBoard(c.id, 'paid');
       return { ok: true, reason: null };
     },
+    // (Milestone 36) a new Local Applicants board for a rewarded ad or Care Tokens: the same draw as the free one, no Credits.
+    convenienceRefresh(reason) {
+      refreshBoard(RECRUIT.freeChannel, reason);
+      return { ok: true, reason: null };
+    },
+    // (Milestone 36) one day off a course already under way (a rewarded ad): never finishes it — at least a day stays.
+    shortenTraining(staffId, days = 1) {
+      const t = ts.trainingOf(staffId);
+      if (!t) return { ok: false, reason: 'Not on a course' };
+      const left = t.days - t.daysDone;
+      if (left <= 1) return { ok: false, reason: 'Finishes tomorrow already' };
+      t.daysDone += Math.min(days, left - 1);
+      return { ok: true, reason: null, left: t.days - t.daysDone, scope: `${staffId}:${t.courseId}:${t.startedDay}` };
+    },
     canHire(cardId) {
       const c = rs.get(cardId);
       if (!c) return { ok: false, reason: 'They are no longer on the board' };

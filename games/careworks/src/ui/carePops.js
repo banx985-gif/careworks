@@ -31,9 +31,11 @@ const placeCentre = (id) => {
   return { x: (fp.col + fp.w / 2) * HOME.cellSize, y: (fp.row + fp.h / 2) * HOME.cellSize };
 };
 
-export function createCarePops({ bus, world: getWorld, vfx, screen, isVisible, fxOn = () => true }) {
+export function createCarePops({ bus, world: getWorld, vfx, screen, isVisible, fxOn = () => true, still = () => false }) {
   liveWorld = getWorld;
-  const pops = []; // live: { key, x, y, left }
+  // (Milestone 38) a fixed pool of pop records, reused: nothing is made while the game runs. still(): Reduced motion —
+  // the pop appears and fades in place (no rise, no grow).
+  const pops = Array.from({ length: POPS_MAX_LIVE }, () => ({ on: false, key: null, x: 0, y: 0, left: 0 }));
   const since = {}; // kind → real seconds since it last showed
   const log = []; // shown pops (tests / debug): { kind, spot, t }
   let clock = 0;
@@ -42,12 +44,17 @@ export function createCarePops({ bus, world: getWorld, vfx, screen, isVisible, f
   function pop(kind, spot, plan, lift = LIFT.place) {
     const cfg = CARE_POPS[kind] ?? CARE_FX[kind]; // (Milestone 28b: the garden sparkle)
     if (!cfg || !plan || !isVisible()) return false;
-    if (pops.length >= POPS_MAX_LIVE) return false;
+    const slot = pops.find((p) => !p.on);
+    if (!slot) return false;
     if ((since[kind] ?? Infinity) < cfg.gap) return false;
     const at = screen.worldPointOf(plan.x, plan.y, lift);
-    if (pops.some((p) => p.key === spot || Math.hypot(p.x - at.x, p.y - at.y) < NEAR)) return false;
-    vfx.sprite('world', cfg.art, at.x, at.y, { size: cfg.size, life: cfg.life, from: 0.45, to: 1, rise: 40, hold: 0.5 });
-    pops.push({ key: spot, x: at.x, y: at.y, left: cfg.life });
+    if (pops.some((p) => p.on && (p.key === spot || Math.hypot(p.x - at.x, p.y - at.y) < NEAR))) return false;
+    vfx.sprite('world', cfg.art, at.x, at.y, still() ? { size: cfg.size, life: cfg.life, from: 1, to: 1, rise: 0, hold: 0.5 } : { size: cfg.size, life: cfg.life, from: 0.45, to: 1, rise: 40, hold: 0.5 });
+    slot.on = true;
+    slot.key = spot;
+    slot.x = at.x;
+    slot.y = at.y;
+    slot.left = cfg.life;
     since[kind] = 0;
     log.push({ kind, spot, t: +clock.toFixed(2) });
     if (log.length > 40) log.shift();
@@ -91,17 +98,17 @@ export function createCarePops({ bus, world: getWorld, vfx, screen, isVisible, f
 
   return {
     log,
-    live: () => pops.length,
+    live: () => pops.filter((p) => p.on).length,
     pop, // tests: show one now
     clear() {
-      pops.length = 0;
+      for (const p of pops) p.on = false;
       for (const k of Object.keys(since)) delete since[k];
     },
     // Real seconds (pops keep their pace at any game speed).
     update(dt) {
       clock += dt;
       for (const k of Object.keys(since)) since[k] += dt;
-      for (let i = pops.length - 1; i >= 0; i--) if ((pops[i].left -= dt) <= 0) pops.splice(i, 1);
+      for (const p of pops) if (p.on && (p.left -= dt) <= 0) p.on = false;
     },
   };
 }

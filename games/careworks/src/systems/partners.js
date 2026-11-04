@@ -432,6 +432,11 @@ export function createPartners({ care, ledger, bus = null, today = () => 0, seed
       progressOf: (c) => grantProgress(c),
       struggling,
       newBoardForTests: () => newBoard(today()),
+      // (Milestone 36) a fresh grant board for a rewarded ad or Care Tokens: this month's offers drawn again (taken grants stay)
+      redrawBoard() {
+        newBoard(today());
+        return { ok: true, reason: null };
+      },
       // Tests and ?debug=1: this grant type on the board now. → the offer
       offerForTests(grantId) {
         const g = grantById(grantId);

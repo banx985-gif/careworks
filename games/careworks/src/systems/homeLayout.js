@@ -519,8 +519,9 @@ export function createLayout({ saved = null, bus = null } = {}) {
     // --- Milestone 25c: levels ---
     levelOf: (uid) => fs.level(uid),
     levelOfDef: (defId) => fs.levelOfDef(defId),
-    levelMultOf: (uid) => (fs.get(uid) ? levelMultOf(fs.get(uid).def, fs.level(uid)) : 1),
-    levelMultOfDef: (defId) => levelMultOf(defId, Math.max(1, fs.levelOfDef(defId))),
+    // (Milestone 39b: × the piece's growth from use — homeWorld sets useBonus(uid) → percent; 0 until then)
+    levelMultOf: (uid) => (fs.get(uid) ? levelMultOf(fs.get(uid).def, fs.level(uid)) * (1 + (layout.useBonus?.(uid) ?? 0) / 100) : 1),
+    levelMultOfDef: (defId) => levelMultOf(defId, Math.max(1, fs.levelOfDef(defId))) * (1 + Math.max(0, ...pieces().filter((pc) => pc.defId === defId).map((pc) => layout.useBonus?.(pc.uid) ?? 0)) / 100),
     upgradePending: (uid) => fs.upgradePending(uid),
     invested: (uid) => fs.invested(uid),
     nextUpgrade(uid) {

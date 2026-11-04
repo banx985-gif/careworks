@@ -288,6 +288,7 @@ export const SAVE_MIGRATIONS = {
   32: (record) => record, // (Milestone 32b: no verdicts state = no Open Day or Awards Evening held yet; older inspections simply have no inspectors' panel)
   33: (record) => record, // (Milestone 33: no ending state = the ending not reached yet — a home already past Year 16 gets it at its next month close; no NG+ start = an ordinary home)
   34: (record) => ({ ...record, data: record.data?.guide ? record.data : { ...record.data, guide: OLD_HOME_GUIDE() } }), // (Milestone 34: a home saved before the first-week guide is already under way — its guide starts off; Settings can switch it on)
+  35: (record) => record, // (Milestone 36: no store block = nothing bought or granted in this home, no token accents, no ad counts)
 };
 
 // Milestone 34: an older home's first-week guide — off, its welcome card never shown (src/systems/guide.js).

@@ -1,5 +1,6 @@
 // Facility Setup lists (Milestone 0, bible §3.5.2–3.5.4). Plain data only: names have no gameplay effect, the colour
 // is cosmetic, and the Founder perks are text until Milestone 3 applies them.
+import { STORE_PALETTES } from './monetisation.js';
 
 export const NAME_MAX = { facility: 24, director: 16 };
 
@@ -28,7 +29,8 @@ export const PALETTES = [
   { id: 'cyan', name: 'Cyan', hex: '#1E9CC4', light: '#DDF1F8', dark: '#12607A' },
   { id: 'cream', name: 'Warm Cream', hex: '#D4A64A', light: '#FBF0D6', dark: '#81601C' },
 ];
-export const paletteById = (id) => PALETTES.find((p) => p.id === id) ?? PALETTES[0];
+// (Milestone 36) the store's cosmetic accents (data/monetisation.js) are found too; Facility Setup offers only the six.
+export const paletteById = (id) => PALETTES.find((p) => p.id === id) ?? STORE_PALETTES.find((p) => p.id === id) ?? PALETTES[0];
 
 // The five roles live in data/roles.js (Milestone 3); re-exported here for the setup screens.
 export { ROLES } from './roles.js';

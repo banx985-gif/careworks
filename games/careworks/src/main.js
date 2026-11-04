@@ -78,7 +78,7 @@ import { createTopBar } from '../../../core/ui/TopBar.js';
 import { createBottomBar } from '../../../core/ui/BottomBar.js';
 import { VfxSystem } from '../../../core/VfxSystem.js';
 import { BOTTOM_SLOTS, bottomRoute, TOP_ICONS, RANK_NONE, CARE_ICONS, TOP_SHEETS, SPEED_LOCKED, PORTRAIT_CROP } from '../data/bars.js';
-import { SCORES, RANK_OPENS, RANK_BEAT, SPEED_UNLOCKS, QUALITY_ART, INSPECTION } from '../data/quality.js';
+import { SCORES, RANK_OPENS, RANK_BEAT, SPEED_UNLOCKS, QUALITY_ART, INSPECTION, LATE_TWIST } from '../data/quality.js';
 import { accreditationById } from '../data/accreditations.js';
 import { PEERS, peerById } from '../data/peers.js';
 import { ECONOMY_START } from '../data/balance.js';
@@ -103,7 +103,7 @@ import { INSPECTORS, inspectorById, tierById, VERDICT_TEXT, OPEN_DAY, AWARDS_EVE
 import { ASSETS } from '../data/assets.js';
 import { SAVE, SAVE_TEXT } from '../data/save.js';
 import { createCampaigns } from './app/campaigns.js';
-import { paletteById } from '../data/setup.js';
+import { paletteById, PALETTES } from '../data/setup.js';
 import { NEEDS, OUTCOMES, RESIDENTS, validateResidents, supportLevel, ROOM_TEMPLATES, STAYS } from '../data/residents.js';
 import { DataValidator } from '../../../core/DataValidator.js';
 import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
@@ -137,7 +137,7 @@ import { TIERS as PARTNER_TIERS, GRANT_RULES, PILOT, partnerById, grantById, COU
 import { INCIDENTS, incidentById, SEVERITY, SUPPLIES, LEDGER_CATEGORY as LEDGER_CATEGORY_EMERGENCY } from '../data/incidents.js';
 import { bandFor } from './systems/incidents.js';
 import { levelOfNeeds, requiredCost, fundingOf } from './systems/economy.js';
-import { VISIBLE_PROGRAMS, validatePrograms, dayList, LEDGER_CATEGORY } from '../data/programs.js';
+import { VISIBLE_PROGRAMS, validatePrograms, dayList, LEDGER_CATEGORY, programById } from '../data/programs.js';
 import { unlockWords } from './systems/programs.js';
 import { RESEARCH, BRANCHES, researchById, nodeLabel, validateResearch, QUEUES } from '../data/research.js';
 import { FACILITIES } from '../data/facilities.js';
@@ -158,6 +158,12 @@ import { createTestScreen } from './screens/TestScreen.js';
 import { GUIDE_TEXT, HELP_TEXT, HELP_TOPICS, helpTopicById } from '../data/guide.js'; // (Milestone 34: Rosie's first-week guide, the Help pages)
 import { createFirstWeekGuide, guideStart } from './systems/guide.js';
 import { createGuideMark } from './ui/guideMark.js';
+import { AudioManager } from '../../../core/AudioManager.js'; // (Milestone 38)
+import { SOUNDS, MUSIC, AUDIO_BASE, AUDIO_MANIFEST, EVENT_SOUNDS, MUSIC_BANDS } from '../data/audio.js';
+import { COMBOS, COMBO_REACH } from '../data/combos.js'; // (overnight Stage 6)
+import { createMonetisation } from './systems/monetisation.js'; // (Milestone 36: the store and rewarded ads, stubs only)
+import { FakeStoreProvider } from '../../../core/FakeStoreProvider.js';
+import { PRODUCTS, PRODUCT_ORDER, TOKEN_SINKS, STORE_TEXT, AD_TEXT } from '../data/monetisation.js';
 const COL = THEME.color;
 
 const W = 1080;
@@ -255,8 +261,38 @@ function applySettings() {
   if (governor.mode !== govMode()) governor.setMode(govMode());
 }
 applySettings();
+// Milestone 38: sound and music, all code-made (data/audio.js); nothing before the first tap. Every moment with a sound
+// also has its words and colour on screen. Reduced motion and Low worker detail (Settings → Accessibility).
+const audio = new AudioManager({ bus, sounds: SOUNDS, music: MUSIC, basePath: AUDIO_BASE, fileList: () => fetch(AUDIO_MANIFEST, { cache: 'no-cache' }).then((r) => (r.ok ? r.json() : [])).catch(() => []) });
+audio.installUnlock();
+function applyVolumes() {
+  audio.setVolumes({ sfx: settings.get('sfxMuted') ? 0 : (settings.get('sfx') ?? 100) / 100, music: settings.get('musicMuted') ? 0 : 0.6 * ((settings.get('music') ?? 75) / 100) });
+  audio.setMuted(!!settings.get('muted'));
+}
+applyVolumes();
+const reducedMotion = () => !!settings.get('reducedMotion');
+const simpleFigures = () => lowFx() || !!settings.get('lowDetail') || reducedMotion();
+for (const [ev, id] of Object.entries(EVENT_SOUNDS)) {
+  bus.on(ev, () => {
+    if (ev === 'care:bell' && settings.get('bellSound') === false) return;
+    if (ev.startsWith('care:') && (router.currentName !== 'home' || spawn)) return;
+    audio.play(id);
+  });
+}
+bus.on('input:up', () => (sheet.active || dialog.active) && audio.play('sfx_ui'));
+let musicId = null;
+function syncMusic() {
+  const band = open?.world?.band ?? null;
+  const id = router.currentName === 'home' && open ? (MUSIC_BANDS.evening.includes(band?.id ?? band) ? 'music_evening' : 'music_day') : 'music_title';
+  if (id === musicId) return;
+  musicId = id;
+  audio.playMusic(id);
+}
+bus.on('screen:change', () => syncMusic());
+bus.on('care:band', () => syncMusic());
 settings.onChange((k) => {
   applySettings();
+  applyVolumes();
   if (k === 'showMenu') syncMenuSlot();
 });
 debug.log(`seeded rng check: ${rng.int(0, 9999)} (same every reload)`);
@@ -358,6 +394,8 @@ function openRun(n, data) {
   if (debug.enabled && PARAMS.get('paused') === '1') clock.speed = 0; // ?debug=1&paused=1: open exactly as saved (tests)
   data.economy ??= { ...ECONOMY_START };
   open = { n, data, world, seenMissed: new Set(), resumeEnding: !!world.ending?.pending || !!world.ending?.livingDue }; // (Milestone 33: a reload mid-ceremony)
+  monetisation.loadRun(data); // (Milestone 36: this home's granted purchases, token palettes, ad counts)
+  if (monetisation.payHeld()) autosave.request('store');
   keepPages(world.endOfLife.pages(), data.facility.name); // (Milestone 27: any page this campaign has that the account book hasn't)
   vfx.clear();
   carePops.clear();
@@ -373,6 +411,7 @@ function saveRun() {
   o.data.economy = { ...(o.data.economy ?? ECONOMY_START), credits: o.world.ledger.balance }; // (the ledger is the truth; this is the summary)
   o.world.achievements?.flush(); // (Milestone 32: records that only grew go to the account store with the run save)
   o.data.guide = guide.save(); // (Milestone 34: the first-week guide's progress)
+  o.data.monetisation = monetisation.serializeRun(); // (Milestone 36)
   return campaigns.save(o.n, o.data);
 }
 // Autosave (core/Autosave): the series cadence (every game day, a rolling save, and when the app goes to the
@@ -389,6 +428,41 @@ autosave.installBackground();
 bus.on('autosave:failed', ({ error }) => debug.log(`save failed: ${error?.message ?? error}`));
 bus.on('care:band', ({ band }) => debug.log(`band: ${band}`));
 
+// Milestone 36: the store and rewarded ads (src/systems/monetisation.js on core AdService / CommerceService /
+// EntitlementService). No real store or ad network yet: with no provider the Store says it is unavailable. ?debug=1:
+// core/FakeStoreProvider — the Store's debug section picks what the next ad or purchase does. Kept in the account store
+// under 'monetisation'; the open home keeps its half in data.monetisation.
+const monetisation = createMonetisation({ bus, home: () => (open && !spawn ? open : null) });
+monetisation.saveHome = () => (open && !spawn ? saveRun() : Promise.resolve());
+monetisation.setAccount({
+  load: async () => (await campaigns.slots.loadAccount())?.monetisation ?? null,
+  save: (block) => {
+    if (!campaigns) return Promise.resolve();
+    accountChain = accountChain
+      .then(async () => {
+        const acc = await campaigns.slots.loadAccount();
+        await campaigns.slots.saveAccount({ ...acc, monetisation: block });
+      })
+      .catch((err) => debug.log(`store account not saved: ${err?.message ?? err}`));
+    return accountChain;
+  },
+});
+let fakeStore = null;
+if (debug.enabled) {
+  const FAKE_KEY = 'careworks:fakestore';
+  fakeStore = new FakeStoreProvider({
+    products: PRODUCTS,
+    persist: { load: () => JSON.parse(localStorage.getItem(FAKE_KEY) ?? 'null'), save: (s) => localStorage.setItem(FAKE_KEY, JSON.stringify(s)) },
+    // the stand-in ad: the game's own dialog while it "plays"; Close early = cancelled
+    present: (kind, placementId, outcome) => new Promise((resolve) => dialog.show({ title: kind === 'rewarded' ? 'Pretend ad (debug)' : 'Pretend full-screen ad (debug)', body: `No real ad is shown. Next outcome: ${outcome}.`, dismissible: false, buttons: [{ id: 'end', label: 'Watched to the end', accent: COL.good, onTap: () => resolve(outcome) }, { id: 'early', label: 'Close early', accent: COL.progress, onTap: () => resolve('cancel') }] })),
+  });
+  monetisation.setProvider(fakeStore);
+}
+bus.on('ledger:close', () => {
+  if (router.currentName !== 'home' || spawn) return;
+  monetisation.breakPoint('monthClose', { tutorial: !!guide?.showing, decisionPending: momentUi().popup || momentUi().sheet }).catch(() => {});
+});
+
 async function prepareSaves() {
   // (Milestone 35) IndexedDB first, localStorage behind it (core FallbackAdapter); ?storage=local switches IndexedDB off (a test)
   const adapter = await createStorageAdapter({ dbName: SAVE.dbName, prefix: SAVE.localPrefix, fallback: true, preferLocal: PARAMS.get('storage') === 'local' });
@@ -403,6 +477,8 @@ async function prepareSaves() {
   await loadMemoryBook(); // (Milestone 27: the account's Memory Book)
   await loadSecretsAccount(); // (Milestone 29: secrets found in any run, Prestige Tokens, records)
   await loadAchievementsAccount(); // (Milestone 32: achievements, account bests, the Hall of Fame, keepsakes)
+  await monetisation.loadAccount(); // (Milestone 36: Remove Ads, the Supporter Pack, processed purchases, ad caps)
+  monetisation.startup().catch(() => {}); // (purchases the store re-delivers, then a quiet check; no store = nothing)
   ngAccount = (await campaigns.slots.loadAccount())?.ngplus ?? null; // (Milestone 33: the finished homes, for the Trophy Case)
   accountNote(); // (Milestone 35: an account that had to fall back, or start again)
   if (debug.enabled) {
@@ -647,8 +723,8 @@ const dayBeat = createDayBeat();
 // Milestone 25c: the next-step hint line (core/ui/HintLine; the rules are hintRules() below, first match wins)
 // (Milestone 32c: Rosie Hart gives the next-step hints)
 const hintLine = new HintLine({ rect: () => homeScreen.rectOf('hint'), rules: hintRules().map((r) => ({ ...r, text: typeof r.text === 'function' ? () => guideSays(r.text()) : guideSays(r.text) })), quiet: () => !open || !!spawn || router.currentName !== 'home' || sheet.active || homeScreen.buildMode || settings.get('showHints') === false || !!bigBeat || ceremony.active || endingPages.active || guide.showing }); // (Milestone 34: quiet while Rosie's guide shows a step)
-const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it), onWings: () => openWings(), hint: hintLine, prefs: { nameTags: () => settings.get('nameTags') !== false, taskMarkers: () => settings.get('taskMarkers') !== false, lowFx } });
-const carePops = createCarePops({ bus, fxOn: () => fxOn(), world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused && !lowFx() }); // (Milestone 25c: Low graphics — no pops)
+const homeScreen = createHomeScreen({ renderer, layout, assets, bus, sheet, campaign: () => open, world: () => open?.world ?? null, openSheet: (kind, id) => openHomeSheet(id), onMenu: () => leaveHome(), topBar, bottomBar, vfx, dayBeat, debug, onStaffWarning: () => openRoster(), onShop: () => openBuildList(), onSell: (it) => confirmSell(it), onWings: () => openWings(), hint: hintLine, prefs: { nameTags: () => settings.get('nameTags') !== false, taskMarkers: () => settings.get('taskMarkers') !== false, lowFx: () => simpleFigures() } }); // (Milestone 38: Low worker detail / Reduced motion → the simple figures too)
+const carePops = createCarePops({ bus, still: () => reducedMotion(), fxOn: () => fxOn(), world: () => open?.world ?? null, vfx, screen: homeScreen, isVisible: () => router.currentName === 'home' && !!open && !homeScreen.buildMode && !loop.paused && !lowFx() }); // (Milestone 25c: Low graphics — no pops)
 // The end of each day: the medium beat ("Day 3 — all routine care done" / "2 tasks missed").
 bus.on('care:dayEnd', (summary) => {
   if (!open || router.currentName !== 'home') return;
@@ -1544,6 +1620,16 @@ function accreditationSub(w, a) {
   if (a.status === 'records') return 'The inspectors want a month of records first';
   return a.check.pass ? 'Ready: today the home would pass' : `Not yet: ${a.check.lines.filter((l) => !l.ok).length} thing${a.check.lines.filter((l) => !l.ok).length === 1 ? '' : 's'} short${Q.applied() ? '' : ''}`;
 }
+// (overnight Stage 7) the late twist on the Quality page: this year's inspectors' focus, what Crown Haven is copying.
+function lateTwistLines(w) {
+  const Q = w.quality;
+  const f = Q.focusOf?.(w.clock.year);
+  const cp = Q.copying?.();
+  return [
+    ...(f ? [{ text: `Year ${w.clock.year}: the inspectors look hardest at ${SCORES.find((x) => x.id === f)?.name} this year (they expect ${LATE_TWIST.raise} more)`, color: COL.warn }] : []),
+    ...(cp ? [{ text: `Crown Haven is copying your ${programById(cp.program)?.name ?? 'best'} program: keep improving to stay ahead`, color: COL.warn }] : []),
+  ];
+}
 function qualityTabs(w) {
   const Q = w.quality;
   const s = Q.scores();
@@ -1554,6 +1640,7 @@ function qualityTabs(w) {
       { text: `Reputation ${Q.reputation.toLocaleString('en-GB')}${nx ? ` · Rank ${nx.rank} at ${nx.need.toLocaleString('en-GB')}${nx.accreditations ? ` and ${nx.accreditations} accreditation${nx.accreditations === 1 ? '' : 's'} (${nx.have} won)` : ''}` : ' · the highest rank'}`, color: COL.actionDark },
       ...(nx ? [{ text: `Rank ${nx.rank} opens: ${RANK_OPENS[nx.rank]}`, color: COL.textMuted }] : []),
       { text: 'Reputation grows from good scores held month after month, routine reviews and accreditations. It never drops below your rank.', color: COL.textMuted },
+      ...lateTwistLines(w), // (overnight Stage 7)
     ], bars: nx ? [{ label: `To Rank ${nx.rank}`, value: pct, color: COL.progress, text: `${Math.round(pct)}%` }] : [] },
     ...SCORES.map((sc) => ({ lines: [{ text: `What moves this: ${sc.moves}`, color: COL.textMuted, glyph: artGlyph(SCORE_ICONS[sc.id]) }], bars: [{ label: sc.name, value: s[sc.id], color: scoreColour(s[sc.id]), text: `${Math.round(s[sc.id])}` }] })),
     { lines: [{ text: 'Each score is the average of the last month, so one good or bad day never swings it.', color: COL.textMuted }], columns: 1, buttons: [{ id: 'quality:parts', label: 'What makes up each score', sub: 'Every part and its weight, from the home’s own records', icon: QUALITY_ART.icon, accent: COL.progress, onTap: () => openScoreParts() }, { id: 'quality:complaints', label: 'Compliments & complaints', sub: `${w.family.open().length} open · ${w.family.compliments().length} compliments`, icon: FAMILY_ICONS.complaint, accent: COL.action, onTap: () => openComplaints() }] },
@@ -2118,7 +2205,7 @@ function openProgram(id) {
       ...(R.prop ? ['Brings its own things to the session (the activity prop)'] : []),
     ];
     if (run && !x.hours.ok) res.push({ text: 'Short of staff hours on the roster now: sessions still run when someone can lead them', color: COL.warn });
-    const adds = [programSchedule(d), { text: `Suits: ${d.suits.text}`, color: COL.actionDark }, { text: 'Residents choose: nobody is made to join, and a refused plan option or activity is never overridden.', color: COL.textMuted }];
+    const adds = [programSchedule(d), growthLine(w.programGrowthOf(d.id), 'session'), { text: `Suits: ${d.suits.text}`, color: COL.actionDark }, { text: 'Residents choose: nobody is made to join, and a refused plan option or activity is never overridden.', color: COL.textMuted }];
     const fx = [{ text: x.effect, color: COL.good }, ...(x.prestige ? [{ text: x.boost > 1 ? `The Centenarian Garden is making it ${Math.round((x.boost - 1) * 100)}% stronger` : 'A Centenarian Garden in the home would make it stronger', color: x.boost > 1 ? COL.good : COL.textMuted }] : [])]; // (Milestone 31)
     const part = run ? [
       { text: `Running since ${agoWord(w, run.since)}: ${run.sessions} session${run.sessions === 1 ? '' : 's'} so far`, color: COL.actionDark },
@@ -2215,9 +2302,15 @@ function openBuildList() {
         { title: 'Facilities', columns: 1, buttons: BUILDABLE_FACILITIES.map((d) => row(d, 'facility')) },
         // (Milestone 31: the prestige spaces, once their secret is found — never before, not even greyed)
         ...(prestige.length ? [{ title: 'Prestige spaces', columns: 1, buttons: prestige.map((d) => row(d, 'facility')) }] : []),
+        comboSection(w), // (overnight Stage 6)
       ],
     };
   });
+}
+// (overnight Stage 6) Placement combos on the Build list: every pair, ✓ when placed close together now (a bonus only).
+function comboSection(w) {
+  const on = new Set((w.combos?.() ?? []).map((x) => x.combo.id));
+  return { title: 'Placement combos (a bonus, never needed)', lines: [{ text: `Place these within ${COMBO_REACH} tiles of each other: the first gets +5% to its own effect. In Build Mode a dotted line joins each pair.`, color: COL.textMuted }, ...COMBOS.map((c) => ({ text: `${on.has(c.id) ? '✓ ' : '· '}${c.text}`, color: on.has(c.id) ? COL.good : COL.actionDark }))] };
 }
 // Selling asks first (50% back); a room with a resident, or the home's only Dining Room / Nurse Station …, can't go.
 function confirmSell(it) {
@@ -2271,13 +2364,13 @@ function drawBigBeat(ctx) {
   // (Milestone 28b: the Prestige Aura behind a Rank S / S+ or C10 picture — off with Reduced flashes or Low graphics)
   if (b.aura && fxOn()) {
     ctx.save();
-    ctx.globalAlpha *= 0.55 + 0.25 * Math.sin(b.age * 2.4);
+    ctx.globalAlpha *= reducedMotion() ? 0.7 : 0.55 + 0.25 * Math.sin(b.age * 2.4); // (Milestone 38: no pulse with Reduced motion)
     assets.drawContained(ctx, CARE_FX.prestige.art, { x: x - w * 0.15, y: y - h * 0.15, w: w * 1.3, h: h * 1.3 });
     ctx.restore();
   }
   assets.draw(ctx, b.art, x, y, w, h);
   // (Milestone 28b: the Award Confetti over an award's picture, drifting down — off with Reduced flashes or Low graphics)
-  if (b.confetti && fxOn()) assets.drawContained(ctx, QUALITY_ART.confetti, { x: x - w * 0.1, y: y - h * 0.25 + b.age * 40, w: w * 1.2, h: h * 0.7 });
+  if (b.confetti && fxOn()) assets.drawContained(ctx, QUALITY_ART.confetti, { x: x - w * 0.1, y: y - h * 0.25 + (reducedMotion() ? 0 : b.age * 40), w: w * 1.2, h: h * 0.7 });
   // (Milestone 28b: a second picture in the corner — the Rehab Success Badge, the National Excellence Trophy)
   if (b.badge) assets.drawContained(ctx, b.badge, { x: x + w - w * 0.34, y: y + h - h * 0.38, w: w * 0.36, h: h * 0.36 });
   ctx.fillStyle = '#FFFFFF';
@@ -3093,6 +3186,7 @@ function openBusiness() {
             { id: 'ledger', label: 'Ledger', sub: `Balance ${credits(b)} Credits · this month and last, line by line`, icon: 'care_ui_05', accent: COL.action, onTap: () => openLedger() },
             ...(open?.world ? [partnersButton(open.world), grantsButton(open.world)] : []), // (Milestone 23)
             ...(open?.world ? [{ id: 'business:supplies', label: 'Emergency supplies', sub: `Stock ${Math.round(open.world.incidents.supplies.stock)} / 100 · ${open.world.incidents.supplies.plan.name} · Preparedness ${open.world.incidents.prep().score}`, icon: EMERGENCY_ICON, accent: COL.action, onTap: () => openSupplies() }] : []), // (Milestone 25)
+            { id: 'business:store', label: STORE_TEXT.title, sub: STORE_TEXT.subtitle, icon: TOP_ICONS.careTokens, accent: COL.progress, onTap: () => openStore() }, // (Milestone 36)
             { id: 'mainMenu', label: 'Save and Main Menu', accent: COL.progress, onTap: () => leaveHome() },
           ],
         },
@@ -3261,6 +3355,7 @@ function openGrants() {
     }) });
     const done = G.done(4).reverse();
     if (done.length) sections.push({ title: 'Earlier grants', lines: done.map((c) => ({ text: `${c.name}: ${c.status === 'success' ? 'goal met, paid' : c.result?.reason === 'deadline' ? 'deadline passed (nothing lost)' : 'ended'}`, color: c.status === 'success' ? COL.good : COL.textMuted })) });
+    sections.push({ title: 'A new board now (optional)', columns: 1, buttons: [adButton('offerRefresh'), tokenButton('grantBoard', 'A new grant board')].filter(Boolean) }); // (Milestone 36)
     sections.push({ columns: 1, buttons: [{ id: 'grants:back', label: '‹ Back to Business', accent: COL.progress, onTap: () => openBusiness() }] });
     return { title: 'Grant board', subtitle: `${G.active().length} of ${GRANT_RULES.maxActive} active · ${board.length} on offer`, art: 'care_ui_05', accent: accentNow(), sections };
   });
@@ -3428,6 +3523,7 @@ function openMainExtras() {
   sheet.open(() => ({ title: 'Records, Help & Credits', subtitle: 'Kept on this device, for every home', art: MENU_TEXT.icon, accent: COL.progress, sections: [{ columns: 1, buttons: [
     { id: 'main:book', label: BOOK.title, sub: `${memoryBook.count} page${memoryBook.count === 1 ? '' : 's'} · kept for good across every home`, icon: 'memory_book_emblem', accent: COL.progress, onTap: () => openMemoryBook() },
     { id: 'main:help', label: HELP_TEXT.title, sub: 'Short pages on running the home', icon: GUIDE_ART, accent: COL.progress, onTap: () => openHelp() },
+    { id: 'main:store', label: STORE_TEXT.title, sub: STORE_TEXT.subtitle, icon: TOP_ICONS.careTokens, accent: COL.progress, onTap: () => openStore() }, // (Milestone 36)
     { id: 'main:credits', label: 'Credits', sub: 'Who made CAREWORKS', icon: BRAND.title, accent: COL.progress, onTap: () => openCredits() },
     { id: 'main:legal', label: SETTINGS_TEXT.legal, sub: SETTINGS_TEXT.legalLine, icon: 'care_ui_28', accent: COL.progress, onTap: () => dialog.show({ title: SETTINGS_TEXT.legal, body: SETTINGS_TEXT.legalBody, buttons: [{ id: 'ok', label: 'OK', accent: COL.progress }] }) },
   ] }] }));
@@ -3675,7 +3771,7 @@ function openRecruit() {
       sections: [
         { lines },
         cards.length ? { title: 'Candidates', columns: 1, buttons: cards } : { title: 'Candidates', lines: [{ text: 'Nobody on the board: try a new board.', color: COL.textMuted }] },
-        { title: 'A new board now', columns: 1, buttons: chans },
+        { title: 'A new board now', columns: 1, buttons: [...chans, ...[adButton('recruitRefresh'), tokenButton('recruitBoard', 'A new board of Local Applicants')].filter(Boolean)] }, // (Milestone 36: optional, convenience only)
         ...(debug.enabled ? [{ title: 'Debug', columns: 1, buttons: [
           { id: 'chan:debug', label: `Open every channel and training without a room (debug): ${sf.debug ? 'On' : 'Off'}`, sub: 'Also counts as the Rank the Rare and Elite rules ask for', accent: sf.debug ? COL.good : COL.progress, onTap: () => sf.setDebug(!sf.debug) },
           { id: 'chan:elite', label: `Unlock Elite staff (debug): ${sf.eliteUnlock ? 'On' : 'Off'}`, sub: 'Counts every Elite condition as met. Legendary and Secret staff never appear on a board.', accent: sf.eliteUnlock ? COL.good : COL.progress, onTap: () => {
@@ -3788,6 +3884,7 @@ function openCourses(staffId) {
       sections: [
         { lines: [...(message ? [{ text: message, color: COL.bad }] : []), { text: hasRoom ? 'Away from the roster at the Training Room for the course.' : 'Needs a Training Room (Build Mode; it opens at Rank D).', color: hasRoom ? COL.textMuted : COL.bad }] },
         { columns: 1, buttons: rows },
+        ...(adButton('trainingShortcut', { staffId }) ? [{ title: 'On a course now', columns: 1, buttons: [adButton('trainingShortcut', { staffId })] }] : []), // (Milestone 36: one day sooner, once per course)
         { columns: 1, buttons: [{ id: 'courses:back', label: '‹ Back to their card', accent: COL.progress, onTap: () => openHomeSheet(staffId, 'roster') }] },
       ],
     };
@@ -4231,6 +4328,7 @@ async function leaveHome() {
   await autosave.flush();
   await campaigns.refresh();
   open = null;
+  monetisation.breakPoint('leaveHome').catch(() => {}); // (Milestone 36: never before the first accreditation; none while ad-free)
 }
 
 // ---------------------------------------------------------------------------
@@ -4257,6 +4355,7 @@ const MENU_OPEN = {
   quality: () => openQuality(),
   complaints: () => openComplaints(), // (Milestone 26: Quality is the hub now)
   memoryBook: () => openMemoryBook(), // (Milestone 27: account-wide)
+  store: () => openStore(), // (Milestone 36)
   secrets: () => openSecrets(), // (Milestone 29: Records → Secrets)
   achievements: () => openAchievements(), // (Milestone 32: Records → Achievements, Home Records, Staff Hall of Fame)
   homeRecords: () => openHomeRecords(),
@@ -4589,6 +4688,80 @@ function hintRules() {
 
 // Settings (data/settings.js): the series list in its order, Help / Privacy / Credits, then the CAREWORKS extras.
 // Reachable from the main menu, the Menu sheet and Help (top bar).
+// --- Milestone 36: the Store (stubs: no real store yet) -----------------------------------------------------------------
+// Says up front that the game has ads and purchases; purchases are one-time or fixed token packs; Care Tokens buy
+// convenience and looks only; the optional rewarded ads; Restore purchases; ?debug=1's pretend-store switches.
+let storeMsg = null;
+const storeSay = (r) => {
+  storeMsg = r ? { text: r.message ?? r.reason ?? '', good: !!r.ok } : null;
+  sheet.refresh?.();
+};
+// A rewarded-ad button (null when it doesn't belong here).
+function adButton(id, ctx = {}, after = null) {
+  const pl = monetisation.placement(id, ctx);
+  if (!pl.show) return null;
+  return { id: `ad:${id}`, label: pl.label, sub: pl.sub, icon: TOP_ICONS.careTokens, disabled: !pl.ok, accent: COL.progress, tag: AD_TEXT.tag.toUpperCase(), onTap: async () => {
+    const r = await monetisation.watch(id, ctx);
+    storeSay(r);
+    if (after) after(r);
+  } };
+}
+function tokenButton(sink, label, ctx = {}, after = null) {
+  const why = monetisation.tokenBlock(sink);
+  return { id: `tok:${sink}${ctx.id ? `:${ctx.id}` : ''}`, label: `${label} · ${TOKEN_SINKS[sink].cost} Care Tokens`, sub: why ?? 'Convenience only: it never changes anyone’s care', icon: TOP_ICONS.careTokens, disabled: !!why, accent: COL.action, onTap: () => {
+    const r = monetisation.spend(sink, ctx);
+    storeSay(r.ok ? { ok: true, message: 'Done' } : r);
+    if (r.ok) autosave.request('store');
+    if (after) after(r);
+  } };
+}
+function openStore() {
+  storeMsg = null;
+  monetisation.commerce.loadProducts().then(() => sheet.refresh?.()).catch(() => {});
+  sheet.open(() => {
+    const m = monetisation;
+    const w = open?.world;
+    const sections = [{ lines: [{ text: STORE_TEXT.upFront, color: COL.actionDark }, ...(storeMsg ? [{ text: storeMsg.text, color: storeMsg.good ? COL.good : COL.bad }] : []), ...(m.providerId === 'none' ? [{ text: STORE_TEXT.noStore, color: COL.textMuted }] : []), ...(w ? [{ text: STORE_TEXT.tokensLine(m.tokens()), color: COL.textMuted }] : []), ...(m.heldTokens ? [{ text: STORE_TEXT.heldLine(m.heldTokens), color: COL.textMuted }] : []), ...(m.adFree ? [{ text: STORE_TEXT.adFree, color: COL.good }] : [])] }];
+    const buy = PRODUCT_ORDER.map((k) => {
+      const p = PRODUCTS[k];
+      const owned = (k === 'removeAds' && m.removeAds) || (k === 'supporterPack' && m.supporter);
+      const price = m.commerce.price(k);
+      return { id: `buy:${k}`, label: `${p.name}${owned ? ` · ${STORE_TEXT.owned}` : price ? ` · ${price}` : ''}`, sub: p.text, icon: k.startsWith('tokens') ? TOP_ICONS.careTokens : 'care_reward_05', disabled: owned || m.providerId === 'none', accent: COL.action, onTap: async () => {
+        storeSay(await m.commerce.buy(k));
+      } };
+    });
+    sections.push({ title: STORE_TEXT.buyTitle, columns: 1, buttons: [...buy, { id: 'store:restore', label: STORE_TEXT.restore, sub: STORE_TEXT.restoreLine, accent: COL.progress, disabled: m.providerId === 'none', onTap: async () => storeSay(await m.commerce.restore()) }] });
+    const adRows = ['tokenGift', 'recruitRefresh', 'offerRefresh', 'cosmeticReward'].map((id) => adButton(id)).filter(Boolean);
+    if (adRows.length) sections.push({ title: STORE_TEXT.adsTitle, columns: 1, buttons: adRows });
+    if (w) sections.push({ title: STORE_TEXT.tokensTitle, columns: 1, buttons: [tokenButton('recruitBoard', 'A new board of Local Applicants'), tokenButton('grantBoard', 'A new grant board')] });
+    // the accents: the six from Facility Setup are always here; the store ones once owned (cosmetic only)
+    if (w) {
+      const now = open.data.facility.palette;
+      const accent = (p, how) => ({ id: `pal:${p.id}`, label: `${now === p.id ? '✓ ' : ''}${p.name}`, sub: how, accent: p.hex, onTap: () => {
+        const r = p.owned === false ? (p.how === 'tokens' ? m.spend('palette', { id: p.id }) : { ok: false, reason: p.how === 'supporter' ? 'Comes with the Supporter Pack' : 'Watch the Sunrise ad above' }) : { ok: true };
+        if (r.ok) m.usePalette(p.id);
+        storeSay(r.ok ? { ok: true, message: `${p.name} accent on` } : r);
+        if (r.ok) autosave.request('store');
+      } });
+      sections.push({ title: 'Accents (looks only)', columns: 2, buttons: [...PALETTES.map((p) => accent(p, 'Yours')), ...m.palettes().map((p) => accent(p, p.owned ? 'Yours' : p.how === 'tokens' ? `${TOKEN_SINKS.palette.cost} Care Tokens` : p.how === 'supporter' ? 'Supporter Pack' : 'Rewarded ad'))] });
+    }
+    if (debug.enabled && fakeStore) {
+      const nxt = (kind) => ['succeed', 'cancel', 'fail', 'offline'].map((o) => ({ id: `fake:${kind}:${o}`, label: `${fakeStore.next[kind] === o ? '✓ ' : ''}${o}`, accent: fakeStore.next[kind] === o ? COL.good : COL.progress, onTap: () => fakeStore.setNext(kind, o) }));
+      sections.push({ title: `${STORE_TEXT.debugTitle}: next purchase`, columns: 4, buttons: nxt('purchase') });
+      sections.push({ title: `${STORE_TEXT.debugTitle}: next ad`, columns: 4, buttons: nxt('ad') });
+      sections.push({ columns: 1, lines: fakeStore.log.slice(-3).map((l) => ({ text: l.text, color: COL.textMuted })), buttons: [
+        { id: 'fake:offline', label: `Store offline: ${fakeStore.offline ? 'On' : 'Off'}`, accent: COL.progress, onTap: () => (fakeStore.offline = !fakeStore.offline) },
+        { id: 'fake:replay', label: 'Deliver the last purchase again', sub: 'It must grant nothing the second time', accent: COL.progress, onTap: async () => {
+          fakeStore.replayLast();
+          const r = await m.commerce.processPending();
+          storeSay({ ok: true, message: `Re-delivered: ${r.delivered} granted, ${r.duplicates} already added` });
+        } },
+        { id: 'fake:reset', label: 'Forget every pretend purchase', accent: COL.progress, onTap: () => fakeStore.resetPurchases() },
+      ] });
+    }
+    return { title: STORE_TEXT.title, subtitle: STORE_TEXT.subtitle, art: TOP_ICONS.careTokens, accent: COL.progress, sections };
+  });
+}
 function openSettings() {
   sheet.open(() => {
     const sections = [];
@@ -4613,6 +4786,7 @@ function openSettings() {
     sections.push({ columns: 1, buttons: [
       { id: 'setHelp', label: SETTINGS_TEXT.help, sub: SETTINGS_TEXT.helpLine, icon: 'care_ui_28', accent: COL.progress, onTap: () => openHelp() },
       { id: 'setLegal', label: SETTINGS_TEXT.legal, sub: SETTINGS_TEXT.legalLine, icon: 'care_ui_28', accent: COL.progress, onTap: () => dialog.show({ title: SETTINGS_TEXT.legal, body: SETTINGS_TEXT.legalBody, buttons: ok }) },
+      { id: 'setStore', label: `${STORE_TEXT.title} and ${STORE_TEXT.restore.toLowerCase()}`, sub: STORE_TEXT.subtitle, icon: TOP_ICONS.careTokens, accent: COL.progress, onTap: () => openStore() }, // (Milestone 36)
       { id: 'setCredits', label: SETTINGS_TEXT.credits, sub: SETTINGS_TEXT.creditsLine, icon: 'care_reward_05', accent: COL.progress, onTap: () => dialog.show({ title: SETTINGS_TEXT.credits, body: SETTINGS_TEXT.creditsBody, buttons: ok }) },
     ] });
     for (const d of SETTINGS.filter((x) => x.extra)) {
@@ -4624,6 +4798,12 @@ function openSettings() {
   });
 }
 
+// (Milestone 39b) a program or facility's growth from use, as one line: "Practised: 63 sessions held · +3% · Well loved at 150"
+function growthLine(g, unit) {
+  const n = `${g.n.toLocaleString('en-GB')} ${unit}${g.n === 1 ? '' : 's'}`;
+  const next = g.next ? ` · ${g.nextName} at ${g.next}` : '';
+  return g.name ? { text: `${g.name}: ${n} · +${g.pct}%${next}`, color: COL.good } : { text: `Grows with use: ${n} so far${next}`, color: COL.textMuted };
+}
 // Facility and room levels: the Upgrade section of a piece's sheet (style guide §3).
 let upgradeMsg = null;
 function upgradeSection(w, it, info) {
@@ -4631,6 +4811,7 @@ function upgradeSection(w, it, info) {
   const lines = [{ text: `Level ${N[info.level - 1]} of ${N[info.max - 1]}${info.scaled ? ` · its bonus ×${info.mult}` : ''}`, color: COL.actionDark }];
   if (!info.scaled) lines.push({ text: 'Its effect is an unlock, or not yet in the game: the level is kept and will strengthen it then.', color: COL.textMuted });
   if (info.invested) lines.push({ text: `Spent on upgrades: ${credits(info.invested)} Credits (half comes back if it is sold)`, color: COL.textMuted });
+  if (it?.uid != null && w.facilityGrowthOf && facilityById(it.defId ?? it.def?.id) && !roomById(it.defId ?? it.def?.id)) lines.push(growthLine(w.facilityGrowthOf(it.uid), 'care task')); // (Milestone 39b)
   if (upgradeMsg) lines.push({ text: upgradeMsg, color: COL.bad });
   const nx = info.next;
   const buttons = nx
@@ -4875,7 +5056,7 @@ window.__cwGuide = () => {
 
 // ?debug=1: a test hook for automated checks.
 if (debug.enabled) {
-  window.__cw = { guide, guideTarget, get guideMark() { return guideMark; }, openHelp, openHelpPage, get qualityBuilder() { return qualityBuilder; }, get rosterPick() { return rosterPick; }, endingPages, endingLog, openEnding, openEndingSheet, openNgPlus, openNgPicks, ngFromSlot, get storageKind() { return storageKind; }, get saveMove() { return saveMove; }, get ngPlan() { return ngPlan; }, ngSlotPicked, startNgPlus, openTrophyCase, ceremony, ceremonyLog, openAchievements, openHomeRecords, openHallOfFame, get achievementsSaving() { return achievementsSaving; }, openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, openAdmissions, openMainExtras, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
+  window.__cw = { audio, reducedMotion, simpleFigures, monetisation, get fakeStore() { return fakeStore; }, openStore, guide, guideTarget, get guideMark() { return guideMark; }, openHelp, openHelpPage, get qualityBuilder() { return qualityBuilder; }, get rosterPick() { return rosterPick; }, endingPages, endingLog, openEnding, openEndingSheet, openNgPlus, openNgPicks, ngFromSlot, get storageKind() { return storageKind; }, get saveMove() { return saveMove; }, get ngPlan() { return ngPlan; }, ngSlotPicked, startNgPlus, openTrophyCase, ceremony, ceremonyLog, openAchievements, openHomeRecords, openHallOfFame, get achievementsSaving() { return achievementsSaving; }, openSecrets, openSecretsDebug, get secretsSaving() { return secretsSaving; }, careFx, fxLog, fxOn, openCredits, openTopSheet, openPrograms, openProgram, openResidents, memoryBook, memorial, openMemoryBook, openMemoryPage, keepPages, get bookSaving() { return bookSaving; }, openQuality, openAccreditation, openComplaints, openScoreParts, openPeer, settings, governor, lowFx, haptics, hintLine, openNavMenu, MENU_OPEN, menuState, openSettings, openItemStore, openItem, openGiveTo, syncMenuSlot, bottomItems, inboxCountNow, renderer, layout, input, loop, router, assets, sheet, dialog, systemBack, textPrompt, menuScreen, slotsScreen, setupScreen, homeScreen, topBar, topBarCredits: () => balanceNow(), bottomBar, vfx, carePops, dayBeat, openBottom, get lastRoute() { return lastRoute; }, playSlot, startFacility, deleteSlot, newGame, taps: [], autosave, saveRun, openRecruit, openCandidate, openCourses, openContinuity, openHomeSheet, openActivities, openSlotPicker, openInbox, openSupplies, openLedger, openQuality, openBusiness, openPartners, openPartner, openGrants, openWings, openRoster, openMenu, openDishPicker, confirmLetGo, openDevelop, openResearch, openBuildList, openApplicant, openAdmissions, openMainExtras, confirmSell, upgradeStage, get bigBeat() { return bigBeat; }, startSpawnCheck, get spawning() { return !!spawn; }, spawnReport: null, get staffArtReport() { return staffArtReport; }, get campaigns() { return campaigns; }, get open() { return open; } };
 }
 
 router.go('boot');

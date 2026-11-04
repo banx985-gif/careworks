@@ -294,7 +294,7 @@ export function changePlan(care, st, domain, optionId, ctx) {
   const today = care.tasks.filter((t) => t.resident === st.id && t.day === ctx.day);
   const done = today.filter((t) => t.domain === domain && t.status !== 'open'); // already under way or over today
   care.tasks = care.tasks.filter((t) => !(t.resident === st.id && t.day === ctx.day && t.domain === domain && t.status === 'open'));
-  if (care.gen[`${ctx.day}:${ctx.band.id}`]) {
+  if (care.gen[`${ctx.day}:${ctx.band.id}`] === true) { // (Milestone 39: a plan still being made a few residents a frame makes this one itself)
     const added = generateBand({ care, st, band: ctx.band, day: ctx.day, now: ctx.now + PLAN_CHANGE.minHoursLeft, rolesOnShift: ctx.rolesOnShift, only: { domain } });
     for (const t of added) {
       if (done.some((d) => d.type === t.type && d.band === t.band)) care.tasks.splice(care.tasks.indexOf(t), 1);

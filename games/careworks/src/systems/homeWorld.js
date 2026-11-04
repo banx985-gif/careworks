@@ -125,7 +125,8 @@ import { DAY, ROUTINE, WAKE, ALL_STEPS, TIMER_SCALE } from '../../data/routine.j
 import { createActivities, feelingOf, outcomeMult, birthdayOf } from './activities.js';
 import { activityById, TIMETABLE, OUTCOME, BIRTHDAY, SCHEDULABLE, COMMUNITY_EVENTS } from '../../data/activities.js';
 import { BELL, FAMILIARITY, BACKUP_HELP } from '../../data/tasks.js';
-import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK } from '../../data/balance.js';
+import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK, USE_GROWTH, growthOf } from '../../data/balance.js';
+import { activeCombos, comboPctOf } from './combos.js'; // (overnight Stage 6: placement combos)
 import { AGENCY } from '../../data/shifts.js';
 import { ensureResidentState, newResidentState, newStay, stayDaysLeft, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog, routineFor } from './residentNeeds.js';
 import { bandOfHour, ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, addTask, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar, topFamiliar, noteLeft, noteBack, familiarityOf, fadeFamiliarity } from './careTasks.js';
@@ -468,12 +469,19 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
 
   // --- care tasks (Milestone 4) --------------------------------------------------------------------------------
   const care = ensureCareState(careSaved);
+  layout.useBonus = (uid) => growthOf(care.achievements?.uses?.[uid]?.n ?? 0, USE_GROWTH.facilityPct).pct + comboPctOf(uid, layout.pieces); // (Milestone 39b: a facility grows a little with the care done at it; Stage 6: placement combos)
   // Milestone 27: end of life (the section further down); an M26 save: everyone Settled, nothing held, no pages
   const eol = (care.eol = ensureEolState(care.eol));
   const eolOf = (p) => (p ? ensureResidentEol(p.state) : null);
   const stageOf = (p) => (p ? eolOf(p).stage : 'settled');
   const inEol = (p) => EOL_STAGES.includes(stageOf(p));
   const progState = (care.programs = ensureProgramState(care.programs)); // (Milestone 20; an M19 save: none running)
+  // (Milestone 39b) each program's sessions held in this home, across stops and restarts — an older home starts from its
+  // running programs' own counts
+  progState.xp ??= Object.fromEntries(Object.entries(progState.running).map(([id, r]) => [id, r.sessions ?? 0]));
+  const programGrowth = (id) => growthOf(progState.xp[id] ?? 0, USE_GROWTH.programPct);
+  const progMult = (id) => 1 + programGrowth(id).pct / 100;
+  const heldSession = (id) => (progState.xp[id] = (progState.xp[id] ?? 0) + 1);
   const assignSys = new AssignmentSystem({ staff: sys, getJobs: () => care.tasks.filter((t) => t.status === 'claimed' || t.status === 'working') });
   const absNow = () => absHour(clock.totalDays, hourNow());
   const now = () => clockText(hourNow());
@@ -1851,23 +1859,34 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   }
   // Each frame: plan the band's tasks, ring bells, close what is overdue, move the work on, and let free staff pick.
   const REACH = 1.6 * HOME.cellSize; // "at their side" while they are walking
+  const PLAN_CHUNK = 12; // (Milestone 39: residents planned per frame at a band change)
   function tickTasks(hours) {
     const at = absNow();
     const inst = bandInstance(hourNow(), clock.totalDays);
-    if (!care.gen[inst.key]) {
-      care.gen[inst.key] = true;
-      pruneTasks(care, clock.totalDays);
-      dining.prune(clock.totalDays);
-      planKitchen(inst, at); // (Milestone 15: kitchen prep for the band's meals, and each resident's drinks rounds)
-      for (const p of residents) if (inCare(p)) planRounds(p, inst, at);
-      for (const p of residents) if (inCare(p)) planLifeStory(p, inst, at); // (Milestone 17)
-      for (const p of residents) if (inCare(p)) planProgramTasks(p, inst, at); // (Milestone 20: one-to-one program offers)
-      for (const p of residents) if (inCare(p)) planPilot(p, inst, at); // (Milestone 23: assistive-tech pilot sessions, for those who said yes)
-      for (const p of residents) if (inCare(p)) planFalls(p, inst, at); // (Milestone 25: a fall, perhaps, at a seeded time in the band)
-      planIncidentTasks(inst, at); // (Milestone 25: isolation care, cleaning, cool drinks)
-      for (const p of residents) if (inCare(p)) maybeAlert(p, inst, at); // (Milestone 18: someone may become unwell)
-      planExtraChecks(inst, at); // (Milestone 18: Increase observation)
-      for (const p of residents) if (inCare(p)) logRefused(p, roundLead(inst, secondHelpers(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p), steps: stepsFor(p, inst.day) }))));
+    // (Milestone 39) A band's plan is made a few residents a frame (PLAN_CHUNK), so a 70-resident home never stalls on one
+    // frame; care.gen[key] is the next resident's index until the plan is whole (true). A home of PLAN_CHUNK or fewer
+    // plans in one frame, in exactly the order it always did.
+    const gen = care.gen[inst.key];
+    if (gen !== true) {
+      const from = typeof gen === 'number' ? gen : 0;
+      if (from === 0) {
+        pruneTasks(care, clock.totalDays);
+        dining.prune(clock.totalDays);
+        planKitchen(inst, at); // (Milestone 15: kitchen prep for the band's meals, and each resident's drinks rounds)
+      }
+      const to = Math.min(residents.length, from + PLAN_CHUNK);
+      const part = residents.slice(from, to).filter((p) => inCare(p));
+      const last = to >= residents.length;
+      care.gen[inst.key] = last ? true : to;
+      for (const p of part) planRounds(p, inst, at);
+      for (const p of part) planLifeStory(p, inst, at); // (Milestone 17)
+      for (const p of part) planProgramTasks(p, inst, at); // (Milestone 20: one-to-one program offers)
+      for (const p of part) planPilot(p, inst, at); // (Milestone 23: assistive-tech pilot sessions, for those who said yes)
+      for (const p of part) planFalls(p, inst, at); // (Milestone 25: a fall, perhaps, at a seeded time in the band)
+      if (last) planIncidentTasks(inst, at); // (Milestone 25: isolation care, cleaning, cool drinks)
+      for (const p of part) maybeAlert(p, inst, at); // (Milestone 18: someone may become unwell)
+      if (last) planExtraChecks(inst, at); // (Milestone 18: Increase observation)
+      for (const p of part) logRefused(p, roundLead(inst, secondHelpers(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p), steps: stepsFor(p, inst.day) }))));
     }
     for (const p of residents) {
       if (!inCare(p)) continue;
@@ -2744,7 +2763,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           honour(memoryOf(p)); // (Milestone 17: the Choice signal — their decline respected)
           continue;
         }
-        addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: A.type, essential: false, name: A.name, source: 'program', program: d.id, ...(A.optionId ? { optionId: A.optionId } : {}), ...(A.goalKind ? { goalKind: A.goalKind } : {}), ...(A.asleepDrops ? { asleepDrops: { ...A.asleepDrops } } : {}), at: h, place: A.place ?? 'resident', roles: [...A.roles], minutes: A.minutes, drops: { ...A.drops }, outcomes: Object.fromEntries(Object.entries(A.outcomes).map(([o, v]) => [o, v * gardenMult(d)])), opens: Math.max(at, when), due: until }); // (Milestone 31: the garden's boost on a prestige program)
+        addTask(care, { resident: p.id, day: inst.day, band: inst.band.id, type: A.type, essential: false, name: A.name, source: 'program', program: d.id, ...(A.optionId ? { optionId: A.optionId } : {}), ...(A.goalKind ? { goalKind: A.goalKind } : {}), ...(A.asleepDrops ? { asleepDrops: { ...A.asleepDrops } } : {}), at: h, place: A.place ?? 'resident', roles: [...A.roles], minutes: A.minutes, drops: { ...A.drops }, outcomes: Object.fromEntries(Object.entries(A.outcomes).map(([o, v]) => [o, v * gardenMult(d) * progMult(d.id)])), opens: Math.max(at, when), due: until }); // (Milestone 31: the garden's boost on a prestige program)
       }
     }
   }
@@ -2753,6 +2772,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const run = runOf(t.program);
     countFor(run, p.id, 'joined');
     if (run) run.sessions = (run.sessions ?? 0) + 1;
+    if (run) heldSession(t.program); // (Milestone 39b)
     if (t.band === 'night' && world.isAsleep(p)) return;
     log(p, personal ? `${t.name} with ${helperName(helper)}: ${personal}` : `${t.name} (with ${helperName(helper)})`);
   }
@@ -2763,6 +2783,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     if (!s.held) {
       s.held = true;
       run.sessions = (run.sessions ?? 0) + 1;
+      heldSession(s.program); // (Milestone 39b)
     }
     countFor(run, p.id, 'offered');
     countFor(run, p.id, go ? 'joined' : 'declined');
@@ -2774,8 +2795,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const E = d.effects;
     const tags = new Set([...(p.state.tags ?? p.def.tags ?? []), p.def.interest].filter(Boolean));
     const add = (lifts) => {
-      for (const [o, v] of Object.entries(lifts ?? {})) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v);
+      for (const [o, v] of Object.entries(lifts ?? {})) p.state.outcomes[o] = clamp(p.state.outcomes[o] + v * grow);
     };
+    const grow = progMult(d.id); // (Milestone 39b: a practised program lifts a little more)
     add(E.joined);
     if (E.suited && (d.suits.tags ?? []).some((t) => tags.has(t))) add(E.suited);
   }
@@ -2951,7 +2973,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // --- quality, Rank, accreditations, inspections and peer homes (Milestone 26) ---------------------------------------
   care.quality = ensureQualityState(care.quality);
   const qualityFresh = !care.quality.samples.length; // (a new home, or an M25c save: worked out from the home as it is, below)
-  quality = createQuality({ state: care.quality, seed, bus, today: () => clock.totalDays, year: () => clock.year, secretOpen: (f) => prestigeOpen(f), hasFacility: (id) => hasPiece(id) && !offline(id), onAward: (a) => {
+  quality = createQuality({ state: care.quality, seed, bus, today: () => clock.totalDays, year: () => clock.year, bestProgram: () => Object.keys(progState.running ?? {}).sort((a, b) => (progState.xp[b] ?? 0) - (progState.xp[a] ?? 0) || a.localeCompare(b))[0] ?? null, // (overnight Stage 7: Crown Haven copies the best-running one)
+    secretOpen: (f) => prestigeOpen(f), hasFacility: (id) => hasPiece(id) && !offline(id), onAward: (a) => {
     if (a.reward.credits) ledger.economy.add('credits', a.reward.credits, `Recognition bonus: ${a.name}`, 'recognition'); // (bible §27)
     staffState.founder.history.recognitions = (staffState.founder.history.recognitions ?? 0) + 1; // (bible §3.5.5)
     prestigeAwardRewards(a); // (Milestone 31: C11's Prestige Tokens, C12's accolade)
@@ -5396,6 +5419,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     levelOf: (uid) => layout.levelOf(uid),
     upgradePending: (uid) => layout.upgradePending(uid),
   };
+  // (Milestone 39b) growth from use: { n, step, name, pct, next, nextName }
+  world.programGrowthOf = (id) => programGrowth(id);
+  world.combos = () => activeCombos(layout.pieces); // (Stage 6) the pairs placed close together now
+  world.facilityGrowthOf = (uid) => growthOf(care.achievements?.uses?.[uid]?.n ?? 0, USE_GROWTH.facilityPct);
   if (fixedUp.length) relayout();
   if (qualityFresh) startQuality(); // (Milestone 26)
   // Milestone 29: the secrets (src/systems/secrets.js on core/SecretEngine): they only read the home (secretEnv) and give a
@@ -5480,7 +5507,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     state: care.ending,
     clock,
     bus,
-    facts: () => endingFacts({ months: secrets.log.months ?? [], fact: (n) => (n === 'credits' ? ledger.balance : secrets.facts.get(n)), score: (id) => quality.scores()[id] }),
+    facts: () => endingFacts({ months: secrets.log.months ?? [], fact: (n) => (n === 'credits' ? ledger.balance : secrets.facts.get(n)), score: (id) => quality.scores()[id], focus: quality.focusOf(16) }), // (overnight Stage 7: the Year-16 focus)
     lookBack: () => ({ home: homeName ?? null, years: clock.year - 1, residents: 1 + (care.achievements?.admitted ?? 0), pages: (eol.pages ?? []).length, hall: achievements.hall.filter((e) => e.runId === (runId ?? seed)).map((e) => e.name), ngPlus: ngPlus ?? 0 }),
     c10: () => {
       const a = quality.state.acc.C10;
