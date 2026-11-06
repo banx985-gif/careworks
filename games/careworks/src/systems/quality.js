@@ -26,7 +26,8 @@ import { rankIndexOf } from '../../../../core/CompanyRank.js';
 import { Rankings } from '../../../../core/Rankings.js';
 import { gradeRun } from '../../../../core/GradeEngine.js';
 import { Rng } from '../../../../core/Rng.js';
-import { SCORES, SCORE_IDS, WINDOW, READINGS, RANKS, REPUTATION, INSPECTION, ROUTINE_GRADE, SPEED_UNLOCKS, LATE_TWIST } from '../../data/quality.js';
+import { SCORES, SCORE_IDS, WINDOW, READINGS, RANKS, REPUTATION, INSPECTION, ROUTINE_GRADE, SPEED_UNLOCKS, LATE_TWIST, AGENCY_GRADE } from '../../data/quality.js';
+import { DEBT } from '../../data/economy.js'; // (Milestone 40b: money worries cap the routine grade)
 import { ALL_ACCREDITATIONS, accreditationById, COUNTER_NAMES, MEASURE_NAMES } from '../../data/accreditations.js';
 import { PEERS, PRESTIGE_PEERS, ALL_PEERS, peerById, PEER_DRIFT, RECOGNITION } from '../../data/peers.js';
 import { facilityById } from '../../data/facilities.js';
@@ -116,14 +117,16 @@ export function dayScores(readings) {
   return { scores, parts };
 }
 
-export function createQuality({ state, seed = 'careworks', bus = null, today = () => 0, year = () => 1, onAward = null, secretOpen = () => false, hasFacility = () => false, bestProgram = () => null }) {
+export function createQuality({ state, seed = 'careworks', bus = null, today = () => 0, year = () => 1, onAward = null, secretOpen = () => false, hasFacility = () => false, bestProgram = () => null, moneyWorry = () => false }) {
   const st = state;
   const ranks = RANKS.map((r) => ({ id: r.id, min: r.min }));
   const wonIds = () => ALL_ACCREDITATIONS.filter((a) => st.acc[a.id]?.won != null).map((a) => a.id);
   // (Milestone 31) C11 / C12 are listed (and can be applied for) only once their secret's unlock flag is set
   const listed = (a) => !!a && (!a.secret || !!secretOpen(a.unlockFlag) || st.acc[a.id]?.won != null);
   const listedAccreditations = () => ALL_ACCREDITATIONS.filter(listed);
-  const rep = new ReputationSystem({ ranks, canReach: (i) => st.debugReach || wonIds().length >= RANKS[i].accreditations });
+  // (Milestone 40b: while the home has money worries — src/systems/economy.js moneyWorry — Rank can't go up; the
+  // reputation still builds, so the rank catches up the moment the money recovers)
+  const rep = new ReputationSystem({ ranks, canReach: (i) => st.debugReach || (wonIds().length >= RANKS[i].accreditations && !(i > st.rep.highestRankIndex && moneyWorry())) });
   rep.load(st.rep);
   const rankings = new Rankings({ points: RECOGNITION.points, focusId: RECOGNITION.homeId });
   rankings.load(st.rankings);
@@ -133,7 +136,7 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
     const { scores, parts } = dayScores(readingsOf(x));
     // (Milestone 27: the good-care signal of a well-supported end of life — points on top, never below the day's score)
     for (const [id, v] of Object.entries(x.lifts ?? {})) if (scores[id] != null && v > 0) scores[id] = r1(Math.min(100, scores[id] + v));
-    st.samples.push({ day, scores, parts, nutrition: x.nutrition ?? null, essential: { done: x.essential?.done ?? 0, missed: x.essential?.missed ?? 0 }, unsafe: x.unsafe ?? 0, overdue: x.overdue ?? 0, incidents: x.incidentsEnded ?? 0 });
+    st.samples.push({ day, scores, parts, nutrition: x.nutrition ?? null, essential: { done: x.essential?.done ?? 0, missed: x.essential?.missed ?? 0 }, unsafe: x.unsafe ?? 0, overdue: x.overdue ?? 0, incidents: x.incidentsEnded ?? 0, ...(x.onShift ? { onShift: { ...x.onShift } } : {}) }); // (Milestone 40b: onShift { people, agency })
     if ((x.essential?.missed ?? 0) > 0) st.lastMissed = Math.max(st.lastMissed ?? -Infinity, day); // (Milestone 31: C12)
     if (st.samples.length > WINDOW) st.samples.splice(0, st.samples.length - WINDOW);
   }
@@ -158,7 +161,13 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
       unsafeShifts: H.reduce((t, s) => t + s.unsafe, 0),
       overdueComplaints: H.length ? H[H.length - 1].overdue : 0,
       incidents: H.reduce((t, s) => t + s.incidents, 0),
+      agencyPct: agencyPctOf(H), // (Milestone 40b)
     };
+  }
+  // (Milestone 40b) the share of the people on shift who were agency workers over these samples (0 with no records)
+  function agencyPctOf(H) {
+    const people = H.reduce((t, s) => t + (s.onShift?.people ?? 0), 0);
+    return people ? Math.round((100 * H.reduce((t, s) => t + (s.onShift?.agency ?? 0), 0)) / people) : 0;
   }
 
   // --- rank -------------------------------------------------------------------------------------------------------------
@@ -290,9 +299,15 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
   // (Milestone 32b) the four inspectors' view of the home today: the routine grade's own maths in four parts
   // (overnight Stage 7) from Year 12 the year's focus score is graded as if it were LATE_TWIST.raise lower
   const gradeNow = (y = year()) => {
-    const facts = { ...scores(), essentialDone: history().essentialDone };
+    const h = history();
+    const facts = { ...scores(), essentialDone: h.essentialDone };
     const f = focusOf(y);
     if (f) facts[f] = Math.max(0, facts[f] - LATE_TWIST.raise);
+    if (h.agencyPct > AGENCY_GRADE.overPct) {
+      // (Milestone 40b: a home run on agency cover — the staff and familiar-care parts read clearly lower)
+      facts.staffWellbeing = Math.max(0, facts.staffWellbeing - AGENCY_GRADE.staff);
+      facts.residentWellbeing = Math.max(0, facts.residentWellbeing - AGENCY_GRADE.familiar);
+    }
     return gradeRun({ categories: ROUTINE_GRADE.categories, bands: ROUTINE_GRADE.bands, facts });
   };
   // The inspectors' focus in year y (null before Year 12): seeded by the home, never the same two years running.
@@ -339,11 +354,19 @@ export function createQuality({ state, seed = 'careworks', bus = null, today = (
     const g = gradeNow(ry);
     const lines = g.categories.map((c) => ({ text: `${c.name}: ${c.score} / ${c.max}`, ok: c.score >= c.max * 0.6 }));
     const h = history();
+    if (h.agencyPct > AGENCY_GRADE.overPct) lines.push({ text: AGENCY_GRADE.text(h.agencyPct), ok: false }); // (Milestone 40b)
+    // (Milestone 40b) money worries cap the grade (nothing is lost: it lifts as soon as the money recovers)
+    const bandIds = ROUTINE_GRADE.bands.map((b) => b.id);
+    const worried = moneyWorry() && bandIds.indexOf(g.band) > bandIds.indexOf(DEBT.worryCap);
+    if (worried) {
+      g.band = DEBT.worryCap;
+      lines.unshift({ text: `${DEBT.worryText}: the grade is capped at ${DEBT.worryCap} until the balance recovers`, ok: false });
+    }
     lines.push({ text: h.incidents ? `${h.incidents} incident${h.incidents === 1 ? '' : 's'} this month, handled (never counted against the home)` : 'No incidents this month', ok: true, info: true });
     const gain = REPUTATION.routine[g.band] ?? 0;
     const focus = focusOf(ry);
     if (focus) lines.unshift({ text: `This year the inspectors looked hardest at ${nameOf(focus)} (they expected ${LATE_TWIST.raise} more)`, ok: true, info: true }); // (overnight Stage 7)
-    record({ kind: 'routine', day, pass: true, grade: g.band, total: g.total, reputation: gain, lines, panel: panelOf(g), ...(focus ? { focus } : {}) }); // (Milestone 32b: the four inspectors)
+    record({ kind: 'routine', day, pass: true, grade: g.band, total: g.total, reputation: gain, lines, panel: panelOf(g), ...(focus ? { focus } : {}), ...(worried ? { capped: true } : {}), ...(h.agencyPct > AGENCY_GRADE.overPct ? { agencyPct: h.agencyPct } : {}) }); // (Milestone 32b: the four inspectors)
     st.lastRoutine = day;
     if (gain) addRep(gain, day, `Routine review: grade ${g.band}`);
     bus?.emit('quality:inspection', { id: null, kind: 'routine', pass: true, grade: g.band, total: g.total, day });

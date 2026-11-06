@@ -137,6 +137,15 @@ export const ROUTINE_GRADE = {
   bands: [{ id: 'D', min: 0 }, { id: 'C', min: 45 }, { id: 'B', min: 60 }, { id: 'A', min: 72 }, { id: 'S', min: 85 }],
   total: 100,
 };
+// Milestone 40b (cutting care must cost the grade): when agency workers made up more than overPct% of the people on
+// shift over the inspection's month, the inspectors read Staff Wellbeing `staff` lower and Resident Wellbeing `familiar`
+// lower (residents rarely saw a familiar face). Shown as a plain line on the review. PLACEHOLDERS (DECISIONS.md).
+export const AGENCY_GRADE = {
+  overPct: 30,
+  staff: 35,
+  familiar: 12,
+  text: (pct) => `Agency workers made up ${pct}% of the people on shift this month: residents rarely saw a familiar face`,
+};
 
 // Speeds (bible §3): 2× after the first accreditation inspection (pass or fail), 4× at Rank C or Year 4.
 export const SPEED_UNLOCKS = {

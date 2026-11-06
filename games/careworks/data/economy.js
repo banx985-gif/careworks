@@ -62,9 +62,22 @@ export const STUB_COSTS = { transport: { name: 'Transport and outings', mileston
 //     Investor offer — the debt (and any loan still owed) cleared to a balance of investor.buffer, then investor.sharePct
 //     of each month's profit for investor.months
 // Nothing here ever deletes the save, lets anyone go, or touches a resident's care.
+// Milestone 40b (the soak's debt lock): admissions pause only below admissionsFloor (new residents are the way back to
+// profit); below floor for worryMonths month-ends in a row the home has "money worries" — Rank can't go up and the routine
+// review's grade is capped at worryCap, lifted as soon as the balance is back above the floor (nothing is lost); and
+// below floor at recoveryMonths month-ends in a row the Rescue Investor is always offered, even while an earlier one is
+// still taking its share (a renewal: its share rises by renewPct, at most maxSharePct), so no home sits in deep debt for
+// years.
 export const DEBT = {
   warnBelow: 0,
   floor: -5000,
+  admissionsFloor: -20000,
+  worryMonths: 2,
+  worryCap: 'B',
+  worryText: 'Money worries are holding the home back',
+  recoveryMonths: 2,
+  renewPct: 10,
+  maxSharePct: 60,
   loan: { amount: 15000, months: 12, interestPct: 4 },
   reofferDays: 28,
   sinkingMonths: 2,
@@ -139,3 +152,9 @@ export const FEE_MOOD = { line: 85, perPoint: 2, capPct: 30 };
 // data/balance.js ON_CALL.clinicalNeedAbove) brings this much more Care Support Funding a month — the cost of the
 // nurse cover the rule adds, which the care minutes alone don't show.
 export const NURSING_SUPPLEMENT = { perMonth: 250 };
+
+// Milestone 40b (the soak: past about a dozen residents the extra staff Rank D on brings are Rare, at twice a Standard
+// wage, and the home sank): a better-rated home is one families will pay more to live in — the accommodation fee rises
+// with the home's Rank, this % on top (Rank E: none, so a new home's first months are exactly as before). Shown on the
+// Ledger's fee line. PLACEHOLDERS (DECISIONS.md, Milestone 40b).
+export const RANK_FEES = { E: 0, D: 10, C: 20, B: 30, A: 40, S: 50 };

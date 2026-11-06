@@ -108,3 +108,30 @@ export function growthOf(n, pcts) {
   while (i + 1 < S.steps.length && n >= S.steps[i + 1]) i++;
   return { n, step: i + 1, name: i >= 0 ? S.names[i] : null, pct: i >= 0 ? pcts[i] : 0, next: S.steps[i + 1] ?? null, nextName: S.names[i + 1] ?? null };
 }
+
+// Milestone 40b (the soak's Rank E staffing trap): "safe capacity", how many residents the team can look after with every
+// essential task done on time. Two kinds of essential care set it on each day shift — the hands-on care (wake-ups,
+// washes, medicines, settling: carers and nurses) and the meals (served by Hospitality workers, carers helping) — and the
+// night's checks (anyone on Night, plus the nurse on call and the evening settle: base). perHand: residents one pair of
+// hands keeps up with on that shift; a better-skilled person (SKILL_SPEED) counts a little more. The team's number is its
+// weakest shift, never below minimum (the opening team looks after Arthur and a first resident). Agency workers are not
+// counted (they come for one shift at a time). Calibrated on the M40 probes: the ten Standard staff on the sensible roster
+// keep 6 residents' essential care done (S at 6; ~10 essential tasks a day missed at 8); at 13 residents one Hospitality
+// worker and two carers on the Afternoon shift miss about half the lunches. PLACEHOLDERS (DECISIONS.md, Milestone 40b).
+export const SAFE_CAPACITY = {
+  care: { hands: { CW: 1, RN: 1 }, perHand: { morning: 3, afternoon: 3 } },
+  meals: { hands: { HN: 1, CW: 0.5 }, perHand: { morning: 4, afternoon: 4 } },
+  night: { base: 4, perHand: 12 },
+  minimum: 2,
+  skillShare: 0.5, // (about half a task's time is the walk there, which skill doesn't shorten)
+  // Stage 1 holds this many residents until Rank D (its first six places at the start; the rest open at Rank D)
+  rankEPlaces: 6,
+  placesText: 'Rooms 7 and up open at Rank D: until then Stage 1 holds 6 residents (as many as a Rank E team can safely care for)',
+  stretched: 'Your team is stretched — essential care may be missed.',
+  need: { care: 'a carer or nurse', meals: 'a Hospitality worker', night: 'someone on Night' },
+};
+// Milestone 40b (the soak: a bigger home's Rare staff cost twice a Standard's wage for the same work): staff above the
+// Standard row work a little faster at their tasks — 1 + k × (their stat points ÷ basePoints − 1), at most max. basePoints
+// sits above every Standard person, so the Standard ten (and every home's first months) work exactly as before. Rare
+// ≈ 1.4×, Elite ≈ 2.2×, Legendary 2.5×; a Standard person who levels up past it starts to speed up too. Agency: 1.
+export const SKILL_SPEED = { basePoints: 5.4, k: 0.6, max: 2.5 };

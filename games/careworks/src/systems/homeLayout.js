@@ -198,13 +198,18 @@ export function createLayout({ saved = null, bus = null } = {}) {
     }
     return { ok: false, reason: `Locked: ${d.unlock.text}` };
   }
-  const cap = () => Math.min(stageDef().capacity, LOGICAL_CAP); // (Milestone 24: never more than 70, whatever the stage)
+  let placesLimit = () => null; // (Milestone 40b: the home world's { n, text } — Stage 1 holds 6 until Rank D)
+  const cap = () => Math.min(stageDef().capacity, LOGICAL_CAP, placesLimit()?.n ?? Infinity); // (Milestone 24: never more than 70, whatever the stage)
   const capacity = () => Math.min(rooms().length, cap());
 
   // Can defId stand at (col, row)? uid: the piece being moved (null for a new one). → { ok, code, reason }
   function check(defId, col, row, uid = null) {
     if (!defs[defId]) return { ok: false, code: 'unknown', reason: 'Unknown' };
-    if (uid == null && isRoomDef(defId) && rooms().length >= cap()) return { ok: false, code: 'capacity', reason: `Stage ${s.stage} holds ${cap()} residents: every room is built${s.stage < STAGES.length ? ' (upgrade the home for more)' : ''}` };
+    if (uid == null && isRoomDef(defId) && rooms().length >= cap()) {
+      const lim = placesLimit();
+      if (lim && lim.n <= Math.min(stageDef().capacity, LOGICAL_CAP)) return { ok: false, code: 'capacity', reason: lim.text };
+      return { ok: false, code: 'capacity', reason: `Stage ${s.stage} holds ${cap()} residents: every room is built${s.stage < STAGES.length ? ' (upgrade the home for more)' : ''}` };
+    }
     const base = fs.check(defId, col, row, 0, uid);
     if (!base.ok && base.code !== 'blocked') return base;
     // (Milestone 24: a wing-only room or a wing hub stands fully inside its wing — wherever wings can exist, Stage 3 on.
@@ -504,6 +509,12 @@ export function createLayout({ saved = null, bus = null } = {}) {
     },
     setSecretCheck(fn) {
       secretOk = fn ?? (() => false);
+    },
+    setPlacesLimit(fn) {
+      placesLimit = fn ?? (() => null);
+    },
+    get placesLimit() {
+      return placesLimit();
     },
     check,
     place,

@@ -109,7 +109,7 @@ import { DataValidator } from '../../../core/DataValidator.js';
 import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
 import { ROLES, STATS, TIERS } from '../data/roles.js';
 import { TRAITS, STAFF, ALL_STAFF, GODS, staffById, validateStaff, checkStaffArt } from '../data/staff.js';
-import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL } from '../data/balance.js';
+import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL, SAFE_CAPACITY } from '../data/balance.js';
 import { SHIFT_IDS, OFF, WINGS, AGENCY } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
 import { STAGES, LOGICAL_CAP, HOME } from '../data/home.js';
@@ -875,13 +875,18 @@ function openResidents() {
           const room = w.placed.find((x) => x.defId === 'F03');
           if (room) openHomeSheet(room.id);
         } }] },
-        { title: 'Admissions', columns: 1, buttons: [{ id: 'admissions', label: 'Admissions', sub: `${adm.board.length} applying · ${adm.waiting.length} on the waiting list`, icon: CARE_ICONS.admissions, badge: adm.board.length || null, accent: COL.action, onTap: () => openAdmissions() }, ...readyApplicants(w)] },
+        { title: 'Admissions', lines: [safeCapacityLine(w)], columns: 1, buttons: [{ id: 'admissions', label: 'Admissions', sub: `${adm.board.length} applying · ${adm.waiting.length} on the waiting list`, icon: CARE_ICONS.admissions, badge: adm.board.length || null, accent: COL.action, onTap: () => openAdmissions() }, ...readyApplicants(w)] }, // (Milestone 40b: safe capacity)
         ...(debug.enabled && !spawn ? [{ title: 'Debug', columns: 1, buttons: [{ id: 'debug:spawn60', label: 'Spawn all 60', sub: 'A test home (never saved): everyone comes in, walks to a spot, has their card opened once, then it clears', accent: COL.progress, onTap: () => startSpawnCheck() }] }] : []),
       ],
     };
   });
 }
 // Milestone 34 (UI audit): applicants who can move in now, straight under Care (two taps to their card, not three).
+// Milestone 40b: "Your team can safely care for 6" (red when the home is past it), on Care and the Admissions sheet.
+function safeCapacityLine(w) {
+  const sc = w.safeCapacity();
+  return { text: `${sc.line} · ${sc.here} here${sc.stretched ? ` · ${SAFE_CAPACITY.stretched}` : ''}`, color: sc.stretched ? COL.bad : COL.actionDark };
+}
 function readyApplicants(w) {
   const ctx = admitCtxNow();
   return w.admissions.board.filter((a) => w.admissions.canAdmit(a, ctx).ok).slice(0, CARE_READY_SHOWN).map((a) => {
@@ -3392,7 +3397,7 @@ function ledgerMonth(w) {
   const range = w.monthRange();
   const sum = {};
   for (const l of w.ledger.economy.ledger) if (l.currency === 'credits' && l.day >= range.fromDay && !['opening', 't', 'test', 'debug'].includes(l.category) && !(l.day === range.fromDay && CLOSE_CATS.includes(l.category))) sum[l.category] = (sum[l.category] ?? 0) + l.amount;
-  for (const l of w.ledger.forecast({ ...range, day: w.clock.totalDays, residents: w.payers(), staff: w.payroll(), home: w.homeCosts(), feeMult: w.blessings?.feeMult() ?? 1 })) sum[l.category] = (sum[l.category] ?? 0) + l.amount;
+  for (const l of w.ledger.forecast({ ...range, day: w.clock.totalDays, residents: w.payers(), staff: w.payroll(), home: w.homeCosts(), feeMult: w.feeMult?.() ?? w.blessings?.feeMult() ?? 1 })) sum[l.category] = (sum[l.category] ?? 0) + l.amount;
   return sum;
 }
 const signedCredits = (v) => `${v < 0 ? '−' : v > 0 ? '+' : ''}${credits(Math.abs(v))}`;
@@ -3449,8 +3454,10 @@ function offerSection(w, o, say) {
       } },
     ] };
   }
-  return { title: 'A Rescue Investor', lines: [{ text: `${castFor('bank').name} from the community bank has found an investor.`, color: COL.textMuted }, { text: `The balance has kept sinking. An investor will clear the debt (to ${credits(D.investor.buffer)} Credits, and any Emergency Credit still owed) for ${D.investor.sharePct}% of each month's profit for ${D.investor.months} months.`, color: COL.actionDark }, { text: 'The home and everyone in it carry on as they are.', color: COL.textMuted }], columns: 2, buttons: [
-    { id: 'offer:investor:yes', label: 'Accept the investor', sub: `Debt cleared · ${D.investor.sharePct}% of profit`, accent: COL.good, onTap: () => {
+  const run = w.economy.state.debt.investor; // (Milestone 40b: a renewal while one is still running takes a bigger share)
+  const pct = run ? Math.min(D.maxSharePct, run.sharePct + D.renewPct) : D.investor.sharePct;
+  return { title: run ? 'A Recovery Plan' : 'A Rescue Investor', lines: [{ text: `${castFor('bank').name} from the community bank has found an investor.`, color: COL.textMuted }, { text: `The home has been in deep debt for a while. An investor will clear the debt (to ${credits(D.investor.buffer)} Credits, and any Emergency Credit still owed) for ${pct}% of each month's profit for ${D.investor.months} months${run ? ' (in place of the plan running now)' : ''}.`, color: COL.actionDark }, { text: 'The home and everyone in it carry on as they are.', color: COL.textMuted }], columns: 2, buttons: [
+    { id: 'offer:investor:yes', label: 'Accept the investor', sub: `Debt cleared · ${pct}% of profit`, accent: COL.good, onTap: () => {
       const r = w.economy.accept('investor');
       say(r.ok ? null : r.reason);
       if (r.ok) autosave.request('economy');
@@ -3570,6 +3577,7 @@ function openAdmissions() {
       art: CARE_ICONS.admissions,
       accent: accentNow(),
       sections: [
+        { lines: [safeCapacityLine(w), ...(w.layout.placesLimit ? [{ text: w.layout.placesLimit.text, color: COL.textMuted }] : [])] }, // (Milestone 40b)
         adm.board.length ? { title: 'Applicants', columns: 1, buttons: adm.board.map((a) => row(a, false)) } : { title: 'Applicants', lines: [{ text: 'Nobody is applying right now. New applicants arrive every few days.', color: COL.textMuted }] },
         adm.waiting.length ? { title: 'Waiting list', columns: 1, buttons: adm.waiting.map((a) => row(a, true)) } : { title: 'Waiting list', lines: [{ text: 'Nobody is waiting.', color: COL.textMuted }] },
         { columns: 1, buttons: [{ id: 'adm:back', label: '‹ Back to residents', accent: COL.progress, onTap: () => openResidents() }] },
@@ -3628,11 +3636,17 @@ function openApplicant(id) {
         {
           columns: 1,
           buttons: [
-            { id: 'act:admit', label: 'Admit now', sub: can.ok ? `Room ${w.roomNumber(nextRoom?.id)} · walks in now, joins the routine from the next band` : can.reason, disabled: !can.ok, accent: COL.good, onTap: () => act(() => w.admit(id), () => {
-              sheet.close();
-              const person = w.residentById(id);
-              if (person) homeScreen.selection.select(person);
-            }) },
+            { id: 'act:admit', label: 'Admit now', sub: can.ok ? `Room ${w.roomNumber(nextRoom?.id)} · walks in now, joins the routine from the next band${w.safeCapacity().here + 1 > w.safeCapacity().n ? ' · your team is stretched' : ''}` : can.reason, disabled: !can.ok, accent: COL.good, onTap: () => {
+              const admitNow = () => act(() => w.admit(id), () => {
+                sheet.close();
+                const person = w.residentById(id);
+                if (person) homeScreen.selection.select(person);
+              });
+              const sc = w.safeCapacity();
+              if (sc.here + 1 <= sc.n) return admitNow();
+              // (Milestone 40b) past safe capacity: still allowed, asked once
+              dialog.confirm({ title: 'Your team is stretched', body: `${SAFE_CAPACITY.stretched} Your team can safely care for ${sc.n}; ${first(def.name)} would make ${sc.here + 1}. Adding ${SAFE_CAPACITY.need[sc.need]} to the ${SHIFTS[sc.weakest]?.name ?? sc.weakest} shift helps most.`, art: def.art, yes: 'Admit anyway', onYes: admitNow });
+            } },
             { id: 'act:wait', label: 'Wait-list', sub: wait ? 'Already on the waiting list' : `Keeps their place for ${ADMISSION.waitDays} days`, disabled: wait, accent: COL.progress, onTap: () => act(() => adm.waitlist(id, ctx.day)) },
             { id: 'act:decline', label: 'Decline / refer elsewhere', sub: 'They look for a place elsewhere (and may apply again later)', accent: COL.progress, onTap: () => act(() => adm.decline(id, ctx.day), () => openAdmissions()) },
             { id: 'act:assess', label: 'Request assessment update', sub: app.assessed ? 'Already updated once' : 'A fresh look at their needs · takes a day', disabled: app.assessed, accent: COL.progress, onTap: () => act(() => adm.requestAssessment(id, ctx.day)) },
@@ -4676,6 +4690,7 @@ function hintRules() {
     { id: 'afternoon', text: NEXT_HINTS.afternoon, when: () => onShift('afternoon') === 0, open: () => openRoster() },
     { id: 'night', text: NEXT_HINTS.night, when: () => onShift('night') === 0, open: () => openRoster() },
     { id: 'short', text: NEXT_HINTS.short, when: () => W().coverage.warnings().length > 0, open: () => openRoster() },
+    { id: 'stretched', text: () => { const sc = W().safeCapacity(); return NEXT_HINTS.stretched(sc.n, SAFE_CAPACITY.need[sc.need], SHIFTS[sc.weakest]?.name ?? sc.weakest); }, when: () => W().safeCapacity().stretched, open: () => openRoster() }, // (Milestone 40b)
     { id: 'dining', text: NEXT_HINTS.dining, when: () => !placedOf('F03'), open: () => openBuildList() },
     { id: 'kitchen', text: NEXT_HINTS.kitchen, when: () => !placedOf('F04') && !placedOf('F16'), open: () => openBuildList() },
     { id: 'plan', text: () => NEXT_HINTS.plan(first(W().residentById(stale()[0]?.resident)?.name ?? 'A resident')), when: () => stale().length > 0, open: () => openHomeSheet(stale()[0].resident) },

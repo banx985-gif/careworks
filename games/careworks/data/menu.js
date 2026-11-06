@@ -60,6 +60,7 @@ export const NEXT_HINTS = {
   afternoon: 'Nobody is on the Afternoon shift: tap for the roster',
   night: 'Nobody is on the Night shift: tap for the roster',
   short: 'A shift is short-staffed: tap for the roster',
+  stretched: (n, who, shift) => `Your team is stretched: it can safely care for ${n}. Add ${who} to the ${shift} shift: tap for the roster`, // (Milestone 40b)
   dining: 'Place a Dining Room: tap for Build Mode',
   kitchen: 'Place a Kitchen so meals are cooked here: tap for Build Mode',
   plan: (name) => `${name}’s care plan is due for review: tap to open it`,

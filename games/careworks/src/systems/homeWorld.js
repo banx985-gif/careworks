@@ -125,14 +125,15 @@ import { DAY, ROUTINE, WAKE, ALL_STEPS, TIMER_SCALE } from '../../data/routine.j
 import { createActivities, feelingOf, outcomeMult, birthdayOf } from './activities.js';
 import { activityById, TIMETABLE, OUTCOME, BIRTHDAY, SCHEDULABLE, COMMUNITY_EVENTS } from '../../data/activities.js';
 import { BELL, FAMILIARITY, BACKUP_HELP } from '../../data/tasks.js';
-import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK, USE_GROWTH, growthOf } from '../../data/balance.js';
+import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK, USE_GROWTH, growthOf, SAFE_CAPACITY } from '../../data/balance.js';
+import { safeCapacityOf, skillRate } from './safeCapacity.js'; // (Milestone 40b: how many the team can safely care for; skilled staff work faster)
 import { activeCombos, comboPctOf } from './combos.js'; // (overnight Stage 6: placement combos)
 import { AGENCY } from '../../data/shifts.js';
 import { ensureResidentState, newResidentState, newStay, stayDaysLeft, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog, routineFor } from './residentNeeds.js';
 import { bandOfHour, ensureCareState, absHour, bandInstance, bandEnd, generateBand, pruneTasks, addTask, scorePair, choosePairs, closeTask, decideTask, isOpen, changePlan, maybeRing, openBell, recordResponse, bellState, bellSummary, addFamiliarity, mostFamiliar, topFamiliar, noteLeft, noteBack, familiarityOf, fadeFamiliarity } from './careTasks.js';
 import { ensureStaffState, makeStaffSystem, makeFounderPerks, contribMult, perkPct, openingTeam } from './staffTeam.js';
 import { createRoster } from './roster.js';
-import { createCoverage } from './coverage.js';
+import { createCoverage, staffPoints } from './coverage.js';
 import { eligibilityOf, optionPrefOf, staleReasons, markReviewed, noteDay, admissionPlan } from './carePlanRules.js';
 import { optionById, domainById, OPTION_PREF_MOOD, DOMAINS } from '../../data/carePlans.js';
 import { SHIFT_IDS } from '../../data/shifts.js';
@@ -171,7 +172,7 @@ import { activityPct } from './traitEffects.js';
 import { createBlessings } from './blessings.js'; // (Milestone 30b: the Works Gods)
 import { createResearch } from './research.js';
 import { createEconomy, levelOfNeeds } from './economy.js';
-import { UPKEEP, UTILITIES, MOVE_OUT } from '../../data/economy.js';
+import { UPKEEP, UTILITIES, MOVE_OUT, RANK_FEES } from '../../data/economy.js';
 import { RP_INCOME } from '../../data/research.js';
 import { joinChance, choiceBand } from './activities.js';
 import { dayOfWeek } from '../../data/activities.js';
@@ -1974,7 +1975,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       // Milestone 13: a familiar helper works a little faster (communication / routine efficiency, bible §6)
       // (Milestone 15: a Care Worker preps more slowly than a Hospitality worker)
       const rate = kitchenTask ? (q.role === 'HN' || specialtiesOf(q.id).includes('nutrition') ? 1 : PREP.careWorkerRate) : 1 + familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, q.id)).speedUp;
-      t.workLeft -= (hours * rate * blessings.taskRate(q.id)) / incidentSlow(t); // (Milestone 25: the hoist out, or the water low; Milestone 30b: Zip's own work 20% quicker, the same care)
+      t.workLeft -= (hours * rate * skillOf(q) * blessings.taskRate(q.id)) / incidentSlow(t); // (Milestone 40b: skilled staff a little faster) // (Milestone 25: the hoist out, or the water low; Milestone 30b: Zip's own work 20% quicker, the same care)
       if (t.workLeft <= 1e-9) completeTask(t, q);
     }
     // free staff pick their next task (bible §15 order: src/systems/careTasks.js scorePair)
@@ -2974,13 +2975,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   care.quality = ensureQualityState(care.quality);
   const qualityFresh = !care.quality.samples.length; // (a new home, or an M25c save: worked out from the home as it is, below)
   quality = createQuality({ state: care.quality, seed, bus, today: () => clock.totalDays, year: () => clock.year, bestProgram: () => Object.keys(progState.running ?? {}).sort((a, b) => (progState.xp[b] ?? 0) - (progState.xp[a] ?? 0) || a.localeCompare(b))[0] ?? null, // (overnight Stage 7: Crown Haven copies the best-running one)
-    secretOpen: (f) => prestigeOpen(f), hasFacility: (id) => hasPiece(id) && !offline(id), onAward: (a) => {
+    secretOpen: (f) => prestigeOpen(f), hasFacility: (id) => hasPiece(id) && !offline(id), moneyWorry: () => !!economy?.moneyWorry?.(), onAward: (a) => { // (Milestone 40b: money worries)
     if (a.reward.credits) ledger.economy.add('credits', a.reward.credits, `Recognition bonus: ${a.name}`, 'recognition'); // (bible §27)
     staffState.founder.history.recognitions = (staffState.founder.history.recognitions ?? 0) + 1; // (bible §3.5.5)
     prestigeAwardRewards(a); // (Milestone 31: C11's Prestige Tokens, C12's accolade)
   } });
   layout.setRankCheck((r) => rankAtLeast(rankNow(), r)); // (Build Mode: a rank-locked room or facility opens)
   layout.setSecretCheck((f) => prestigeOpen(f)); // (Milestone 31: F34 / F35 only through their secret's flag)
+  // (Milestone 40b) Stage 1 holds 6 residents until Rank D: rooms 7 and up open with the staff Rank D brings (?debug=1's
+  // unlock opens them too, like every other lock)
+  layout.setPlacesLimit(() => (layout.stage === 1 && !layout.debugUnlock && !rankAtLeast(rankNow(), 'D') ? { n: SAFE_CAPACITY.rankEPlaces, text: SAFE_CAPACITY.placesText } : null));
   // --- community partners and grants (Milestone 23) ----------------------------------------------------------------------
   // The home's Nutrition outcome (the residents' average dining satisfaction; null before anyone has eaten here) and its
   // Environment score (room quality and cleanliness — src/systems/partners.js environmentScore).
@@ -3766,6 +3770,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       plansCurrent: n ? here.filter((p) => !staleReasons(p.state, day).length).length / n : 1,
       nutrition: nutritionOutcome(),
       unsafe: recs.filter((h) => h.steps.includes('unsafe')).length,
+      onShift: { people: recs.reduce((t, h) => t + (h.people ?? 0), 0), agency: recs.reduce((t, h) => t + (h.people != null ? h.agency ?? 0 : 0), 0) }, // (Milestone 40b: the agency share)
       community: !!acts.state.bookings[day] && !!acts.session(day, 'afternoon'),
       rehabDischarges: care.rewards?.discharges?.length ?? 0,
       programDays,
@@ -3826,7 +3831,17 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     return [...by.values()];
   }
   // The home's places: rooms built, capped by the stage and never above the 70-resident logical cap.
-  const placesLeft = () => placesFree({ here: seated().length, rooms: roomList().length, stageCap: layout.stageDef.capacity });
+  const placesLeft = () => placesFree({ here: seated().length, rooms: roomList().length, stageCap: layout.cap }); // (Milestone 40b: with Stage 1's Rank E limit)
+  // Milestone 40b: the accommodation fee × Kaching × the Rank uplift (data/economy.js RANK_FEES)
+  const feeMult = () => blessings.feeMult() * (1 + (RANK_FEES[rankNow()] ?? 0) / 100);
+  // Milestone 40b: a skilled person's work speed (1 for the Standard row and agency workers)
+  const skillOf = (q) => (q.agency ? 1 : skillRate(staffPoints(q.model, 100)));
+  // Milestone 40b: how many residents the team can safely care for (src/systems/safeCapacity.js) and how many are here
+  const safeCapacity = () => {
+    const c = safeCapacityOf(team().map((q) => ({ role: q.role, shift: roster.shiftOf(q.id)?.id ?? null, skill: skillOf(q) })));
+    const n = seated().length;
+    return { ...c, here: n, stretched: n > c.n, line: `Your team can safely care for ${c.n}` };
+  };
   const roomTemplatesHere = () => new Set(roomList().map((r) => r.defId));
   const team = () => crew.people.filter((q) => !q.agency && !q.leftTeam);
   const teamRoles = () => new Set(team().map((q) => q.role));
@@ -4052,7 +4067,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (missedThisMonth === 0 && seated().length > 0) items.rollSource('calmMonth');
       if (items.chance(Math.min(1, ITEM_SOURCES.wellWisher.monthlyChance * blessings.surpriseMult())) && items.grant('wellWisher')) bus?.emit('care:surprise', { kind: 'wellWisher' }); // (Milestone 30b: Jinx's blessing; a good surprise)
       const d = clock.dateOf(day - 1);
-      const closed = ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll(), home: homeCosts(), feeMult: blessings.feeMult() }); // (Milestone 30b: Kaching)
+      const closed = ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll(), home: homeCosts(), feeMult: feeMult() }); // (Milestone 30b: Kaching; Milestone 40b: the Rank uplift)
       // (Milestone 23: the partners' savings on this close — GoldenStep on equipment, BOTWORKS on upkeep and utilities —
       // their month checks, and a new grant board)
       const closeSum = (cats) => (closed ?? []).filter((l) => cats.includes(l.category)).reduce((t, l) => t + l.amount, 0);
@@ -4715,6 +4730,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       },
     },
     placesLeft: () => placesLeft(),
+    safeCapacity: () => safeCapacity(), // (Milestone 40b)
+    feeMult: () => feeMult(), // (Milestone 40b: Kaching × the Rank uplift)
     fillToCapForDebug: (opts) => fillToCap(opts),
     // --- Milestone 23: community partners and grants ----------------------------------------------------------------------
     get partners() {
@@ -5073,8 +5090,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     // They join the routine and the task planning from the next band.
     admit(residentId) {
       // (Milestone 24: never above the stage's cap or the 70-resident logical cap; a full set of rooms keeps its own reason)
-      const capNow = Math.min(layout.stageDef.capacity, LOGICAL_CAP);
-      if (seated().length >= capNow) return { ok: false, reason: `The home is full: Stage ${layout.stage} holds ${capNow} residents` };
+      const capNow = layout.cap; // (Milestone 40b: Stage 1 holds 6 until Rank D)
+      if (seated().length >= capNow) return { ok: false, reason: layout.placesLimit && capNow < Math.min(layout.stageDef.capacity, LOGICAL_CAP) ? layout.placesLimit.text : `The home is full: Stage ${layout.stage} holds ${capNow} residents` };
       const r = admissions.admit(residentId, admitCtx());
       if (!r.ok) return r;
       const app = r.applicant;

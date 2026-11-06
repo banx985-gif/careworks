@@ -188,7 +188,7 @@ export function createCoverage({ state, roster, team, levels, restBonus = null, 
         bus?.emit('coverage:scaleBack', { shift: inst.shift, day: inst.day });
       }
     }
-    Object.assign(rec, { after: a.pct, rnOkAfter: a.rnOk, safe: a.safe, required: a.required, provided: a.provided });
+    Object.assign(rec, { after: a.pct, rnOkAfter: a.rnOk, safe: a.safe, required: a.required, provided: a.provided, people: a.staff.length }); // (Milestone 40b: people on shift, for the agency share)
     cs.history.push(rec);
     if (cs.history.length > FALLBACK.historyKept) cs.history.splice(0, cs.history.length - FALLBACK.historyKept);
     bus?.emit('coverage:shift', rec);

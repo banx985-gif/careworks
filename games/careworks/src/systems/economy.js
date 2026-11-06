@@ -34,7 +34,7 @@ const NOT_TRADING = new Set(['opening', 'loan', 'investor', 't', 'test', 'debug'
 export function ensureEconomyState(saved) {
   return {
     history: [...(saved?.history ?? [])],
-    debt: { offer: null, loan: null, investor: null, sinking: 0, declined: null, ...(saved?.debt ?? {}) },
+    debt: { offer: null, loan: null, investor: null, sinking: 0, declined: null, deep: 0, ...(saved?.debt ?? {}) }, // (Milestone 40b: deep = month-ends in a row below the floor)
     firsts: [...(saved?.firsts ?? [])],
     prestige: saved?.prestige ?? 0,
     lastLine: saved?.lastLine ?? 0,
@@ -101,10 +101,12 @@ export function createEconomy({ ledger, care, today = () => 0, bus = null }) {
       const prev = st.history.at(-1)?.balance ?? null;
       if (bal() < D.floor && (prev == null || bal() < prev)) d.sinking += 1;
       else d.sinking = 0;
+      d.deep = bal() < D.floor ? (d.deep ?? 0) + 1 : 0; // (Milestone 40b)
       st.history.push({ month, day: today(), balance: bal(), net, income: tr.income, costs: tr.costs, byCat: tr.byCat });
       if (st.history.length > 24) st.history.shift();
       st.lastLine = eco.nextLine - 1;
       if (d.sinking >= D.sinkingMonths && !d.investor) offer('investor');
+      else if (d.deep >= D.recoveryMonths) offer('investor'); // (Milestone 40b: always a way out — a renewal if one is running)
       bus?.emit('economy:month', { month, net, balance: bal() });
       return net;
     },
@@ -116,10 +118,14 @@ export function createEconomy({ ledger, care, today = () => 0, bus = null }) {
       if (d.declined != null && day - d.declined < D.reofferDays) return;
       offer('loan');
     },
-    admissionsPaused: () => (bal() < D.floor ? `Admissions are paused: the home is in deep debt (below −${Math.abs(D.floor).toLocaleString('en-GB')} Credits). They open again when the balance recovers.` : null),
+    admissionsPaused: () => (bal() < D.admissionsFloor ? `Admissions are paused: the home is in very deep debt (below −${Math.abs(D.admissionsFloor).toLocaleString('en-GB')} Credits). They open again when the balance recovers.` : null), // (Milestone 40b: was the −5,000 floor)
+    // (Milestone 40b) money worries: below the floor at worryMonths month-ends in a row and still below it now — Rank can't
+    // go up and the routine review is capped (src/systems/quality.js); lifted the moment the balance is back above the floor
+    moneyWorry: () => (st.debt.deep ?? 0) >= D.worryMonths && bal() < D.floor,
     warnings() {
       const out = [];
-      if (bal() < D.warnBelow) out.push(bal() < D.floor ? 'The home is in deep debt: admissions are paused. Emergency Credit or a Rescue Investor can help.' : 'The balance is below zero: costs are higher than income right now.');
+      if (bal() < D.warnBelow) out.push(bal() < D.admissionsFloor ? 'The home is in very deep debt: admissions are paused. Emergency Credit or a Rescue Investor can help.' : bal() < D.floor ? 'The home is in deep debt. Emergency Credit or a Rescue Investor can help; new residents bring the fees back.' : 'The balance is below zero: costs are higher than income right now.');
+      if (api.moneyWorry()) out.push(`${D.worryText}: Rank can't go up and the yearly review is capped at ${D.worryCap} until the balance is back above ${D.floor.toLocaleString('en-GB')}.`);
       return out;
     },
     offers: () => (st.debt.offer ? [st.debt.offer] : []),
@@ -138,8 +144,10 @@ export function createEconomy({ ledger, care, today = () => 0, bus = null }) {
         const clear = Math.max(0, I.buffer - bal());
         add(clear, 'Rescue Investor: the debt cleared', 'investor');
         d.loan = null; // (anything still owed on Emergency Credit is cleared too)
-        d.investor = { sharePct: I.sharePct, left: I.months, day: today(), paid: clear };
+        const share = d.investor ? Math.min(D.maxSharePct, d.investor.sharePct + D.renewPct) : I.sharePct; // (Milestone 40b: a renewal costs a bigger share)
+        d.investor = { sharePct: share, left: I.months, day: today(), paid: clear + (d.investor?.paid ?? 0) };
         d.sinking = 0;
+        d.deep = 0;
       }
       bus?.emit('economy:accepted', { kind });
       return { ok: true, reason: null };
