@@ -3838,7 +3838,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const skillOf = (q) => (q.agency ? 1 : skillRate(staffPoints(q.model, 100)));
   // Milestone 40b: how many residents the team can safely care for (src/systems/safeCapacity.js) and how many are here
   const safeCapacity = () => {
-    const c = safeCapacityOf(team().map((q) => ({ role: q.role, shift: roster.shiftOf(q.id)?.id ?? null, skill: skillOf(q) })));
+    const c = safeCapacityOf(team().map((q) => ({ role: q.role, shift: roster.shiftOf(q.id)?.id ?? null, skill: skillOf(q) })), { stage: layout.stage }); // (Part D: the stage's longer walks)
     const n = seated().length;
     return { ...c, here: n, stretched: n > c.n, line: `Your team can safely care for ${c.n}` };
   };

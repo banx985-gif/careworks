@@ -157,4 +157,4 @@ export const NURSING_SUPPLEMENT = { perMonth: 250 };
 // wage, and the home sank): a better-rated home is one families will pay more to live in — the accommodation fee rises
 // with the home's Rank, this % on top (Rank E: none, so a new home's first months are exactly as before). Shown on the
 // Ledger's fee line. PLACEHOLDERS (DECISIONS.md, Milestone 40b).
-export const RANK_FEES = { E: 0, D: 10, C: 20, B: 30, A: 40, S: 50 };
+export const RANK_FEES = { E: 0, D: 20, C: 35, B: 50, A: 65, S: 80 }; // (Part D: was D 10 … S 50 — the 16-year soaks still sank at Rank D / C)

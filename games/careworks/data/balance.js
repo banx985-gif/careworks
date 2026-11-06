@@ -120,15 +120,21 @@ export function growthOf(n, pcts) {
 // worker and two carers on the Afternoon shift miss about half the lunches. PLACEHOLDERS (DECISIONS.md, Milestone 40b).
 export const SAFE_CAPACITY = {
   care: { hands: { CW: 1, RN: 1 }, perHand: { morning: 3, afternoon: 3 } },
-  meals: { hands: { HN: 1, CW: 0.5 }, perHand: { morning: 4, afternoon: 4 } },
+  meals: { hands: { HN: 1, CW: 0.4 }, perHand: { morning: 4.3, afternoon: 4.3 } },
+  // (Part D) the medicine rounds: nurses only; at 13 residents two morning nurses missed about four rounds a day
+  meds: { hands: { RN: 1 }, perHand: { morning: 6, afternoon: 8 } },
   night: { base: 4, perHand: 12 },
   minimum: 2,
+  // (Part D) a bigger home is a longer walk between rooms, the dining room and the medicine trolley: each pair of hands keeps
+  // up with fewer residents from Stage 2 on (× by stage 1–5; the 16-year soak at 13 residents in Stage 2 missed ~7 tasks a day
+  // that the Stage 1 numbers called safe)
+  stageFactor: [1, 0.8, 0.75, 0.7, 0.65],
   skillShare: 0.5, // (about half a task's time is the walk there, which skill doesn't shorten)
   // Stage 1 holds this many residents until Rank D (its first six places at the start; the rest open at Rank D)
   rankEPlaces: 6,
   placesText: 'Rooms 7 and up open at Rank D: until then Stage 1 holds 6 residents (as many as a Rank E team can safely care for)',
   stretched: 'Your team is stretched — essential care may be missed.',
-  need: { care: 'a carer or nurse', meals: 'a Hospitality worker', night: 'someone on Night' },
+  need: { care: 'a carer or nurse', meals: 'a Hospitality worker', meds: 'a nurse', night: 'someone on Night' },
 };
 // Milestone 40b (the soak: a bigger home's Rare staff cost twice a Standard's wage for the same work): staff above the
 // Standard row work a little faster at their tasks — 1 + k × (their stat points ÷ basePoints − 1), at most max. basePoints
