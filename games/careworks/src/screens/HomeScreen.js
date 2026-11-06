@@ -44,6 +44,7 @@ import { drawTaskMarker, drawBellMarker } from '../ui/taskMarkers.js';
 import { VISITOR_LOOK } from '../../data/family.js';
 import { findPath } from '../../../../core/Pathing.js';
 import { MEMORIAL } from '../../data/endOfLife.js';
+import { drawWalker } from '../ui/walkers.js'; // (Milestone 40c: the walking chibis)
 const MEMORIAL_GLOW = MEMORIAL.art.glow; // (Milestone 27: a room held after a passing)
 // Milestone 30b: a soft gold glow behind a Works God (code-drawn: a radial gradient, so no art is needed)
 function drawGodGlow(ctx, x, y, rad) {
@@ -277,6 +278,8 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
       else m.stride += d;
       const sx = dx - dy; // plan → screen: x grows with col, shrinks with row
       if (Math.abs(sx) > 0.5) m.flip = sx > 0 ? 1 : -1;
+      const sy = dx + dy; // (Milestone 40c: plan → screen y — walking up the screen shows their back)
+      if (Math.abs(sy) > 0.5) m.back = sy < 0;
       m.x = p.agent.x;
       m.y = p.agent.y;
     }
@@ -329,6 +332,14 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
 
   const screen = {
     camera,
+    // (Milestone 40c: the browser checks) the camera on someone, by their feet
+    focusPerson(p, zoom = null) {
+      if (!p) return false;
+      if (zoom) camera.setZoom(zoom);
+      const f = feetOf(p);
+      camera.centerOn(f.x, f.y - PERSON.height * 0.5);
+      return true;
+    },
     iso,
     selection,
     taps,
@@ -899,6 +910,7 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
   // Milestone 39: culling and the full-detail cap (bible: 28 residents + 24 staff drawn in full; the rest as the simpler
   // Low-graphics figures). Anyone whose feet are well outside the view is not drawn at all (taps still find everyone).
   const DETAIL_CAP = { resident: 28, staff: 24 };
+  const WALKER_H = 0.9; // (Milestone 40c: a walking chibi's height against PERSON.height — the flat art's)
   const CULL_MARGIN = 260;
   let framePeople = [];
   const simpleSet = new Set();
@@ -972,7 +984,8 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     const ax = f.x + (m.flip ? 1 : -1) * r.w * 0.5 - aw / 2;
     if (aid) assets.draw(ctx, aid, ax, f.y - ah, aw, ah);
     if (p.kind === 'staff' && p.model?.tier === 'divine') drawGodGlow(ctx, f.x, f.y - r.h * 0.5, r.h * 0.62); // (Milestone 30b: a Works God's small gold glow)
-    drawCharacter(ctx, assets, p.art, f.x, f.y, r.w, r.h, pose);
+    // (Milestone 40c) their walking chibi when their sheet is in (the flat art stays on every card and pop-up); else today's walker
+    if (!drawSheet(ctx, p, f, poseAgent.state)) drawCharacter(ctx, assets, p.art, f.x, f.y, r.w, r.h, pose);
     if (cart) assets.draw(ctx, cart, cx, f.y - ch, cw, ch);
   }
   // Milestone 19: a visitor — a plain code-drawn figure (legs, an outdoor coat, a head with hair, a small bag), a little
@@ -987,9 +1000,19 @@ export function createHomeScreen({ renderer, layout, assets, bus, sheet, campaig
     for (const ch of id) n = (n * 31 + ch.charCodeAt(0)) >>> 0;
     return list[n % list.length];
   };
+  // (Milestone 40c) one frame of someone's walking sheet: walk / work / idle by what they are doing, their back while they
+  // walk up the screen, mirrored when they face right. Low graphics and the people past the full-detail cap hold still
+  // unless they walk. → false when they have no sheet (yet)
+  function drawSheet(ctx, p, f, state) {
+    const m = motionOf(p);
+    const anim = state === 'walking' ? 'walk' : state === 'helping' ? 'work' : 'idle';
+    const still = (lowFx() || simpleSet.has(p)) && anim !== 'walk';
+    return drawWalker(ctx, assets, p, { x: f.x, y: f.y, h: PERSON.height * WALKER_H, anim, back: anim === 'walk' && !!m.back, mirror: m.flip > 0, t: still ? 0 : animT + (m.seed ?? 0) });
+  }
   function drawVisitor(ctx, x) {
     const m = motionOf(x);
     const walking = x.agent.state === 'walking';
+    if (drawSheet(ctx, x, feetOf(x), walking ? 'walking' : 'still')) return; // (Milestone 40c: their cast chibi, as it is)
     const t = walking ? m.stride / (MOTION.stride * WALK.speedMultiplier) : animT;
     const bob = walking ? Math.abs(Math.sin(t * Math.PI)) * MOTION.staff.walkBobPx * 1.2 : Math.sin(animT * Math.PI * 2 * MOTION.resident.idleBreathPerSec) * MOTION.resident.idleBreathPx;
     const f = feetOf(x);

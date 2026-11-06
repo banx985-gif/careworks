@@ -14,6 +14,7 @@
 // from the image, so a 256 px master works the same.
 import { WALKER_IDS } from '../../data/walkers.js';
 import { castById } from '../../data/cast.js';
+import { staffById } from '../../data/staff.js';
 
 const COLUMNS = 8;
 const ROWS = { idle: [0, 4, 4], walk: [1, 8, 10], work: [2, 6, 8], cheer: [3, 6, 8] }; // anim → [front row, frames, fps]
@@ -33,7 +34,8 @@ export function walkerKeyOf(p) {
   }
   const id = p.model?.id ?? p.id;
   if (id === AARON_ID) return keyFor('chibi_71_aaron_banx_games_founder', 'cast');
-  if (p.model?.tier === 'divine' && p.model?.god) return keyFor(`god_${p.model.god}`, 'cast');
+  const god = staffById(id)?.god;
+  if (god) return keyFor(`god_${god}`, 'cast');
   const art = p.art ?? p.model?.art;
   return art && HAS.has(art) ? keyFor(art, 'walkers') : null;
 }

@@ -49,7 +49,7 @@
    "id": "staff_ah05",
    "flat": "games/careworks/assets/images/staff/staff_ah05.png",
    "chibi": "chibi_05_blue_top",
-   "hair": "auto"
+   "hair": "#1a1616"
   },
   {
    "id": "staff_ah06",
@@ -61,7 +61,7 @@
    "id": "staff_ah07",
    "flat": "games/careworks/assets/images/staff/staff_ah07.png",
    "chibi": "chibi_06_red_shirt",
-   "hair": "auto"
+   "hair": "#1a1616"
   },
   {
    "id": "staff_ah08",
@@ -73,7 +73,7 @@
    "id": "staff_ah09",
    "flat": "games/careworks/assets/images/staff/staff_ah09.png",
    "chibi": "chibi_16_curly_coral_tee",
-   "hair": "auto",
+   "hair": "#1a1616",
    "glasses": {}
   },
   {
