@@ -481,7 +481,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // running programs' own counts
   progState.xp ??= Object.fromEntries(Object.entries(progState.running).map(([id, r]) => [id, r.sessions ?? 0]));
   const programGrowth = (id) => growthOf(progState.xp[id] ?? 0, USE_GROWTH.programPct);
-  const progMult = (id) => 1 + programGrowth(id).pct / 100;
+  const progMult = (id) => (1 + programGrowth(id).pct / 100) * (blessings?.liftMult?.() ?? 1); // (Milestone 40b: Aaron's Studio Founder)
   const heldSession = (id) => (progState.xp[id] = (progState.xp[id] ?? 0) + 1);
   const assignSys = new AssignmentSystem({ staff: sys, getJobs: () => care.tasks.filter((t) => t.status === 'claimed' || t.status === 'working') });
   const absNow = () => absHour(clock.totalDays, hourNow());
@@ -1566,7 +1566,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const feeling = feelingOf(p.def, p.state, act);
     const crowded = (s.going?.length ?? 0) > act.group.max;
     const community = act.id === 'gardening' || act.id === 'communityVisit' || !!s.event; // (Milestone 23: a garden or community session)
-    const m = outcomeMult(feeling, crowded, s.liftMult ?? 1) * (1 + rb('activityPct') / 100) * (community ? 1 + pp('communityActivityPct') / 100 : 1); // (Milestone 21: research; Milestone 23: GreenLeaf)
+    const m = outcomeMult(feeling, crowded, s.liftMult ?? 1) * (1 + rb('activityPct') / 100) * (community ? 1 + pp('communityActivityPct') / 100 : 1) * blessings.liftMult(); // (Milestone 40b: Aaron's Studio Founder) // (Milestone 21: research; Milestone 23: GreenLeaf)
     // (Milestone 20: Garden Lover / Music Maker / Community Link on shift lift their kind of session a little more)
     const on = onShiftNow().filter((q) => !q.agency);
     const traitMult = (o) => 1 + Math.max(0, ...on.map((q) => activityPct(q.model.traits, act.id, { event: !!s.event || !!s.program, outcome: o }))) / 100;
@@ -3793,7 +3793,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function rankNow() {
     return quality.rank;
   }
-  staffing = createStaffing({ state: staffState, sys, ledger, seed, bus, today: () => clock.totalDays, year: () => clock.year, teamSize: () => crew.people.filter((q) => !q.agency && !q.leftTeam).length, trainingPlaces: () => layout.ofDef('F11').length * TRAINING.placesPerRoom, rank: () => rankNow(), hasFacility: (defId) => layout.ofDef(defId).length > 0, trainingPct: () => pp('trainingDaysPct'), score: (id) => quality.scores()[id] ?? null, clue: () => quality.has('eliteClue') }); // (Milestone 23; Milestone 26: the real Rank and §5 scores)
+  staffing = createStaffing({ state: staffState, sys, ledger, seed, bus, today: () => clock.totalDays, year: () => clock.year, teamSize: () => crew.people.filter((q) => !q.agency && !q.leftTeam).length, trainingPlaces: () => layout.ofDef('F11').length * TRAINING.placesPerRoom, rank: () => rankNow(), hasFacility: (defId) => layout.ofDef(defId).length > 0, trainingPct: () => pp('trainingDaysPct') + blessings.trainingDaysPct(), score: (id) => quality.scores()[id] ?? null, clue: () => quality.has('eliteClue') }); // (Milestone 23; Milestone 26: the real Rank and §5 scores; Milestone 40b: Aaron's Studio Founder in trainingPct)
   staffing.onTrained((s, c, gains, specialty) => {
     roster.setTraining(s.id, false);
     care.quality.trainedOn[s.id] = clock.totalDays; // (Milestone 26: Staff Wellbeing reads who trained lately)
@@ -5477,6 +5477,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     // (Milestone 30: a special menu the team can make; a staff secret's named person arrives on the Recruit board)
     dietMadeByTeam: (residentId) => world.dietMadeByTeam(residentId),
     specialArrival: (staffId) => staffing.arrive(staffId),
+    hallVeterans: () => (achievements?.hall ?? []).filter((e) => (e.years ?? 0) >= 5).length, // (Milestone 40b: Aaron's secret)
     // (Milestone 30 Batch B: a resident's birthday — their age now — and the quiet group activities)
     birthdayOf: (residentId) => birthdayOf(residentId),
     isQuietActivity: (activityId) => !!activityById(activityId)?.quiet,

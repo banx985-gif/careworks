@@ -63,6 +63,10 @@ function streak(map, id, ok, day) {
   else delete map[id];
 }
 // Their age now: their age on admission and each birthday since (data/activities.js: a birthday is a day of the year).
+// (Milestone 40b) the bible's five Legendary staff (Aaron's secret reads them) and the rule categories that never count toward the
+// bible's 40 secrets (the gods' own and Aaron's)
+const LEGEND_IDS = ['RN09', 'CW09', 'LC09', 'AH09', 'HN09'];
+const UNCOUNTED = ['divine', 'founder'];
 export function ageNow(p, day, birthdayOf) {
   const b = (birthdayOf?.(p.id) ?? 1) - 1;
   const upTo = (x) => (x < b ? 0 : Math.floor((x - b) / DAYS_PER_YEAR) + 1);
@@ -454,7 +458,7 @@ export function createSecretFacts({ env, log, engine, account }) {
     .define('run.awardCount', () => env.quality.wonIds().length)
     .define('run.partners', partnersList)
     .define('run.partnerTopTier', () => Math.max(0, ...partnersList().map((p) => p.tier)))
-    .define('run.secretsFound', () => engine().rules.filter((r) => r.category !== 'divine' && engine().unlockedInRun(r.id)).length) // (Milestone 30b: the gods' own secrets don't count)
+    .define('run.secretsFound', () => engine().rules.filter((r) => !UNCOUNTED.includes(r.category) && engine().unlockedInRun(r.id)).length) // (Milestone 30b: the gods' own secrets don't count; Milestone 40b: nor Aaron's)
     // harm (§35): only ever in forbids
     .define('run.essentialMissedMonth', () => month().essentialMissed)
     .define('run.essentialMissed', () => env.care.counts?.essentialMissed ?? 0)
@@ -504,13 +508,16 @@ export function createSecretFacts({ env, log, engine, account }) {
     .define('run.unsafeShifts12m', () => L().months.slice(-11).reduce((t, m) => t + (m.unsafeShifts ?? 0), 0) + month().unsafe)
     .define('account.godsHired', () => account().godsHired?.() ?? [])
     .define('account.fourGodsHired', () => ['bolt', 'jinx', 'zip', 'kaching'].filter((g) => (account().godsHired?.() ?? []).includes(g)).length)
+    // (Milestone 40b: Aaron's secret) the five bible Legendaries hired at least once (every run); Hall of Fame members with 5+ years
+    .define('account.legendsHired', () => (account().legendsHired?.() ?? []).filter((id) => LEGEND_IDS.includes(id)).length)
+    .define('account.hallVeterans', () => env.hallVeterans?.() ?? 0)
     .define('account.legacyStaffLevels', () => env.legacyStaffLevels?.() ?? 0) // (Milestone 33: the longest unbroken NG+1, NG+2 … chain a Legacy Staff member on the team was carried through)
     .define('run.eolNotWellSupported', () => eolResults().filter((r) => !r.good).length)
     .define('run.forcedDependence', () => L().forcedDependence ?? 0)
     // account
     .define('account.ngPlus', () => env.ngPlus())
     .define('account.memoryBook', () => account().memoryBook())
-    .define('account.secretsFound', () => engine().rules.filter((r) => r.category !== 'divine' && engine().everUnlocked(r.id)).length) // (Milestone 30b: the gods' own secrets don't count)
+    .define('account.secretsFound', () => engine().rules.filter((r) => !UNCOUNTED.includes(r.category) && engine().everUnlocked(r.id)).length) // (Milestone 30b: the gods' own secrets don't count; Milestone 40b: nor Aaron's)
     .define('account.secretsFoundIds', () => engine().rules.filter((r) => engine().everUnlocked(r.id)).map((r) => r.id))
     .define('account.prestigeTokens', () => account().prestigeTokens())
     .define('account.storySecretsFound', () => engine().rules.filter((r) => r.category === 'residentStory' && engine().everUnlocked(r.id)).length)

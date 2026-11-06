@@ -157,7 +157,22 @@ export const MISHAPS = [
   { id: 'confetti', text: 'Confetti in the teapot', cost: 60 },
   { id: 'late', text: 'It started a little late: someone hid the music', cost: 0 },
 ];
-export const ALL_STAFF = [...STAFF, ...GODS];
+// --- Milestone 40b (Part B): Aaron, the Banx Games founder (SERIES_CHIBI_CAST.md "#71 is Aaron") ----------------------
+// A 6th Legendary beside the bible's five (never replaces one): a Lifestyle Coordinator — he makes the fun. Legendary tier
+// rules (cap 520, 2 traits + signature) with the best starting stats of all the Legendaries; below the Works Gods. Kept out
+// of STAFF (the §12 50) like the gods. He arrives only through his own secret (data/secrets.js SEC-STAFF-L6), late and
+// never bought. art: his still (rendered from his 3D model, nothing drawn on); walker: his own chibi sheet (#71).
+export const AARON = {
+  ...row('LC13', 'Aaron', 'LC', 'legendary', 21, '372/368/364/452/360', 4400, ['eventLeader', 'studioFounder'], RULES.secret('SEC-STAFF-L6'), 'afternoon'),
+  title: 'Founder of Banx Games',
+  art: 'staff_legend_aaron',
+  walker: 'chibi_71_aaron_banx_games_founder',
+  arrival: 'The founder of Banx Games drops by to see what you’ve built.',
+};
+// Studio Founder (his signature) while he is on the team: every course the team takes finishes this much sooner (they
+// learn faster), and every program and activity lifts this much more. PLACEHOLDERS (DECISIONS.md, Milestone 40b).
+export const STUDIO_FOUNDER = { trainingDaysPct: -17, liftPct: 5 }; // (−17% of the days = 20% faster)
+export const ALL_STAFF = [...STAFF, ...GODS, AARON];
 export const staffById = (id) => ALL_STAFF.find((s) => s.id === id) ?? null;
 // The trait the §12 table names for this person (a Legendary / Secret person's signature, else their first).
 export const namedTrait = (def) => def.traits.find((t) => TRAITS[t]?.signature) ?? def.traits[0];
@@ -257,6 +272,8 @@ export const TRAITS = {
   goldenAfternoon: sig('Golden Afternoon', 'Afternoons become the best part of the day', 'M14', 'goldenAfternoon', { afternoonMoodPct: 20 }),
   perfectPath: sig('Perfect Path', 'Every resident walks a little further', 'M16', 'perfectPath', { independencePct: 20 }),
   homeFeast: sig('Home Feast', 'A monthly feast lifts the whole home', 'M15', 'homeFeast', { feastMood: 10 }),
+  // (Milestone 40b) Aaron's signature: live (src/systems/blessings.js studioFounder), its numbers in STUDIO_FOUNDER
+  studioFounder: { name: 'Studio Founder', text: 'While he is on the team, everyone learns 20% faster (courses finish sooner) and every program and activity lifts 5% more', live: [], founder: true, signature: { hook: 'studioFounder', params: {} } },
   // (Milestone 30b) the Works Gods' blessings: live signatures (src/systems/blessings.js), their numbers in BLESSINGS
   blessingTinkering: blessing('bolt', 'Blessing of Tinkering', 'Builds and upgrades cost 15% less and level-ups finish twice as fast; Environment & Compliance +5 while he is on the team'),
   blessingLuck: blessing('jinx', 'Blessing of Luck', 'Good surprises (thank-you gifts, well-wishers, family birthday parties) come 50% more often; a program session on her shift may become a lucky day: Mood +6 for everyone there'),
@@ -281,7 +298,7 @@ export function validateStaff(v, list = ALL_STAFF, { taskTypes = null } = {}) {
     if (s.rule?.rank) v.check(['E', 'D', 'C', 'B', 'A', 'S'].includes(s.rule.rank), `${who}: rule rank ${s.rule.rank}`);
     if (s.eligibility === 'excellence') v.check(!!QUALITY_SCORES[s.rule.score] && s.rule.min > 0 && s.rule.min <= 100, `${who}: excellence score`);
     if (s.eligibility === 'secret' && s.tier === 'divine') v.check(/^SEC-GOD-[1-5]$/.test(s.rule.secret) && !!BLESSINGS[s.god] && s.traits.some((t) => TRAITS[t]?.blessing === s.god), `${who}: a Works God needs SEC-GOD-n and their own blessing`);
-    else if (s.eligibility === 'secret') v.check(/^SEC-STAFF-[LS][1-5]$/.test(s.rule.secret) && s.rule.secret[10] === (s.tier === 'legendary' ? 'L' : 'S'), `${who}: secret id ${s.rule.secret}`);
+    else if (s.eligibility === 'secret') v.check((/^SEC-STAFF-[LS][1-5]$/.test(s.rule.secret) || (s.id === AARON.id && s.rule.secret === 'SEC-STAFF-L6')) && s.rule.secret[10] === (s.tier === 'legendary' ? 'L' : 'S'), `${who}: secret id ${s.rule.secret}`); // (Milestone 40b: Aaron's L6)
     v.check(s.art === artKeyOf(s), `${who}: art key`);
     v.check(['morning', 'afternoon', 'night'].includes(s.shiftPref), `${who}: shift preference "${s.shiftPref}"`);
     // the role's primary stat is their best
@@ -291,9 +308,9 @@ export function validateStaff(v, list = ALL_STAFF, { taskTypes = null } = {}) {
   for (const [id, t] of Object.entries(TRAITS)) {
     const who = `trait ${id}`;
     v.check(!!t.name && !!t.text, `${who}: name and line`);
-    v.check(!!t.live !== !!t.pendingSystem, `${who}: live effects or pendingSystem (one of them)`);
+    v.check(!!t.live !== !!t.pendingSystem, `${who}: live effects or pendingSystem (one of them)`); // (Milestone 40b: Studio Founder is live)
     if (t.pendingSystem) v.check(/^M\d+$/.test(t.pendingSystem) && Number(t.pendingSystem.slice(1)) > 12, `${who}: pendingSystem "${t.pendingSystem}"`);
-    if (t.signature && !t.blessing) v.check(!!t.pendingSystem && !!t.signature.hook, `${who}: a signature is stored and pending`);
+    if (t.signature && !t.blessing && !t.founder) v.check(!!t.pendingSystem && !!t.signature.hook, `${who}: a signature is stored and pending`);
     if (t.blessing) v.check(!!BLESSINGS[t.blessing] && !!t.signature?.hook, `${who}: a blessing names its god`); // (Milestone 30b: live)
     for (const fx of t.live ?? []) {
       v.check(TRAIT_KINDS.includes(fx.kind), `${who}: effect kind "${fx.kind}"`);
@@ -304,12 +321,12 @@ export function validateStaff(v, list = ALL_STAFF, { taskTypes = null } = {}) {
     }
   }
   // every trait is someone's (§12 names them all), and every §12 trait column is one of them
-  const used = new Set([...list, ...GODS].flatMap((s) => s.traits));
+  const used = new Set([...list, ...GODS, AARON].flatMap((s) => s.traits));
   for (const id of Object.keys(TRAITS)) v.check(used.has(id), `trait ${id}: nobody has it`);
   return v;
 }
 // A person's portrait key: staff_<id>, or (Milestone 30b) staff_god_<god> for a Works God.
-const artKeyOf = (s) => (s.tier === 'divine' ? `staff_god_${s.god}` : `staff_${s.id.toLowerCase()}`);
+const artKeyOf = (s) => (s.tier === 'divine' ? `staff_god_${s.god}` : s.id === 'LC13' ? 'staff_legend_aaron' : `staff_${s.id.toLowerCase()}`); // (Milestone 40b: Aaron's still)
 
 // Art mapping (Milestone 12): every staff id → its portrait file, every role → its badge file, and no two staff share
 // a portrait. The M7 agency workers reuse the Start candidates' portraits (staff_rn02 / staff_cw02) on purpose and are

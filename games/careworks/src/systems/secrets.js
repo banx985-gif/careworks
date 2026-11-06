@@ -25,7 +25,7 @@ import { SecretEngine, SECRET_OPS, readPath } from '../../../../core/SecretEngin
 import { UnlockRunner } from '../../../../core/UnlockActions.js';
 import { DiscoveryArchive } from '../../../../core/DiscoveryArchive.js';
 import { CLUE, EASING, TRIGGERS, FACTS, REWARD_TYPES, SECRET_RULES, RECORDS, factDef } from '../../data/secrets.js';
-import { GODS } from '../../data/staff.js';
+import { GODS, staffById } from '../../data/staff.js';
 import { godKeyOf } from './blessings.js';
 
 const GOD_KEYS = GODS.map((g) => g.god); // (Milestone 30b)
@@ -158,6 +158,7 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
     f.records ||= {};
     f.palettes ||= {};
     f.godsHired ||= {}; // (Milestone 30b: god key → { day, runId } the first time each Works God joined a team)
+    f.legendsHired ||= {}; // (Milestone 40b: Legendary staff id → { day, runId } the first time each joined a team; Aaron's secret)
     return f;
   };
   const ruleName = (a) => byId[a.secret]?.name ?? a.secret;
@@ -190,7 +191,7 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
     unlock: (a) => !st.flags.includes(`unlock:${a.id}`) && st.flags.push(`unlock:${a.id}`),
   };
   const runner = new UnlockRunner({ handlers });
-  const facts = createSecretFacts({ env, log: () => log, engine: () => engine, account: () => ({ memoryBook: () => accountFacts.memoryBook(), prestigeTokens: () => api.prestigeTokens, godsHired: () => Object.keys(acct().godsHired) }) });
+  const facts = createSecretFacts({ env, log: () => log, engine: () => engine, account: () => ({ memoryBook: () => accountFacts.memoryBook(), prestigeTokens: () => api.prestigeTokens, godsHired: () => Object.keys(acct().godsHired), legendsHired: () => Object.keys(acct().legendsHired) }) });
   const engine = new CareSecretEngine({ bus: engineBus, rules: live, facts, runner, ngPlus: () => env.ngPlus(), currencyTypes: CURRENCY, easing: EASING, now, discoveredStage: CLUE.found });
   const archive = new DiscoveryArchive({});
 
@@ -263,6 +264,16 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
     if (all) bus?.emit('secret:pantheon', { name: RECORDS.pantheon.name, text: RECORDS.pantheon.text });
     return all;
   }
+  // Milestone 40b: a Legendary person (the five, or Aaron) joined the team — the account remembers it (Aaron's secret, Meet
+  // the Maker)
+  function legendHired(staffId) {
+    if (staffById(staffId)?.tier !== 'legendary') return false;
+    const l = acct().legendsHired;
+    if (l[staffId]) return false;
+    l[staffId] = { day: env.today(), runId };
+    saveAccount();
+    return true;
+  }
   // Every moment the home emits: the records the facts read, then any rule indexed under it.
   function onEmit(name, payload = {}) {
     if (name === 'care:birthday') log.birthdays = (log.birthdays ?? 0) + (payload.residents?.length ?? 1);
@@ -272,6 +283,7 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
     if (key && !(log.timeline ??= []).some((x) => x.key === key)) log.timeline.push({ key, day: env.today() });
     if (name === 'staff:hired' && payload.id && log.joined[payload.id] == null) log.joined[payload.id] = env.today();
     if (name === 'staff:hired') godHired(payload.id); // (Milestone 30b)
+    if (name === 'staff:hired') legendHired(payload.id); // (Milestone 40b)
     if (name === 'staff:left' && payload.id) {
       delete log.joined[payload.id];
       log.lastLeft = env.today();
@@ -379,6 +391,10 @@ export function createSecrets({ env, state, rules = SECRET_RULES, bus = null, st
     palettes: () => ({ ...acct().palettes }),
     // (Milestone 30b) the Works Gods hired at least once on this device (god key → { day, runId }); Pantheon: all five
     godsHired: () => ({ ...acct().godsHired }),
+    legendsHired: () => ({ ...acct().legendsHired }), // (Milestone 40b)
+    get metMaker() {
+      return !!acct().legendsHired.LC13; // (Milestone 40b: Aaron has worked in one of your homes)
+    },
     get pantheon() {
       return !!acct().records.pantheon;
     },

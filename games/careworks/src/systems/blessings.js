@@ -14,7 +14,7 @@
 //                                                            Havoc's chaos roll (a program, community event or birthday
 //                                                            tea on his shift), rolled once per session (kept on it)
 import { Rng } from '../../../../core/Rng.js';
-import { GODS, BLESSINGS, MISHAPS } from '../../data/staff.js';
+import { GODS, BLESSINGS, MISHAPS, AARON, STUDIO_FOUNDER } from '../../data/staff.js';
 
 const GOD_BY_ID = Object.fromEntries(GODS.map((g) => [g.id, g.god]));
 export const godKeyOf = (staffId) => GOD_BY_ID[staffId] ?? null;
@@ -36,6 +36,10 @@ export function createBlessings({ team = () => [], onShift = () => false, seed =
     // Zip: 20% less time is a work rate of 1 / 0.8
     taskRate: (staffId) => (godKeyOf(staffId) === 'zip' ? 1 / (1 - B.zip.taskTimePct / 100) : 1),
     bellFirst: () => (on('zip') ? B.zip.bellFirst : 0),
+    // (Milestone 40b) Aaron's Studio Founder, while he is on the team: courses sooner, programs and activities lift more
+    studioFounder: () => team().some((q) => q.id === AARON.id),
+    trainingDaysPct: () => (team().some((q) => q.id === AARON.id) ? STUDIO_FOUNDER.trainingDaysPct : 0),
+    liftMult: () => (team().some((q) => q.id === AARON.id) ? 1 + STUDIO_FOUNDER.liftPct / 100 : 1),
     // Kaching
     partnerMult: () => (has('kaching') ? 1 + B.kaching.partnerPct / 100 : 1),
     feeMult: () => (has('kaching') ? 1 + B.kaching.feePct / 100 : 1),

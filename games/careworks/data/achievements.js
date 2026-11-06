@@ -55,6 +55,8 @@ export const ACHIEVEMENTS = [
   a(30, 'ACH30', 'Year-16 Legacy', 'See a home through to the end of Year 16', [DAY], { fact: 'ach.legacyEnding', op: 'eq', value: true }, keep('frameLegacy'), { scope: 'account', beat: 'big' }),
   // (Milestone 30b's Pantheon record, now the 31st, hidden achievement; its record and big beat stay as they were)
   a(31, 'ACH31', 'Pantheon', 'All five Works Gods have worked in your homes', ['staff:hired', DAY], { fact: 'ach.pantheon', op: 'eq', value: true }, keep('badgePantheon'), { scope: 'account', hidden: true }),
+  // (Milestone 40b) Aaron, the founder of Banx Games, has worked in one of your homes — hidden until earned
+  a(32, 'ACH32', 'Meet the Maker', 'The founder of Banx Games has worked in one of your homes', ['staff:hired', DAY], { fact: 'ach.metMaker', op: 'eq', value: true }, [], { scope: 'account', hidden: true }),
 ];
 export const VISIBLE_COUNT = ACHIEVEMENTS.filter((x) => !x.hidden).length; // 30
 export const achievementById = (id) => ACHIEVEMENTS.find((x) => x.id === id) ?? null;

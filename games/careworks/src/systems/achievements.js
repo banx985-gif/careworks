@@ -66,6 +66,7 @@ export function createCareAchievements({ env, state, account = null, bus = null,
     },
     'ach.legacyEnding': () => !!env.legacyEnding?.(), // (Milestone 33 builds the ending: never true before it)
     'ach.pantheon': () => !!env.secrets.pantheon,
+    'ach.metMaker': () => !!env.secrets.metMaker, // (Milestone 40b)
   };
   const facts = { get: (name) => (name in own ? own[name]() : env.secrets.facts.get(name, {})), has: (name) => name in own || env.secrets.facts.has(name) };
 

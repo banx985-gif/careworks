@@ -118,6 +118,8 @@ export const FACTS = {
   'run.goodSurprises': { name: 'Good surprises (thank-you gifts, well-wishers, family birthday parties)', kind: 'number' },
   'account.godsHired': { name: 'Works Gods hired at least once (every run)', kind: 'ids', scope: 'account' },
   'account.fourGodsHired': { name: 'Of Bolt, Jinx, Zip and Kaching: how many were hired at least once (every run)', kind: 'number', scope: 'account' },
+  'account.legendsHired': { name: 'Of the five Legendary staff: how many were hired at least once (every run)', kind: 'number', scope: 'account' }, // (Milestone 40b)
+  'account.hallVeterans': { name: 'Staff Hall of Fame members with 5+ years served', kind: 'number', scope: 'account' }, // (Milestone 40b)
   'account.legacyStaffLevels': { name: 'New Game+ levels one Legacy Staff member was carried through (no system yet)', kind: 'number', scope: 'account' },
   // harm (§35) — only ever in forbids
   'run.essentialMissedMonth': { name: 'Essential care missed this month', kind: 'number', harm: true },
@@ -327,7 +329,37 @@ export const SECRET_RULES = [
   // COMP-02, RIVAL-01 keep their numbers based on the 40). No rumour until Rank A; Havoc's not until the other four have
   // each been hired at least once (every run).
   ...godSecrets(),
+  // --- Milestone 40b (Part B): SEC-STAFF-L6, Aaron — the founder of Banx Games (data/staff.js AARON). One of the hardest
+  // Legendary secrets: every other Legendary hired at least once (every run), a long-serving member of the Hall of Fame and
+  // Rank S. No rumour until Rank A (like the gods). Category 'founder': like the gods' own, it never counts toward the
+  // bible's 40 "secrets found".
+  founderSecret(),
 ];
+function founderSecret() {
+  const RANK_A_GATE = { fact: 'run.rank', op: 'gte', value: 4, kind: 'fixed', category: 'recognition', label: 'Rank A (before any rumour)' };
+  return {
+    id: 'SEC-STAFF-L6',
+    name: 'Meet the Maker',
+    category: 'founder',
+    oncePerRun: true,
+    triggerEvents: ['secrets:month'],
+    requiresAll: [
+      { fact: 'account.legendsHired', op: 'gte', value: 5, kind: 'count', category: 'staff', label: 'The five other Legendary staff each hired at least once (every run)' },
+      { fact: 'account.hallVeterans', op: 'gte', value: 1, kind: 'fixed', category: 'staff', label: 'A staff member in the Hall of Fame with 5+ years served' },
+      { fact: 'run.rank', op: 'gte', value: 5, kind: 'fixed', category: 'recognition', label: 'Rank S' },
+    ],
+    forbids: [],
+    clueGate: [RANK_A_GATE],
+    clueStages: stages([
+      'Word is the people who made this whole world sometimes visit a truly great home…',
+      'They say it takes a home that every Legendary carer has worked in, and a Hall of Fame with real long service.',
+      'Only a home right at the top of the ladder, it seems.',
+      'Nearly there: someone from the studio is asking about your home.',
+    ]),
+    reward: 'The founder of Banx Games drops by to see what you’ve built.',
+    rewardActions: [{ type: 'arrival', id: 'LC13', name: 'Aaron, Founder of Banx Games' }],
+  };
+}
 function godSecrets() {
   const RANK_A = { fact: 'run.rank', op: 'gte', value: 4, kind: 'fixed', category: 'recognition', label: 'Rank A' };
   const RANK_A_GATE = { ...RANK_A, label: 'Rank A (before any rumour)' };
