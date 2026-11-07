@@ -1,660 +1,661 @@
 {
- "game": "careworks",
- "note": "Milestone 40c (6 Nov 2026, Claude Code): staff and residents who walk. Picked by hair, skin, build and age (residents: the older-looking bases #25, #26, #07, #08, #04 first); hair and clothes measured from the flat art; glasses where the flat art has them; caps where it shows a baseball cap (flat caps, sun hats and the chef hat have no model: hair set to the person’s own grey instead). keptOnPurpose: residents whose flat art shows a walking frame, rollator, crutches or a wheelchair keep today’s walker (no aid models).",
- "out_models": "chibis/staff/careworks",
- "out_sheets": "games/careworks/assets/images/walkers/_source",
- "keptOnPurpose": [
-  "resident_res02",
-  "resident_res05",
-  "resident_res08",
-  "resident_res10",
-  "resident_res13",
-  "resident_res14",
-  "resident_res18",
-  "resident_res21",
-  "resident_res24",
-  "resident_res32",
-  "resident_res34",
-  "resident_res40",
-  "resident_res42",
-  "resident_res45",
-  "resident_res48"
- ],
- "people": [
-  {
-   "id": "staff_ah01",
-   "flat": "games/careworks/assets/images/staff/staff_ah01.png",
-   "chibi": "chibi_15_denim_jacket",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_ah02",
-   "flat": "games/careworks/assets/images/staff/staff_ah02.png",
-   "chibi": "chibi_13_beard_workwear",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_ah03",
-   "flat": "games/careworks/assets/images/staff/staff_ah03.png",
-   "chibi": "chibi_15_denim_jacket",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_ah04",
-   "flat": "games/careworks/assets/images/staff/staff_ah04.png",
-   "chibi": "chibi_14_glasses_vest",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_ah05",
-   "flat": "games/careworks/assets/images/staff/staff_ah05.png",
-   "chibi": "chibi_05_blue_top",
-   "hair": "#1a1616"
-  },
-  {
-   "id": "staff_ah06",
-   "flat": "games/careworks/assets/images/staff/staff_ah06.png",
-   "chibi": "chibi_17_green_hoodie",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_ah07",
-   "flat": "games/careworks/assets/images/staff/staff_ah07.png",
-   "chibi": "chibi_06_red_shirt",
-   "hair": "#1a1616"
-  },
-  {
-   "id": "staff_ah08",
-   "flat": "games/careworks/assets/images/staff/staff_ah08.png",
-   "chibi": "chibi_15_denim_jacket",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_ah09",
-   "flat": "games/careworks/assets/images/staff/staff_ah09.png",
-   "chibi": "chibi_16_curly_coral_tee",
-   "hair": "#1a1616",
-   "glasses": {}
-  },
-  {
-   "id": "staff_ah10",
-   "flat": "games/careworks/assets/images/staff/staff_ah10.png",
-   "chibi": "chibi_02_teal_hoodie",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_cw01",
-   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
-   "chibi": "chibi_15_denim_jacket",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_cw02",
-   "flat": "games/careworks/assets/images/staff/staff_cw02.png",
-   "chibi": "chibi_22_teal_sports_tee",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_cw03",
-   "flat": "games/careworks/assets/images/staff/staff_cw03.png",
-   "chibi": "chibi_08_red_cardigan",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_cw04",
-   "flat": "games/careworks/assets/images/staff/staff_cw04.png",
-   "chibi": "chibi_18_yellow_tee",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_cw05",
-   "flat": "games/careworks/assets/images/staff/staff_cw05.png",
-   "chibi": "chibi_05_blue_top",
-   "hair": "#1a1616"
-  },
-  {
-   "id": "staff_cw06",
-   "flat": "games/careworks/assets/images/staff/staff_cw06.png",
-   "chibi": "chibi_13_beard_workwear",
-   "hair": "#1a1616"
-  },
-  {
-   "id": "staff_cw07",
-   "flat": "games/careworks/assets/images/staff/staff_cw07.png",
-   "chibi": "chibi_16_curly_coral_tee",
-   "hair": "#1a1616",
-   "glasses": {}
-  },
-  {
-   "id": "staff_cw08",
-   "flat": "games/careworks/assets/images/staff/staff_cw08.png",
-   "chibi": "chibi_30_teal_jumper",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_cw09",
-   "flat": "games/careworks/assets/images/staff/staff_cw09.png",
-   "chibi": "chibi_15_denim_jacket",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_cw10",
-   "flat": "games/careworks/assets/images/staff/staff_cw10.png",
-   "chibi": "chibi_20_athlete_blue",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_hn01",
-   "flat": "games/careworks/assets/images/staff/staff_hn01.png",
-   "chibi": "chibi_11_moustache_shorts",
-   "hair": "#2a2020"
-  },
-  {
-   "id": "staff_hn02",
-   "flat": "games/careworks/assets/images/staff/staff_hn02.png",
-   "chibi": "chibi_09_pink_shorts",
-   "hair": "#1a1616"
-  },
-  {
-   "id": "staff_hn03",
-   "flat": "games/careworks/assets/images/staff/staff_hn03.png",
-   "chibi": "chibi_08_red_cardigan",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_hn04",
-   "flat": "games/careworks/assets/images/staff/staff_hn04.png",
-   "chibi": "chibi_20_athlete_blue",
-   "hair": "#1e1a1a"
-  },
-  {
-   "id": "staff_hn05",
-   "flat": "games/careworks/assets/images/staff/staff_hn05.png",
-   "chibi": "chibi_21_platinum_sporty",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_hn06",
-   "flat": "games/careworks/assets/images/staff/staff_hn06.png",
-   "chibi": "chibi_18_yellow_tee",
-   "hair": "#5a3420",
-   "hat": {
-    "col": "e8e8e8",
-    "fit": 0.62,
-    "drop": 0.45
-   }
-  },
-  {
-   "id": "staff_hn07",
-   "flat": "games/careworks/assets/images/staff/staff_hn07.png",
-   "chibi": "chibi_01_curly_yellow_jumper",
-   "hair": "#1a1616"
-  },
-  {
-   "id": "staff_hn08",
-   "flat": "games/careworks/assets/images/staff/staff_hn08.png",
-   "chibi": "chibi_02_teal_hoodie",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_hn09",
-   "flat": "games/careworks/assets/images/staff/staff_hn09.png",
-   "chibi": "chibi_08_red_cardigan",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_hn10",
-   "flat": "games/careworks/assets/images/staff/staff_hn10.png",
-   "chibi": "chibi_05_blue_top",
-   "hair": "#2a1e3a",
-   "glasses": {}
-  },
-  {
-   "id": "staff_lc01",
-   "flat": "games/careworks/assets/images/staff/staff_lc01.png",
-   "chibi": "chibi_21_platinum_sporty",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_lc02",
-   "flat": "games/careworks/assets/images/staff/staff_lc02.png",
-   "chibi": "chibi_30_teal_jumper",
-   "hair": "#5a3420",
-   "hat": {
-    "col": "ece6d8",
-    "back": 1,
-    "fit": 0.62,
-    "drop": 0.45
-   }
-  },
-  {
-   "id": "staff_lc03",
-   "flat": "games/careworks/assets/images/staff/staff_lc03.png",
-   "chibi": "chibi_23_ponytail_purple_sports",
-   "hair": "#1a1616"
-  },
-  {
-   "id": "staff_lc04",
-   "flat": "games/careworks/assets/images/staff/staff_lc04.png",
-   "chibi": "chibi_12_beach_shirt",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_lc05",
-   "flat": "games/careworks/assets/images/staff/staff_lc05.png",
-   "chibi": "chibi_16_curly_coral_tee",
-   "hair": "#1a1616"
-  },
-  {
-   "id": "staff_lc06",
-   "flat": "games/careworks/assets/images/staff/staff_lc06.png",
-   "chibi": "chibi_18_yellow_tee",
-   "hair": "#6a3a20",
-   "hat": {
-    "col": "1e4fd0",
-    "back": 1,
-    "fit": 0.62,
-    "drop": 0.45
-   }
-  },
-  {
-   "id": "staff_lc07",
-   "flat": "games/careworks/assets/images/staff/staff_lc07.png",
-   "chibi": "chibi_05_blue_top",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_lc08",
-   "flat": "games/careworks/assets/images/staff/staff_lc08.png",
-   "chibi": "chibi_13_beard_workwear",
-   "hair": "auto",
-   "glasses": {}
-  },
-  {
-   "id": "staff_lc09",
-   "flat": "games/careworks/assets/images/staff/staff_lc09.png",
-   "chibi": "chibi_05_blue_top",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_lc10",
-   "flat": "games/careworks/assets/images/staff/staff_lc10.png",
-   "chibi": "chibi_15_denim_jacket",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_rn01",
-   "flat": "games/careworks/assets/images/staff/staff_rn01.png",
-   "chibi": "chibi_27_bob_green_shirt",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_rn02",
-   "flat": "games/careworks/assets/images/staff/staff_rn02.png",
-   "chibi": "chibi_13_beard_workwear",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_rn03",
-   "flat": "games/careworks/assets/images/staff/staff_rn03.png",
-   "chibi": "chibi_16_curly_coral_tee",
-   "hair": "auto",
-   "glasses": {}
-  },
-  {
-   "id": "staff_rn04",
-   "flat": "games/careworks/assets/images/staff/staff_rn04.png",
-   "chibi": "chibi_18_yellow_tee",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_rn05",
-   "flat": "games/careworks/assets/images/staff/staff_rn05.png",
-   "chibi": "chibi_05_blue_top",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_rn06",
-   "flat": "games/careworks/assets/images/staff/staff_rn06.png",
-   "chibi": "chibi_21_platinum_sporty",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_rn07",
-   "flat": "games/careworks/assets/images/staff/staff_rn07.png",
-   "chibi": "chibi_11_moustache_shorts",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_rn08",
-   "flat": "games/careworks/assets/images/staff/staff_rn08.png",
-   "chibi": "chibi_15_denim_jacket",
-   "hair": "auto"
-  },
-  {
-   "id": "staff_rn09",
-   "flat": "games/careworks/assets/images/staff/staff_rn09.png",
-   "chibi": "chibi_27_bob_green_shirt",
-   "hair": "auto",
-   "glasses": {}
-  },
-  {
-   "id": "staff_rn10",
-   "flat": "games/careworks/assets/images/staff/staff_rn10.png",
-   "chibi": "chibi_28_plum_suit",
-   "hair": "auto"
-  },
-  {
-   "id": "resident_res01",
-   "flat": "games/careworks/assets/images/residents/resident_res01.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res03",
-   "flat": "games/careworks/assets/images/residents/resident_res03.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res04",
-   "flat": "games/careworks/assets/images/residents/resident_res04.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2"
-  },
-  {
-   "id": "resident_res06",
-   "flat": "games/careworks/assets/images/residents/resident_res06.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res07",
-   "flat": "games/careworks/assets/images/residents/resident_res07.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e6e6e6"
-  },
-  {
-   "id": "resident_res09",
-   "flat": "games/careworks/assets/images/residents/resident_res09.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e2e2e2"
-  },
-  {
-   "id": "resident_res11",
-   "flat": "games/careworks/assets/images/residents/resident_res11.png",
-   "chibi": "chibi_07_moustache_polo",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res12",
-   "flat": "games/careworks/assets/images/residents/resident_res12.png",
-   "chibi": "chibi_08_red_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res15",
-   "flat": "games/careworks/assets/images/residents/resident_res15.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res16",
-   "flat": "games/careworks/assets/images/residents/resident_res16.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res17",
-   "flat": "games/careworks/assets/images/residents/resident_res17.png",
-   "chibi": "chibi_07_moustache_polo",
-   "hair": "#d8d8d8",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res19",
-   "flat": "games/careworks/assets/images/residents/resident_res19.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#ececec"
-  },
-  {
-   "id": "resident_res20",
-   "flat": "games/careworks/assets/images/residents/resident_res20.png",
-   "chibi": "chibi_04_silver_green_suit",
-   "hair": "#e2e2e2"
-  },
-  {
-   "id": "resident_res22",
-   "flat": "games/careworks/assets/images/residents/resident_res22.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res23",
-   "flat": "games/careworks/assets/images/residents/resident_res23.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res25",
-   "flat": "games/careworks/assets/images/residents/resident_res25.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res26",
-   "flat": "games/careworks/assets/images/residents/resident_res26.png",
-   "chibi": "chibi_07_moustache_polo",
-   "hair": "#cfcfcf"
-  },
-  {
-   "id": "resident_res27",
-   "flat": "games/careworks/assets/images/residents/resident_res27.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res28",
-   "flat": "games/careworks/assets/images/residents/resident_res28.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res29",
-   "flat": "games/careworks/assets/images/residents/resident_res29.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2"
-  },
-  {
-   "id": "resident_res30",
-   "flat": "games/careworks/assets/images/residents/resident_res30.png",
-   "chibi": "chibi_07_moustache_polo",
-   "hair": "#d0d0d0",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res31",
-   "flat": "games/careworks/assets/images/residents/resident_res31.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e0e0e8",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res33",
-   "flat": "games/careworks/assets/images/residents/resident_res33.png",
-   "chibi": "chibi_08_red_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res35",
-   "flat": "games/careworks/assets/images/residents/resident_res35.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res36",
-   "flat": "games/careworks/assets/images/residents/resident_res36.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res37",
-   "flat": "games/careworks/assets/images/residents/resident_res37.png",
-   "chibi": "chibi_20_athlete_blue",
-   "hair": "#e0e0e0",
-   "hat": {
-    "col": "1e2a5a",
-    "fit": 0.62,
-    "drop": 0.45
-   }
-  },
-  {
-   "id": "resident_res38",
-   "flat": "games/careworks/assets/images/residents/resident_res38.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e8e8e8",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res39",
-   "flat": "games/careworks/assets/images/residents/resident_res39.png",
-   "chibi": "chibi_07_moustache_polo",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res41",
-   "flat": "games/careworks/assets/images/residents/resident_res41.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e8e8e8"
-  },
-  {
-   "id": "resident_res43",
-   "flat": "games/careworks/assets/images/residents/resident_res43.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res44",
-   "flat": "games/careworks/assets/images/residents/resident_res44.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res46",
-   "flat": "games/careworks/assets/images/residents/resident_res46.png",
-   "chibi": "chibi_08_red_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res47",
-   "flat": "games/careworks/assets/images/residents/resident_res47.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res49",
-   "flat": "games/careworks/assets/images/residents/resident_res49.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res50",
-   "flat": "games/careworks/assets/images/residents/resident_res50.png",
-   "chibi": "chibi_07_moustache_polo",
-   "hair": "#d8d8d8"
-  },
-  {
-   "id": "resident_res51",
-   "flat": "games/careworks/assets/images/residents/resident_res51.png",
-   "chibi": "chibi_08_red_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res52",
-   "flat": "games/careworks/assets/images/residents/resident_res52.png",
-   "chibi": "chibi_11_moustache_shorts",
-   "hair": "#e0e0e0"
-  },
-  {
-   "id": "resident_res53",
-   "flat": "games/careworks/assets/images/residents/resident_res53.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res54",
-   "flat": "games/careworks/assets/images/residents/resident_res54.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res55",
-   "flat": "games/careworks/assets/images/residents/resident_res55.png",
-   "chibi": "chibi_04_silver_green_suit",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res56",
-   "flat": "games/careworks/assets/images/residents/resident_res56.png",
-   "chibi": "chibi_07_moustache_polo",
-   "hair": "#d8d8d8",
-   "hat": {
-    "col": "2050b0",
-    "fit": 0.62,
-    "drop": 0.45
-   }
-  },
-  {
-   "id": "resident_res57",
-   "flat": "games/careworks/assets/images/residents/resident_res57.png",
-   "chibi": "chibi_08_red_cardigan",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res58",
-   "flat": "games/careworks/assets/images/residents/resident_res58.png",
-   "chibi": "chibi_26_grandad_cardigan",
-   "hair": "#e8e8e8"
-  },
-  {
-   "id": "resident_res59",
-   "flat": "games/careworks/assets/images/residents/resident_res59.png",
-   "chibi": "chibi_25_grey_pink_blazer",
-   "hair": "#e2e2e2",
-   "glasses": {}
-  },
-  {
-   "id": "resident_res60",
-   "flat": "games/careworks/assets/images/residents/resident_res60.png",
-   "chibi": "chibi_20_athlete_blue",
-   "hair": "#e8e8e8",
-   "glasses": {}
-  }
- ]
+  "game": "careworks",
+  "note": "Milestone 40c (6 Nov 2026, Claude Code): staff and residents who walk. Picked by hair, skin, build and age (residents: the older-looking bases #25, #26, #07, #08, #04 first); hair and clothes measured from the flat art; glasses where the flat art has them; caps where it shows a baseball cap (flat caps, sun hats and the chef hat have no model: hair set to the person’s own grey instead). keptOnPurpose: residents whose flat art shows a walking frame, rollator, crutches or a wheelchair keep today’s walker (no aid models).",
+  "out_models": "chibis/staff/careworks",
+  "out_sheets": "games/careworks/assets/images/walkers/_source",
+  "keptOnPurpose": [
+    "resident_res02",
+    "resident_res05",
+    "resident_res08",
+    "resident_res10",
+    "resident_res13",
+    "resident_res14",
+    "resident_res18",
+    "resident_res21",
+    "resident_res24",
+    "resident_res32",
+    "resident_res34",
+    "resident_res40",
+    "resident_res42",
+    "resident_res45",
+    "resident_res48"
+  ],
+  "people": [
+    {
+      "id": "staff_ah01",
+      "flat": "games/careworks/assets/images/staff/staff_ah01.png",
+      "chibi": "chibi_15_denim_jacket",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_ah02",
+      "flat": "games/careworks/assets/images/staff/staff_ah02.png",
+      "chibi": "chibi_13_beard_workwear",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_ah03",
+      "flat": "games/careworks/assets/images/staff/staff_ah03.png",
+      "chibi": "chibi_15_denim_jacket",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_ah04",
+      "flat": "games/careworks/assets/images/staff/staff_ah04.png",
+      "chibi": "chibi_14_glasses_vest",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_ah05",
+      "flat": "games/careworks/assets/images/staff/staff_ah05.png",
+      "chibi": "chibi_05_blue_top",
+      "hair": "#1a1616"
+    },
+    {
+      "id": "staff_ah06",
+      "flat": "games/careworks/assets/images/staff/staff_ah06.png",
+      "chibi": "chibi_17_green_hoodie",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_ah07",
+      "flat": "games/careworks/assets/images/staff/staff_ah07.png",
+      "chibi": "chibi_06_red_shirt",
+      "hair": "#1a1616"
+    },
+    {
+      "id": "staff_ah08",
+      "flat": "games/careworks/assets/images/staff/staff_ah08.png",
+      "chibi": "chibi_15_denim_jacket",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_ah09",
+      "flat": "games/careworks/assets/images/staff/staff_ah09.png",
+      "chibi": "chibi_16_curly_coral_tee",
+      "hair": "#1a1616",
+      "glasses": {}
+    },
+    {
+      "id": "staff_ah10",
+      "flat": "games/careworks/assets/images/staff/staff_ah10.png",
+      "chibi": "chibi_02_teal_hoodie",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_cw01",
+      "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+      "chibi": "chibi_15_denim_jacket",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_cw02",
+      "flat": "games/careworks/assets/images/staff/staff_cw02.png",
+      "chibi": "chibi_22_teal_sports_tee",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_cw03",
+      "flat": "games/careworks/assets/images/staff/staff_cw03.png",
+      "chibi": "chibi_08_red_cardigan",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_cw04",
+      "flat": "games/careworks/assets/images/staff/staff_cw04.png",
+      "chibi": "chibi_18_yellow_tee",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_cw05",
+      "flat": "games/careworks/assets/images/staff/staff_cw05.png",
+      "chibi": "chibi_05_blue_top",
+      "hair": "#1a1616"
+    },
+    {
+      "id": "staff_cw06",
+      "flat": "games/careworks/assets/images/staff/staff_cw06.png",
+      "chibi": "chibi_13_beard_workwear",
+      "hair": "#1a1616"
+    },
+    {
+      "id": "staff_cw07",
+      "flat": "games/careworks/assets/images/staff/staff_cw07.png",
+      "chibi": "chibi_16_curly_coral_tee",
+      "hair": "#1a1616",
+      "glasses": {}
+    },
+    {
+      "id": "staff_cw08",
+      "flat": "games/careworks/assets/images/staff/staff_cw08.png",
+      "chibi": "chibi_30_teal_jumper",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_cw09",
+      "flat": "games/careworks/assets/images/staff/staff_cw09.png",
+      "chibi": "chibi_15_denim_jacket",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_cw10",
+      "flat": "games/careworks/assets/images/staff/staff_cw10.png",
+      "chibi": "chibi_20_athlete_blue",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_hn01",
+      "flat": "games/careworks/assets/images/staff/staff_hn01.png",
+      "chibi": "chibi_11_moustache_shorts",
+      "hair": "#2a2020"
+    },
+    {
+      "id": "staff_hn02",
+      "flat": "games/careworks/assets/images/staff/staff_hn02.png",
+      "chibi": "chibi_09_pink_shorts",
+      "hair": "#1a1616"
+    },
+    {
+      "id": "staff_hn03",
+      "flat": "games/careworks/assets/images/staff/staff_hn03.png",
+      "chibi": "chibi_08_red_cardigan",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_hn04",
+      "flat": "games/careworks/assets/images/staff/staff_hn04.png",
+      "chibi": "chibi_20_athlete_blue",
+      "hair": "#1e1a1a"
+    },
+    {
+      "id": "staff_hn05",
+      "flat": "games/careworks/assets/images/staff/staff_hn05.png",
+      "chibi": "chibi_21_platinum_sporty",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_hn06",
+      "flat": "games/careworks/assets/images/staff/staff_hn06.png",
+      "chibi": "chibi_18_yellow_tee",
+      "hair": "#5a3420",
+      "hat": {
+        "col": "e8e8e8",
+        "fit": 0.62,
+        "drop": 0.45
+      }
+    },
+    {
+      "id": "staff_hn07",
+      "flat": "games/careworks/assets/images/staff/staff_hn07.png",
+      "chibi": "chibi_01_curly_yellow_jumper",
+      "hair": "#1a1616"
+    },
+    {
+      "id": "staff_hn08",
+      "flat": "games/careworks/assets/images/staff/staff_hn08.png",
+      "chibi": "chibi_02_teal_hoodie",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_hn09",
+      "flat": "games/careworks/assets/images/staff/staff_hn09.png",
+      "chibi": "chibi_08_red_cardigan",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_hn10",
+      "flat": "games/careworks/assets/images/staff/staff_hn10.png",
+      "chibi": "chibi_05_blue_top",
+      "hair": "#2a1e3a",
+      "glasses": {}
+    },
+    {
+      "id": "staff_lc01",
+      "flat": "games/careworks/assets/images/staff/staff_lc01.png",
+      "chibi": "chibi_21_platinum_sporty",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_lc02",
+      "flat": "games/careworks/assets/images/staff/staff_lc02.png",
+      "chibi": "chibi_30_teal_jumper",
+      "hair": "#5a3420",
+      "hat": {
+        "col": "ece6d8",
+        "back": 1,
+        "fit": 0.62,
+        "drop": 0.45
+      }
+    },
+    {
+      "id": "staff_lc03",
+      "flat": "games/careworks/assets/images/staff/staff_lc03.png",
+      "chibi": "chibi_23_ponytail_purple_sports",
+      "hair": "#1a1616"
+    },
+    {
+      "id": "staff_lc04",
+      "flat": "games/careworks/assets/images/staff/staff_lc04.png",
+      "chibi": "chibi_12_beach_shirt",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_lc05",
+      "flat": "games/careworks/assets/images/staff/staff_lc05.png",
+      "chibi": "chibi_16_curly_coral_tee",
+      "hair": "#1a1616"
+    },
+    {
+      "id": "staff_lc06",
+      "flat": "games/careworks/assets/images/staff/staff_lc06.png",
+      "chibi": "chibi_18_yellow_tee",
+      "hair": "#6a3a20",
+      "hat": {
+        "col": "1e4fd0",
+        "back": 1,
+        "fit": 0.62,
+        "drop": 0.45
+      }
+    },
+    {
+      "id": "staff_lc07",
+      "flat": "games/careworks/assets/images/staff/staff_lc07.png",
+      "chibi": "chibi_05_blue_top",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_lc08",
+      "flat": "games/careworks/assets/images/staff/staff_lc08.png",
+      "chibi": "chibi_13_beard_workwear",
+      "hair": "auto",
+      "glasses": {}
+    },
+    {
+      "id": "staff_lc09",
+      "flat": "games/careworks/assets/images/staff/staff_lc09.png",
+      "chibi": "chibi_05_blue_top",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_lc10",
+      "flat": "games/careworks/assets/images/staff/staff_lc10.png",
+      "chibi": "chibi_15_denim_jacket",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_rn01",
+      "flat": "games/careworks/assets/images/staff/staff_rn01.png",
+      "chibi": "chibi_27_bob_green_shirt",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_rn02",
+      "flat": "games/careworks/assets/images/staff/staff_rn02.png",
+      "chibi": "chibi_13_beard_workwear",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_rn03",
+      "flat": "games/careworks/assets/images/staff/staff_rn03.png",
+      "chibi": "chibi_16_curly_coral_tee",
+      "hair": "auto",
+      "glasses": {}
+    },
+    {
+      "id": "staff_rn04",
+      "flat": "games/careworks/assets/images/staff/staff_rn04.png",
+      "chibi": "chibi_18_yellow_tee",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_rn05",
+      "flat": "games/careworks/assets/images/staff/staff_rn05.png",
+      "chibi": "chibi_05_blue_top",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_rn06",
+      "flat": "games/careworks/assets/images/staff/staff_rn06.png",
+      "chibi": "chibi_21_platinum_sporty",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_rn07",
+      "flat": "games/careworks/assets/images/staff/staff_rn07.png",
+      "chibi": "chibi_11_moustache_shorts",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_rn08",
+      "flat": "games/careworks/assets/images/staff/staff_rn08.png",
+      "chibi": "chibi_15_denim_jacket",
+      "hair": "auto"
+    },
+    {
+      "id": "staff_rn09",
+      "flat": "games/careworks/assets/images/staff/staff_rn09.png",
+      "chibi": "chibi_27_bob_green_shirt",
+      "hair": "auto",
+      "glasses": {}
+    },
+    {
+      "id": "staff_rn10",
+      "flat": "games/careworks/assets/images/staff/staff_rn10.png",
+      "chibi": "chibi_28_plum_suit",
+      "hair": "auto"
+    },
+    {
+      "id": "resident_res01",
+      "flat": "games/careworks/assets/images/residents/resident_res01.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res03",
+      "flat": "games/careworks/assets/images/residents/resident_res03.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res04",
+      "flat": "games/careworks/assets/images/residents/resident_res04.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2"
+    },
+    {
+      "id": "resident_res06",
+      "flat": "games/careworks/assets/images/residents/resident_res06.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res07",
+      "flat": "games/careworks/assets/images/residents/resident_res07.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e6e6e6"
+    },
+    {
+      "id": "resident_res09",
+      "flat": "games/careworks/assets/images/residents/resident_res09.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e2e2e2"
+    },
+    {
+      "id": "resident_res11",
+      "flat": "games/careworks/assets/images/residents/resident_res11.png",
+      "chibi": "chibi_07_moustache_polo",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res12",
+      "flat": "games/careworks/assets/images/residents/resident_res12.png",
+      "chibi": "chibi_08_red_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res15",
+      "flat": "games/careworks/assets/images/residents/resident_res15.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res16",
+      "flat": "games/careworks/assets/images/residents/resident_res16.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res17",
+      "flat": "games/careworks/assets/images/residents/resident_res17.png",
+      "chibi": "chibi_07_moustache_polo",
+      "hair": "#d8d8d8",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res19",
+      "flat": "games/careworks/assets/images/residents/resident_res19.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#ececec"
+    },
+    {
+      "id": "resident_res20",
+      "flat": "games/careworks/assets/images/residents/resident_res20.png",
+      "chibi": "chibi_04_silver_green_suit",
+      "hair": "#e2e2e2"
+    },
+    {
+      "id": "resident_res22",
+      "flat": "games/careworks/assets/images/residents/resident_res22.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res23",
+      "flat": "games/careworks/assets/images/residents/resident_res23.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res25",
+      "flat": "games/careworks/assets/images/residents/resident_res25.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res26",
+      "flat": "games/careworks/assets/images/residents/resident_res26.png",
+      "chibi": "chibi_07_moustache_polo",
+      "hair": "#cfcfcf"
+    },
+    {
+      "id": "resident_res27",
+      "flat": "games/careworks/assets/images/residents/resident_res27.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res28",
+      "flat": "games/careworks/assets/images/residents/resident_res28.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res29",
+      "flat": "games/careworks/assets/images/residents/resident_res29.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2"
+    },
+    {
+      "id": "resident_res30",
+      "flat": "games/careworks/assets/images/residents/resident_res30.png",
+      "chibi": "chibi_07_moustache_polo",
+      "hair": "#d0d0d0",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res31",
+      "flat": "games/careworks/assets/images/residents/resident_res31.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e0e0e8",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res33",
+      "flat": "games/careworks/assets/images/residents/resident_res33.png",
+      "chibi": "chibi_08_red_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res35",
+      "flat": "games/careworks/assets/images/residents/resident_res35.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res36",
+      "flat": "games/careworks/assets/images/residents/resident_res36.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res37",
+      "flat": "games/careworks/assets/images/residents/resident_res37.png",
+      "chibi": "chibi_20_athlete_blue",
+      "hair": "#e0e0e0",
+      "hat": {
+        "col": "1e2a5a",
+        "fit": 0.62,
+        "drop": 0.45
+      }
+    },
+    {
+      "id": "resident_res38",
+      "flat": "games/careworks/assets/images/residents/resident_res38.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e8e8e8",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res39",
+      "flat": "games/careworks/assets/images/residents/resident_res39.png",
+      "chibi": "chibi_07_moustache_polo",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res41",
+      "flat": "games/careworks/assets/images/residents/resident_res41.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e8e8e8"
+    },
+    {
+      "id": "resident_res43",
+      "flat": "games/careworks/assets/images/residents/resident_res43.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res44",
+      "flat": "games/careworks/assets/images/residents/resident_res44.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res46",
+      "flat": "games/careworks/assets/images/residents/resident_res46.png",
+      "chibi": "chibi_08_red_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res47",
+      "flat": "games/careworks/assets/images/residents/resident_res47.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res49",
+      "flat": "games/careworks/assets/images/residents/resident_res49.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res50",
+      "flat": "games/careworks/assets/images/residents/resident_res50.png",
+      "chibi": "chibi_07_moustache_polo",
+      "hair": "#d8d8d8"
+    },
+    {
+      "id": "resident_res51",
+      "flat": "games/careworks/assets/images/residents/resident_res51.png",
+      "chibi": "chibi_08_red_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res52",
+      "flat": "games/careworks/assets/images/residents/resident_res52.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e0e0e0",
+      "note": "M40d Part C: the elderly base (#26), was #11 — looked younger than his art"
+    },
+    {
+      "id": "resident_res53",
+      "flat": "games/careworks/assets/images/residents/resident_res53.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res54",
+      "flat": "games/careworks/assets/images/residents/resident_res54.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res55",
+      "flat": "games/careworks/assets/images/residents/resident_res55.png",
+      "chibi": "chibi_04_silver_green_suit",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res56",
+      "flat": "games/careworks/assets/images/residents/resident_res56.png",
+      "chibi": "chibi_07_moustache_polo",
+      "hair": "#d8d8d8",
+      "hat": {
+        "col": "2050b0",
+        "fit": 0.62,
+        "drop": 0.45
+      }
+    },
+    {
+      "id": "resident_res57",
+      "flat": "games/careworks/assets/images/residents/resident_res57.png",
+      "chibi": "chibi_08_red_cardigan",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res58",
+      "flat": "games/careworks/assets/images/residents/resident_res58.png",
+      "chibi": "chibi_26_grandad_cardigan",
+      "hair": "#e8e8e8"
+    },
+    {
+      "id": "resident_res59",
+      "flat": "games/careworks/assets/images/residents/resident_res59.png",
+      "chibi": "chibi_25_grey_pink_blazer",
+      "hair": "#e2e2e2",
+      "glasses": {}
+    },
+    {
+      "id": "resident_res60",
+      "flat": "games/careworks/assets/images/residents/resident_res60.png",
+      "chibi": "chibi_20_athlete_blue",
+      "hair": "#e8e8e8",
+      "glasses": {}
+    }
+  ]
 }
