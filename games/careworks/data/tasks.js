@@ -83,6 +83,13 @@ export const BACKUP_HELP = { ownWorkHours: 1 };
 export const ALSO_HELP = [
   { types: ['wake'], bands: ['morning'], roles: ['RN'], penalty: 40, afterHours: 0.5 },
   { types: ['personal'], bands: ['morning'], roles: ['RN'], penalty: 40, afterHours: 0.5 },
+  // Milestone 40d (let the home grow): Allied Health staff back up getting people up, personal care and settling for the
+  // night (a therapy assistant's everyday work), and the meal service — after a
+  // carer or server has had the first chance, and only while their own work isn't waiting. backupOnly: they don't make a
+  // task count as missed care when nobody else who could do it is on shift (it stays unstaffed, as before)
+  { types: ['wake', 'personal'], bands: ['morning'], roles: ['AH'], penalty: 45, afterHours: 0.5, backupOnly: true },
+  { types: ['personal', 'settle'], bands: ['afternoon', 'evening'], roles: ['AH'], penalty: 45, afterHours: 0.25, backupOnly: true },
+  { types: ['meal'], bands: ['morning', 'afternoon', 'evening'], roles: ['AH'], penalty: 45, afterHours: 0.25, backupOnly: true }, // (not Lifestyle: their afternoon is activities and life-story time)
 ];
 // Milestone 13: continuity — the resident is in their continuity group (bible §14; data/relationships.js CONTINUITY):
 // worth 12 tiles of walking, so it tips a close choice without sending someone across the home.

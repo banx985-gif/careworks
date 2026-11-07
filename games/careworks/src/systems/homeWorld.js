@@ -798,12 +798,18 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const o = owner && crew.byId(owner);
     return o && crew.isFree(o) && !crew.tooTired(o) ? null : 0;
   }
+  // Milestone 40d: a back-up-only helper (Allied Health on a wake-up, Lifestyle at a meal) never while any task they're a
+  // main helper for is waiting or about to open (therapy, practice sessions, life-story time, activities)
+  const ownWorkAny = (role) => {
+    const soon = absNow() + BACKUP_HELP.ownWorkHours;
+    return care.tasks.some((x) => x.status === 'open' && x.roles.includes(role) && x.roleFrom?.[role] == null && x.opens <= soon && x.due > absNow() && (byResident(x.resident) || !x.resident));
+  };
   function scoreFor(t, q, preview = false) {
     if (!t.roles.includes(q.role)) return null; // (scorePair says so too; this skips the path search)
     const zs = pinOf(t) ? 0 : zoneScore(t, q); // (Milestone 40d: a pinned helper goes where they're asked)
     if (zs == null) return null;
     if (!preview && !pinOf(t) && !seatedSoon(t)) return null; // (Milestone 40d: a server never waits at an empty seat; the picker's preview names who will come)
-    if (t.roleFrom?.[q.role] != null && ownWorkWaiting(q.role)) return null;
+    if (t.roleFrom?.[q.role] != null && (t.backupRoles?.includes(q.role) ? ownWorkAny(q.role) : ownWorkWaiting(q.role))) return null;
     const pin = pinOf(t);
     if (pin && pin !== q.id) return null;
     if (!pin && t.type !== 'bell' && !t.urgent && crew.tooTired(q)) return null; // (Milestone 25: help after a fall comes, tired or not)
@@ -1841,6 +1847,15 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   }
   // Milestone 13 (fix first): someone waiting to be got up stays in bed until a helper comes — while anyone on shift
   // could help — and the next step (breakfast) waits for them, until WAKE.waitForHelpUntil.
+  // Milestone 40d: someone at the table whose meal help is on its way (or a server is on shift to bring it) stays for it, up
+  // to MEAL_SERVICE.waitHours after the meal's time — the next step (an optional activity or rest) starts when they're done.
+  function waitsAtTable(p) {
+    const s = p.state.step;
+    if (!MEAL_SERVICE.waitAtTable || !s || !s.arthurThere || s.tray || s.status === 'doing' || !mealOfStep(s.id)) return false;
+    const step = dayStep(p, s.id, s.day);
+    if (!step || absNow() > absHour(s.day, step.at) + MEAL_SERVICE.waitHours) return false;
+    return helpCanCome(routineTask(p, s.id, s.day));
+  }
   function waitsInBed(p) {
     const s = p.state.step;
     if (!s || s.id !== 'wake' || s.status === 'doing' || s.status === 'missed' || hourNow() >= WAKE.waitForHelpUntil) return false;
@@ -2110,7 +2125,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const bandId = bandAt(hourNow()).id;
     const shiftRoles = new Set(crew.people.filter((q) => roster.onShift(q.id)).map((q) => q.role));
     const avail = care.tasks.filter((t) => t.status === 'open' && t.opens <= at && (byResident(t.resident) || (t.source === 'kitchen' && kitchenNow())));
-    for (const t of avail) if (t.roles.some((r) => shiftRoles.has(r))) t.staffable = true;
+    for (const t of avail) if (t.roles.some((r) => shiftRoles.has(r) && !t.backupRoles?.includes(r))) t.staffable = true; // (Milestone 40d: a back-up-only role never makes it missed care)
     const free = crew.people.filter((q) => crew.isFree(q));
     if (!avail.length || !free.length) return;
     for (const { task, person } of choosePairs(avail, free, scoreFor)) claim(task, person);
@@ -4557,6 +4572,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
         }
         const r = setOff(p, routineAt(hourNow(), clock.totalDays, stepsFor(p, clock.totalDays))); // (Milestone 40d: they set off in time)
         if (!p.state.step || p.state.step.id !== r.step.id || p.state.step.day !== r.day) {
+          if (waitsAtTable(p)) continue; // (Milestone 40d: seated and about to be served — the next step waits a little)
           if (waitsInBed(p)) {
             trayInBed(p); // (Milestone 15: breakfast comes to them on a tray)
             continue; // (Milestone 13: help is on the way — they stay in bed for it)

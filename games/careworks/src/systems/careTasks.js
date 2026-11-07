@@ -149,6 +149,7 @@ export function generateBand({ care, st, band, day, now = -Infinity, rolesOnShif
         t.roles = [...t.roles, r];
         t.rolePenalty = { ...(t.rolePenalty ?? {}), [r]: a.penalty };
         t.roleFrom = { ...(t.roleFrom ?? {}), [r]: (t.source === 'routine' ? Math.max(t.opens, absHour(day, t.at)) : t.opens) + a.afterHours };
+        if (a.backupOnly) t.backupRoles = [...(t.backupRoles ?? []), r]; // (Milestone 40d)
       }
     }
     care.tasks.push(t);

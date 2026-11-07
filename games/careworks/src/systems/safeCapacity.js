@@ -18,7 +18,8 @@ export function safeCapacityOf(people, { stage = 1 } = {}) {
   for (const sh of ['morning', 'afternoon']) {
     const care = Math.floor(handsOf('care', sh) * S.care.perHand[sh] * k + 1e-9);
     const meals = Math.floor(handsOf('meals', sh) * S.meals.perHand[sh] * k + 1e-9);
-    const meds = Math.floor(handsOf('meds', sh) * S.meds.perHand[sh] * k + 1e-9); // (Milestone 40b Part D: the medicine rounds)
+    const km = S.meds.stageFactor?.[stage - 1] ?? k; // (Milestone 40d: the round's own stage factor)
+    const meds = Math.floor(handsOf('meds', sh) * S.meds.perHand[sh] * km + 1e-9); // (Milestone 40b Part D: the medicine rounds)
     byShift[sh] = Math.min(care, meals, meds);
     needOf[sh] = meds < Math.min(care, meals) ? 'meds' : care <= meals ? 'care' : 'meals';
   }

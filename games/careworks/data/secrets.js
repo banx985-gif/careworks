@@ -344,7 +344,8 @@ function founderSecret() {
     oncePerRun: true,
     triggerEvents: ['secrets:month'],
     requiresAll: [
-      { fact: 'account.legendsHired', op: 'gte', value: 5, kind: 'count', category: 'staff', label: 'The five other Legendary staff each hired at least once (every run)' },
+      // (Milestone 40d Part B: three of the five, was all five — the secret-hunter soak met one Legendary in four runs)
+      { fact: 'account.legendsHired', op: 'gte', value: 3, kind: 'count', category: 'staff', label: 'Three of the other Legendary staff each hired at least once (every run)' },
       { fact: 'account.hallVeterans', op: 'gte', value: 1, kind: 'fixed', category: 'staff', label: 'A staff member in the Hall of Fame with 5+ years served' },
       { fact: 'run.rank', op: 'gte', value: 5, kind: 'fixed', category: 'recognition', label: 'Rank S' },
     ],
@@ -352,7 +353,7 @@ function founderSecret() {
     clueGate: [RANK_A_GATE],
     clueStages: stages([
       'Word is the people who made this whole world sometimes visit a truly great home…',
-      'They say it takes a home that every Legendary carer has worked in, and a Hall of Fame with real long service.',
+      'They say it takes a home that most of the Legendary carers have worked in, and a Hall of Fame with real long service.', // (Milestone 40d: three of the five)
       'Only a home right at the top of the ladder, it seems.',
       'Nearly there: someone from the studio is asking about your home.',
     ]),
@@ -369,7 +370,7 @@ function godSecrets() {
   return [
     god(1, 'The Tinker in the Shed', 'AH11', 'Bolt, God of Tinkering', [
       RANK_A,
-      { fact: 'run.facilitiesLevel3', op: 'gte', value: 12, kind: 'count', category: 'facility', label: 'Facilities at Level III at once' },
+      { fact: 'run.facilitiesLevel3', op: 'gte', value: 8, kind: 'count', category: 'facility', label: 'Facilities at Level III at once' }, // (Milestone 40d Part B: 8, was 12)
       months([{ field: 'scores.environment', op: 'gte', value: 90 }], 6, 'Environment & Compliance 90+'),
     ], [
       'A cheerful whistling from the workshop.',

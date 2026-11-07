@@ -121,12 +121,15 @@ export function growthOf(n, pcts) {
 export const SAFE_CAPACITY = {
   // (Milestone 40d: a nurse counts 0.6 — the medicine round comes first — and a carer's hands go further with zones and the
   // spread morning: 3.75, was RN 1 · 3; the Rank E roster still safely cares for 6)
-  care: { hands: { CW: 1, RN: 0.6 }, perHand: { morning: 3.75, afternoon: 3.75 } },
+  // (and Allied Health 0.4: they back up wake-ups and personal care, data/tasks.js ALSO_HELP)
+  care: { hands: { CW: 1, RN: 0.6, AH: 0.4 }, perHand: { morning: 3.75, afternoon: 3.75 } },
   // (Milestone 40d: a server only serves a resident at the table now, so each goes further: 5.5, was 4.3)
-  meals: { hands: { HN: 1, CW: 0.4 }, perHand: { morning: 5.5, afternoon: 5.5 } },
+  meals: { hands: { HN: 1, CW: 0.4, AH: 0.2 }, perHand: { morning: 5.5, afternoon: 5.5 } }, // (AH: the meal back-up)
   // (Part D) the medicine rounds: nurses only; at 13 residents two morning nurses missed about four rounds a day
   // (Milestone 40d: the morning round opens from 08:00: 7, was 6)
-  meds: { hands: { RN: 1 }, perHand: { morning: 7, afternoon: 8 } },
+  // (Part B: back to 6 in the morning with its own stage factor — the round's walk to every resident and the cart grows with
+  // the home; three morning nurses missed ~2 stops a day at 17 residents in Stage 2)
+  meds: { hands: { RN: 1 }, perHand: { morning: 6, afternoon: 8 }, stageFactor: [1, 0.8, 0.72, 0.66, 0.6] },
   night: { base: 4, perHand: 12 },
   minimum: 2,
   // (Part D) a bigger home is a longer walk between rooms, the dining room and the medicine trolley: each pair of hands keeps
@@ -160,7 +163,8 @@ export const ZONES = { on: true, roles: ['CW', 'RN'], inZone: 40, band: 8, holdH
 // Milestone 40d (spread the rush): residents set off for a meal or the lounge early enough to be there on time (the walk
 // from their room at their own pace + spareHours, at most maxLeadHours), and a server takes a resident's meal only once
 // they are at the table or nearly (nearTiles), never standing at an empty seat while others wait.
-export const MEAL_SERVICE = { setOff: true, places: ['dining', 'lounge'], spareHours: 0.1, maxLeadHours: 1, whenSeated: true, nearTiles: 6 };
+// waitAtTable: someone seated whose meal help can come stays for it up to waitHours after the meal's time (the next step waits).
+export const MEAL_SERVICE = { setOff: true, places: ['dining', 'lounge'], spareHours: 0.1, maxLeadHours: 1, whenSeated: true, nearTiles: 6, waitAtTable: true, waitHours: 2.5 };
 
 // Milestone 40d (independence helps): the daily-living tasks (types) take less hands-on time for a resident who does more
 // for themselves — from their Independence outcome: nothing at `from` or below, up to maxPct% less at `to` and above. The
