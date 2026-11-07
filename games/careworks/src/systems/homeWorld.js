@@ -125,8 +125,9 @@ import { DAY, ROUTINE, WAKE, ALL_STEPS, TIMER_SCALE } from '../../data/routine.j
 import { createActivities, feelingOf, outcomeMult, birthdayOf } from './activities.js';
 import { activityById, TIMETABLE, OUTCOME, BIRTHDAY, SCHEDULABLE, COMMUNITY_EVENTS } from '../../data/activities.js';
 import { BELL, FAMILIARITY, BACKUP_HELP } from '../../data/tasks.js';
-import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK, USE_GROWTH, growthOf, SAFE_CAPACITY } from '../../data/balance.js';
+import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK, USE_GROWTH, growthOf, SAFE_CAPACITY, ZONES, MEAL_SERVICE, INDEPENDENCE } from '../../data/balance.js';
 import { safeCapacityOf, skillRate } from './safeCapacity.js'; // (Milestone 40b: how many the team can safely care for; skilled staff work faster)
+import { splitZones } from './zones.js'; // (Milestone 40d)
 import { activeCombos, comboPctOf } from './combos.js'; // (overnight Stage 6: placement combos)
 import { AGENCY } from '../../data/shifts.js';
 import { ensureResidentState, newResidentState, newStay, stayDaysLeft, riseNeeds, driftOutcomes, routineAt, bandAt, clockText, decide, completeStep, refuseStep, addLog, routineFor } from './residentNeeds.js';
@@ -172,7 +173,7 @@ import { activityPct } from './traitEffects.js';
 import { createBlessings } from './blessings.js'; // (Milestone 30b: the Works Gods)
 import { createResearch } from './research.js';
 import { createEconomy, levelOfNeeds } from './economy.js';
-import { UPKEEP, UTILITIES, MOVE_OUT, RANK_FEES } from '../../data/economy.js';
+import { UPKEEP, UTILITIES, MOVE_OUT, RANK_FEES, OCCUPANCY_BONUS } from '../../data/economy.js';
 import { RP_INCOME } from '../../data/research.js';
 import { joinChance, choiceBand } from './activities.js';
 import { dayOfWeek } from '../../data/activities.js';
@@ -310,7 +311,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   };
   // Milestone 25c: the Staff Room's rest bonus × its level (the bonus part: ×1.2 → ×1.3 at Level II)
   const restBonusNow = () => scaleBonus(STAFF_BALANCE.energy.restSpotBonus, lvOf('F08') || 1);
-  const crew = createCrew({ restBonus: () => restBonusNow(), grid, state: staffState, sys, perks, roster, spotTile: spot, hourNow, bandNow: () => bandAt(hourNow()), bus, trainingSpot, trainingLabel: (id) => staffing?.trainingOf(id) ? staffing.training.course(staffing.trainingOf(id).courseId)?.name ?? 'a course' : 'a course', energyMult: () => 1 + rb('energyPct') / 100 }); // (Milestone 21: Shift Planning)
+  // Milestone 40d: a Rare person hired before the new wage curve is paid today's Rare wage (data/staff.js)
+  for (const m of sys.staff) if (m.tier === 'rare' && staffById(m.id)?.tier === 'rare' && m.salary > staffById(m.id).salary) m.salary = staffById(m.id).salary;
+  const crew = createCrew({ restBonus: () => restBonusNow(), grid, state: staffState, sys, perks, roster, spotTile: spot, hourNow, bandNow: () => bandAt(hourNow()), bus, trainingSpot, trainingLabel: (id) => staffing?.trainingOf(id) ? staffing.training.course(staffing.trainingOf(id).courseId)?.name ?? 'a course' : 'a course', energyMult: () => 1 + rb('energyPct') / 100, holdAfterTask: (p) => (zoneOf(p) ? ZONES.holdHours : 0) }); // (Milestone 40d: they wait near their zone) // (Milestone 21: Shift Planning)
   let staffing = null; // (Milestone 11: made with the ledger, below)
   let research = null; // (Milestone 21: made with the ledger, below)
   let economy = null; // (Milestone 22: made with the ledger, below)
@@ -343,6 +346,14 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const seatPiece = (p, place) => {
     const list = layout.ofDef(PLACE_DEF[place]);
     if (!list.length) return null;
+    if (SEATING.nearest && list.length > 1) {
+      // (Milestone 40d: zones for residents — they eat and join in at the Dining Room / lounge nearest their own room)
+      const r = roomList().find((x) => x.id === p.state.room)?.fp;
+      if (r) {
+        const d = (pc) => Math.abs(pc.col + 1.5 - (r.col + 3)) + Math.abs(pc.row + 1.5 - (r.row + 3));
+        return list.reduce((best, pc) => (d(pc) < d(best) ? pc : best), list[0]);
+      }
+    }
     return list[Math.floor(seatOf(p, place) / SEATING.perRoom) % list.length];
   };
   // Where a resident goes for a place: their room's inside spot, or their seat at the Dining Room / lounge.
@@ -413,6 +424,36 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     }
   }
   const placeTile = (p, place) => spot(placeRef(p, place));
+  // Milestone 40d (spread the rush): a resident sets off for a meal or the lounge early enough to be there on time — the
+  // walk from their room to their seat at their own pace (cached by room and seat), at most MEAL_SERVICE.maxLeadHours.
+  const leadCache = new Map();
+  function leadOf(p, place) {
+    const room = p.state.room;
+    if (!room) return 0;
+    const to = placeTile(p, place);
+    const key = `${room}|${place}|${to.col},${to.row}|${p.agent.speed}`;
+    if (!leadCache.has(key)) {
+      if (leadCache.size > 400) leadCache.clear();
+      const from = spot(`${room}.inside`);
+      const path = from && findPath(grid, from, to);
+      const tiles = path ? path.length : Math.abs(from.col - to.col) + Math.abs(from.row - to.row);
+      const tilesPerHour = (p.agent.speed / 100) * (clock.secondsPerDay / 24);
+      leadCache.set(key, Math.min(MEAL_SERVICE.maxLeadHours, tiles / tilesPerHour + MEAL_SERVICE.spareHours));
+    }
+    return leadCache.get(key);
+  }
+  function setOff(p, r) {
+    if (!MEAL_SERVICE.setOff || r.day !== clock.totalDays) return r;
+    const steps = stepsFor(p, r.day);
+    const next = steps[steps.indexOf(r.step) + 1];
+    if (!next || !MEAL_SERVICE.places.includes(next.place) || hourNow() < next.at - leadOf(p, next.place)) return r;
+    // (never before they are up: an essential step's help still to come keeps them; a quiet step, e.g. the morning rest, ends
+    // a little early)
+    const cur = routineTask(p, r.step.id, r.day);
+    if (r.step.id === 'wake' || (cur && isOpen(cur) && cur.essential)) return r;
+    if (!routineTask(p, next.id, r.day)) return r; // (and only once the step's help is planned: its band has begun)
+    return { step: next, day: r.day };
+  }
   function addResident(st, { atEntrance = false } = {}) {
     const def = residentById(st.id);
     const p = { kind: 'resident', id: def.id, name: def.name, art: def.art, line: `${def.support} · age ${def.age}`, def, state: st };
@@ -674,8 +715,94 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     // (Milestone 18: a medicine round counts from its own time, not from when the nurse may set off for the cart)
     return care.tasks.some((x) => x.status === 'open' && x.roles.length === 1 && x.roles[0] === role && (isMeds(x) ? absHour(x.day, x.at) : x.opens) <= soon && x.due > absNow() && byResident(x.resident));
   };
-  function scoreFor(t, q) {
+  // Milestone 40d: zones (src/systems/zones.js, data/balance.js ZONES) — the Care Workers and nurses on shift now, by role
+  // and wing (a float or an agency worker has none), each look after a run of neighbouring rooms; their own zone's room
+  // tasks first, someone else's only while their own has nothing waiting. Never for a call bell or help after a fall.
+  const zoneCache = new Map();
+  let zoneFrame = { at: null, maps: new Map() }; // (one look-up per role and wing a moment: the AI asks for every task and person)
+  function zoneMapOf(q) {
+    if (!ZONES.on || !ZONES.roles.includes(q.role) || !roster.onShift(q.id)) return null;
+    const wing = roster.wingOf(q.id);
+    if (!wing) return null;
+    const at = absNow();
+    if (zoneFrame.at !== at) zoneFrame = { at, maps: new Map() };
+    const fk = q.role + '|' + wing;
+    if (!zoneFrame.maps.has(fk)) zoneFrame.maps.set(fk, zoneMapFresh(q, wing));
+    return zoneFrame.maps.get(fk);
+  }
+  function zoneMapFresh(q, wing) {
+    const members = crew.people.filter((x) => x.role === q.role && roster.onShift(x.id) && roster.wingOf(x.id) === wing).map((x) => x.id);
+    if (members.length < 2) return null; // (one person: the whole home is their zone)
+    const rooms = [];
+    for (const p of residents) {
+      if (p.state.leaving || !p.state.room || roster.wingOfRoom(p.state.room) !== wing) continue;
+      const fp = roomList().find((r) => r.id === p.state.room)?.fp;
+      if (fp && !rooms.some((r) => r.id === p.state.room)) rooms.push({ id: p.state.room, col: fp.col, row: fp.row });
+    }
+    if (rooms.length < members.length * ZONES.minRoomsEach) return null; // (too few rooms to share out: the whole home is everyone's)
+    const key = `${q.role}|${wing}|${members.join(',')}|${rooms.map((r) => `${r.id}@${r.col},${r.row}`).join(';')}`;
+    if (!zoneCache.has(key)) {
+      if (zoneCache.size > 40) zoneCache.clear();
+      zoneCache.set(key, splitZones(rooms, members, ZONES.band));
+    }
+    return zoneCache.get(key);
+  }
+  const zoneOf = (q) => { const z = zoneMapOf(q)?.get(q.id); return z?.size ? z : null; }; // (fewer rooms than people: no zone, they go where needed)
+  const zoneTask = (t) => t.type !== 'bell' && !t.urgent && t.source !== 'kitchen' && !!byResident(t.resident) && taskPlace(t) === 'room';
+  let zonePass = { at: null, open: new Set() };
+  // the room tasks waiting now, as 'roomId|role' (a back-up role's not counted: a nurse's own work is the round)
+  const zoneOpen = () => {
+    const at = absNow();
+    if (zonePass.at === at) return zonePass.open;
+    const open = new Set();
+    for (const t of care.tasks) {
+      if (t.status !== 'open' || t.opens > at || !zoneTask(t)) continue;
+      const room = byResident(t.resident).state.room;
+      for (const r of t.roles) if (t.roleFrom?.[r] == null) open.add(`${room}|${r}`);
+    }
+    zonePass = { at, open };
+    return open;
+  };
+  const zoneHasWork = (q, z) => [...z].some((room) => zoneOpen().has(`${room}|${q.role}`));
+  // Milestone 40d: a meal at the table is served once the resident is at it, or nearly (MEAL_SERVICE.nearTiles away)
+  function seatedSoon(t) {
+    if (!MEAL_SERVICE.whenSeated || t.type !== 'meal' || t.source !== 'routine' || t.tray) return true;
+    const p = byResident(t.resident);
+    if (!p || taskPlace(t) === 'room') return true;
+    const s = p.state.step;
+    if (!s || s.id !== t.stepId || s.day !== t.day) return false;
+    if (s.arthurThere) return true;
+    const seat = placeTile(p, taskPlace(t));
+    const at = grid.worldToTile(p.agent.x, p.agent.y);
+    return !!at && Math.abs(at.col - seat.col) + Math.abs(at.row - seat.row) <= MEAL_SERVICE.nearTiles;
+  }
+  // Milestone 40d (independence helps): a resident who does more for themselves (their Independence outcome, raised by rehab
+  // and the independence options) needs less hands-on time for the daily-living tasks — the same care, never a change to
+  // their plan. → the share of the time saved (0 … INDEPENDENCE.maxPct / 100).
+  function independenceSaving(p) {
+    const v = p?.state.outcomes?.independence;
+    if (v == null || p.state.guest) return 0;
+    const k = Math.max(0, Math.min(1, (v - INDEPENDENCE.from) / (INDEPENDENCE.to - INDEPENDENCE.from)));
+    return (k * INDEPENDENCE.maxPct) / 100;
+  }
+  const independenceRate = (p, t) => (p && INDEPENDENCE.types.includes(t.type) ? 1 / (1 - independenceSaving(p)) : 1);
+  function zoneScore(t, q) {
+    if (!zoneTask(t)) return 0;
+    const z = zoneOf(q);
+    if (!z) return 0;
+    const room = byResident(t.resident).state.room;
+    if (z.has(room) || inGroup(q.id, t.resident)) return ZONES.inZone; // (their usual carer — the player's continuity group — counts as their own zone)
+    if (zoneHasWork(q, z)) return null; // (their own zone first)
+    // idle, they cross over — but not while the colleague whose zone it is is free to go themselves
+    const owner = [...zoneMapOf(q)].find(([, rooms]) => rooms.has(room))?.[0];
+    const o = owner && crew.byId(owner);
+    return o && crew.isFree(o) && !crew.tooTired(o) ? null : 0;
+  }
+  function scoreFor(t, q, preview = false) {
     if (!t.roles.includes(q.role)) return null; // (scorePair says so too; this skips the path search)
+    const zs = pinOf(t) ? 0 : zoneScore(t, q); // (Milestone 40d: a pinned helper goes where they're asked)
+    if (zs == null) return null;
+    if (!preview && !pinOf(t) && !seatedSoon(t)) return null; // (Milestone 40d: a server never waits at an empty seat; the picker's preview names who will come)
     if (t.roleFrom?.[q.role] != null && ownWorkWaiting(q.role)) return null;
     const pin = pinOf(t);
     if (pin && pin !== q.id) return null;
@@ -699,9 +826,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       continuity: inGroup(q.id, t.resident) ? (memoryOf(p) ? CONTINUITY_MULT : 1) : 0, // Milestone 13: their continuity group (bible §14); Milestone 17: × 2 for memory support
     });
     // (Milestone 30b: Zip's blessing — while he is on shift, a call bell comes before any other task)
-    return s != null && t.type === 'bell' ? s + blessings.bellFirst() : s;
+    return s == null ? null : s + zs + (t.type === 'bell' ? blessings.bellFirst() : 0); // (Milestone 40d: + their own zone)
   }
   function claim(t, q) {
+    zonePass.at = null; // (Milestone 40d: the open room tasks are counted again)
     t.status = 'claimed'; // first, so core/AssignmentSystem counts it as a job when it marks them assigned
     assignSys.assign(t, q.id);
     t.reached = false;
@@ -1975,7 +2103,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       // Milestone 13: a familiar helper works a little faster (communication / routine efficiency, bible §6)
       // (Milestone 15: a Care Worker preps more slowly than a Hospitality worker)
       const rate = kitchenTask ? (q.role === 'HN' || specialtiesOf(q.id).includes('nutrition') ? 1 : PREP.careWorkerRate) : 1 + familiarEffects(q.agency ? 0 : familiarityOf(care, t.resident, q.id)).speedUp;
-      t.workLeft -= (hours * rate * skillOf(q) * blessings.taskRate(q.id)) / incidentSlow(t); // (Milestone 40b: skilled staff a little faster) // (Milestone 25: the hoist out, or the water low; Milestone 30b: Zip's own work 20% quicker, the same care)
+      t.workLeft -= (hours * rate * skillOf(q) * blessings.taskRate(q.id) * independenceRate(p, t)) / incidentSlow(t); // (Milestone 40b: skilled staff a little faster) // (Milestone 25: the hoist out, or the water low; Milestone 30b: Zip's own work 20% quicker, the same care)
       if (t.workLeft <= 1e-9) completeTask(t, q);
     }
     // free staff pick their next task (bible §15 order: src/systems/careTasks.js scorePair)
@@ -3833,7 +3961,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   // The home's places: rooms built, capped by the stage and never above the 70-resident logical cap.
   const placesLeft = () => placesFree({ here: seated().length, rooms: roomList().length, stageCap: layout.cap }); // (Milestone 40b: with Stage 1's Rank E limit)
   // Milestone 40b: the accommodation fee × Kaching × the Rank uplift (data/economy.js RANK_FEES)
-  const feeMult = () => blessings.feeMult() * (1 + (RANK_FEES[rankNow()] ?? 0) / 100);
+  // Milestone 40d: × the occupancy bonus from Stage 3 (shared costs: data/economy.js OCCUPANCY_BONUS — the stage's % × how full it is)
+  const occupancyPct = () => (OCCUPANCY_BONUS.byStage[layout.stage] ?? 0) * Math.min(1, seated().length / Math.max(1, layout.stageDef.capacity));
+  const feeMult = () => blessings.feeMult() * (1 + (RANK_FEES[rankNow()] ?? 0) / 100) * (1 + occupancyPct() / 100);
   // Milestone 40b: a skilled person's work speed (1 for the Standard row and agency workers)
   const skillOf = (q) => (q.agency ? 1 : skillRate(staffPoints(q.model, 100)));
   // Milestone 40b: how many residents the team can safely care for (src/systems/safeCapacity.js) and how many are here
@@ -4425,7 +4555,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
           delete p.state.joinAt; // settled in: from this band they live the routine
           bus?.emit('care:joined', { resident: p.id });
         }
-        const r = routineAt(hourNow(), clock.totalDays, stepsFor(p, clock.totalDays));
+        const r = setOff(p, routineAt(hourNow(), clock.totalDays, stepsFor(p, clock.totalDays))); // (Milestone 40d: they set off in time)
         if (!p.state.step || p.state.step.id !== r.step.id || p.state.step.day !== r.day) {
           if (waitsInBed(p)) {
             trayInBed(p); // (Milestone 15: breakfast comes to them on a tray)
@@ -4465,7 +4595,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (t && (t.status === 'claimed' || t.status === 'working' || t.status === 'done')) return t.slots[0];
       const probe = t ?? { id: 'probe', source: 'routine', stepId, type: 'meal', urgency: 3, roles: step.roles, place: 'step', opens: 0, resident: p.id };
       const onShift = crew.people.filter((q) => roster.onShift(q.id, hourNow(), bandAt(hourNow()).id));
-      return choosePairs([probe], onShift, scoreFor)[0]?.person.id ?? null;
+      return choosePairs([probe], onShift, (x, q) => scoreFor(x, q, true))[0]?.person.id ?? null;
     },
     // --- Milestone 4 -------------------------------------------------------------------------------------------
     care,
@@ -4731,7 +4861,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     },
     placesLeft: () => placesLeft(),
     safeCapacity: () => safeCapacity(), // (Milestone 40b)
-    feeMult: () => feeMult(), // (Milestone 40b: Kaching × the Rank uplift)
+    // Milestone 40d: the rooms someone looks after now ([room ids]; null: no zone — a float, agency, alone on their role, off)
+    independenceSaving: (residentId) => independenceSaving(byResident(residentId)), // (Milestone 40d: 0 … 0.4)
+    // (tests, Milestone 40d) the staff AI's score for one task and person (null: they may not take it); a resident's set-off
+    // lead for a place; the independence work rate for a task
+    scoreTaskForTests: (taskId, staffId) => { zonePass.at = null; zoneFrame.at = null; const t = care.tasks.find((x) => x.id === taskId); const q = crew.byId(staffId); return t && q ? scoreFor(t, q) : null; },
+    leadOfForTests: (residentId, place) => leadOf(byResident(residentId), place),
+    independenceRateForTests: (residentId, t) => independenceRate(byResident(residentId), t),
+    zoneOf: (staffId) => { const q = crew.byId(staffId); const z = q && zoneOf(q); return z ? [...z] : null; },
+    feeMult: () => feeMult(), // (Milestone 40b: Kaching × the Rank uplift; Milestone 40d: × the occupancy bonus)
+    occupancyPct: () => occupancyPct(), // (Milestone 40d)
     fillToCapForDebug: (opts) => fillToCap(opts),
     // --- Milestone 23: community partners and grants ----------------------------------------------------------------------
     get partners() {

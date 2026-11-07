@@ -28,7 +28,9 @@ export const RECRUIT = {
 };
 
 // The employee cap by Rank (bible §13; Milestone 26: the home's real Rank).
-export const EMPLOYEE_CAP = { E: 12, D: 18, C: 26, B: 36, A: 46, S: 56 };
+// Milestone 40d (let a well-run home grow to 60): raised from D 18 · C 26 · B 36 · A 46 · S 56, about one person per place
+// (and a little over) at each Rank's stage, so a well-run home can staff its places safely (DECISIONS.md, Milestone 40d).
+export const EMPLOYEE_CAP = { E: 12, D: 24, C: 36, B: 48, A: 64, S: 80 };
 export const RANK_NOW = 'E'; // (a new home's Rank: the rank a staffing system without a home world reads)
 // Ranks from lowest to highest (Milestone 12: the eligibility rules compare them; Milestone 26: src/systems/quality.js).
 export const RANKS = ['E', 'D', 'C', 'B', 'A', 'S'];

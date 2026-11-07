@@ -158,3 +158,6 @@ export const NURSING_SUPPLEMENT = { perMonth: 250 };
 // with the home's Rank, this % on top (Rank E: none, so a new home's first months are exactly as before). Shown on the
 // Ledger's fee line. PLACEHOLDERS (DECISIONS.md, Milestone 40b).
 export const RANK_FEES = { E: 0, D: 20, C: 35, B: 50, A: 65, S: 80 }; // (Part D: was D 10 … S 50 — the 16-year soaks still sank at Rank D / C)
+// Milestone 40d (bigger homes earn more per resident: shared costs): from Stage 3 the accommodation fee is lifted by the
+// stage's % × how full the stage is (a full Stage 5 home +15%); with the Rank uplift as it is.
+export const OCCUPANCY_BONUS = { byStage: { 3: 6, 4: 10, 5: 15 } };

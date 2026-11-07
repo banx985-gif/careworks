@@ -75,4 +75,6 @@ export const FAVOURITE = { at: 80 };
 // Lounge (a seat number: four to a room, in order). A new resident takes the seat that follows their room number if it
 // is free (as in Milestones 6–12), else the first free one. Each night a resident whose friend (≥ friendAt) sits away
 // from them moves to a free seat beside that friend, if there is one.
-export const SEATING = { perRoom: 4 };
+// nearest (Milestone 40d): with more than one Dining Room / lounge, a resident uses the one nearest their room (their seat
+// number picks the place at its table); before, the next four seats were at the next one built.
+export const SEATING = { perRoom: 4, nearest: true };

@@ -27,7 +27,7 @@ export const TASK_TYPES = {
 // meal is 8 minutes a resident (it was 20: one-to-one help from start to finish). A plan that needs help at the table
 // (NU05 Texture-Modified Meals) still makes it longer.
 export const ROUTINE_TASKS = {
-  wake: { type: 'wake', band: 'morning', minutes: 20, lead: 1 },
+  wake: { type: 'wake', band: 'morning', minutes: 20, lead: 0.5 }, // (Milestone 40d: half an hour — a carer in their own zone is near)
   breakfast: { type: 'meal', band: 'morning', minutes: 8, lead: 0.5 },
   rest: { type: 'observation', band: 'afternoon', minutes: 20, lead: 0.5 },
   lunch: { type: 'meal', band: 'afternoon', minutes: 8, lead: 0.5 }, // (Milestone 15)

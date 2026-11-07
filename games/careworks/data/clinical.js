@@ -16,7 +16,7 @@ export const ROUND = {
   cart: 'care_equipment_01', // the Medication Cart
   collectMinutes: 3,
   lateAfter: 1.5,
-  lead: 0.75, // a round's stops open this many hours early (not before their band), so the cart is fetched in time
+  lead: 1.5, // a round's stops open this many hours early (not before their band), so the cart is fetched in time (Milestone 40d: 1.5, was 0.75 — the morning round spread from 08:00)
   names: { 9.5: 'Morning medicine round', 12.5: 'Midday medicine round', 18: 'Evening medicine round' },
 };
 

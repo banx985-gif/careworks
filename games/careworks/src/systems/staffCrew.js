@@ -20,7 +20,7 @@ import { SHIFT_MORALE } from '../../data/shifts.js';
 import { staffById } from '../../data/staff.js';
 import { ROLES } from '../../data/roles.js';
 import { STAFF_BALANCE as B, WALK } from '../../data/balance.js';
-import { TIMER_SCALE } from '../../data/routine.js';
+import { TIMER_SCALE, DAY } from '../../data/routine.js';
 import { FOUNDER_FLAG } from '../../data/setup.js';
 import { energyPct, moralePerHour, shiftPct } from './traitEffects.js';
 
@@ -35,7 +35,7 @@ const stepWord = (step) => (step.activity ? step.name : step.name.toLowerCase())
 // Milestone 11: trainingSpot(p) → the spot ref a trainee sits at (the Training Room, or their rest spot without one);
 // trainingLabel(id) → the course they are on.
 // (Milestone 21: energyMult() — × on the Energy used on shift, e.g. the home's Shift Planning research; 1 by default)
-export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow, bandNow, bus = null, trainingSpot = (p) => p.restSpot, trainingLabel = () => 'a course', energyMult = () => 1, restBonus = () => B.energy.restSpotBonus }) {
+export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow, bandNow, bus = null, trainingSpot = (p) => p.restSpot, trainingLabel = () => 'a course', energyMult = () => 1, restBonus = () => B.energy.restSpotBonus, holdAfterTask = () => 0 }) {
   const makePerson = (model, i) => {
     const p = {
       kind: 'staff',
@@ -82,6 +82,14 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       p.mode = 'post';
       p.stay = post.stay[p.postIndex];
     });
+  };
+  // Milestone 40d: someone with a zone waits near their rooms after a task (holdAfterTask(p) → game hours; 0: back to
+  // their post, as before), then walks back to their post if nothing comes up.
+  const afterTask = (p) => {
+    const h = holdAfterTask(p);
+    if (!(h > 0)) return toPost(p);
+    p.mode = 'zone';
+    p.stay = (h * DAY.secondsPerDay) / 24 / TIMER_SCALE;
   };
   // Off shift they are resting from the start (a new home opens before the shift): no walk-in needed.
   for (const p of people) if (!p.agency && !onShift(p) && !state.pos?.[p.id]) {
@@ -167,7 +175,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
           bus?.emit('staff:onShift', { id: p.id });
         }
         if (p.agent.state === 'walking') p.agent.update(g, grid);
-        else if (p.mode === 'post' && (p.stay -= g / TIMER_SCALE) <= 0) {
+        else if ((p.mode === 'post' || p.mode === 'zone') && (p.stay -= g / TIMER_SCALE) <= 0) {
           p.postIndex = (p.postIndex + 1) % POSTS[p.role].spots.length;
           toPost(p);
         }
@@ -230,7 +238,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       sys.refreshStatus(m);
       p.task = null;
       bus?.emit('staff:task', { id, tasks: m.counters.tasks });
-      if (onShift(p)) toPost(p);
+      if (onShift(p)) afterTask(p);
     },
     // Never mind (he said no, it was too late, or the shift ended): back to their post.
     releaseTask(id) {
@@ -280,6 +288,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
       if (p.mode === 'toRest') return 'Off shift: going to the Staff Room';
       if (p.mode === 'resting') return 'Off shift: resting in the Staff Room';
       if (p.mode === 'toPost') return 'On shift: walking the home';
+      if (p.mode === 'zone') return 'On shift: near the rooms they look after'; // (Milestone 40d)
       return `On shift ${PLACE_WORDS[POSTS[p.role].spots[p.postIndex]] ?? 'in the hall'}`;
     },
     modes() {

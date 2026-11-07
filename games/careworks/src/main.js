@@ -4209,6 +4209,9 @@ function staffMenu(w, p, accent) {
   const shiftLines = agency
     ? [w.roster.label(p.id), 'Agency worker: booked for this shift only; builds no Familiar Care and is never on records.']
     : [w.roster.label(p.id), `Prefers ${PREF_WORD[pref] ?? '—'} shifts${pref !== 'night' ? ' · Night shifts cost a little Morale' : ''} · ${wing ? `${WINGS.find((x) => x.id === wing)?.short} wing` : w.roster.isFloat(p.id) ? 'float: tied to no wing' : 'no wing'}`];
+  // (Milestone 40d: their zone — the rooms they look after first on this shift)
+  const zone = w.zoneOf?.(p.id);
+  if (zone?.length) shiftLines.push(`Zone: room${zone.length === 1 ? '' : 's'} ${zone.map((r) => w.roomNumber(r)).sort((x, y) => x - y).join(', ')} first (they help elsewhere when it is quiet)`);
   const status = [m.status.tired && 'Tired', m.status.stressed && 'Stressed'].filter(Boolean);
   const fam = w.topResidentsFor(p.id, 3); // (Milestone 12: the three residents here who know them best)
   const sections = [

@@ -85,16 +85,19 @@ export const LOG_SHOWN = 6; // log lines on his card
 // until lateBreakfastUntil (a resident not yet got up stays in bed until a helper comes, and breakfast waits for them).
 // fixed: a resident whose time is set outright (the opening resident, Arthur, keeps the
 // 07:00 of Milestones 2–12).
+// Milestone 40d (spread the morning rush): the windows widened so the same hands get more people up — 06:15–09:00
+// instead of 06:00–08:30 — and breakfast follows each resident's own wake-up (served until lateBreakfastUntil). A resident
+// already here keeps the wake-up time they had.
 export const WAKE = {
   windows: {
-    early: { name: 'Early riser', from: 6, to: 6.75 },
-    usual: { name: 'Usual riser', from: 6.75, to: 7.75 },
-    late: { name: 'Late riser', from: 7.75, to: 8.5 },
+    early: { name: 'Early riser', from: 6.25, to: 7 },
+    usual: { name: 'Usual riser', from: 7, to: 8.25 },
+    late: { name: 'Late riser', from: 8.25, to: 9 },
   },
   byPersonality: { 'Routine-Loving': 'early', Independent: 'early', 'Stubbornly Independent': 'early', Quiet: 'late', Reserved: 'late', Witty: 'late' }, // (everyone else: usual)
   slot: 0.25,
   fixed: { RES01: 7 },
-  breakfastAfter: 1,
+  breakfastAfter: 0.75,
   lateBreakfastUntil: 9.5,
   waitForHelpUntil: 10.5, // someone not yet got up waits in bed for a helper (breakfast waits) until then
 };

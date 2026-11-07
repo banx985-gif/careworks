@@ -119,16 +119,22 @@ export function growthOf(n, pcts) {
 // keep 6 residents' essential care done (S at 6; ~10 essential tasks a day missed at 8); at 13 residents one Hospitality
 // worker and two carers on the Afternoon shift miss about half the lunches. PLACEHOLDERS (DECISIONS.md, Milestone 40b).
 export const SAFE_CAPACITY = {
-  care: { hands: { CW: 1, RN: 1 }, perHand: { morning: 3, afternoon: 3 } },
-  meals: { hands: { HN: 1, CW: 0.4 }, perHand: { morning: 4.3, afternoon: 4.3 } },
+  // (Milestone 40d: a nurse counts 0.6 — the medicine round comes first — and a carer's hands go further with zones and the
+  // spread morning: 3.75, was RN 1 · 3; the Rank E roster still safely cares for 6)
+  care: { hands: { CW: 1, RN: 0.6 }, perHand: { morning: 3.75, afternoon: 3.75 } },
+  // (Milestone 40d: a server only serves a resident at the table now, so each goes further: 5.5, was 4.3)
+  meals: { hands: { HN: 1, CW: 0.4 }, perHand: { morning: 5.5, afternoon: 5.5 } },
   // (Part D) the medicine rounds: nurses only; at 13 residents two morning nurses missed about four rounds a day
-  meds: { hands: { RN: 1 }, perHand: { morning: 6, afternoon: 8 } },
+  // (Milestone 40d: the morning round opens from 08:00: 7, was 6)
+  meds: { hands: { RN: 1 }, perHand: { morning: 7, afternoon: 8 } },
   night: { base: 4, perHand: 12 },
   minimum: 2,
   // (Part D) a bigger home is a longer walk between rooms, the dining room and the medicine trolley: each pair of hands keeps
   // up with fewer residents from Stage 2 on (× by stage 1–5; the 16-year soak at 13 residents in Stage 2 missed ~7 tasks a day
   // that the Stage 1 numbers called safe)
-  stageFactor: [1, 0.8, 0.75, 0.7, 0.65],
+  // (Milestone 40d: zones, the nearest Dining Room and residents setting off in time cut the bigger home's walks: was
+  // 1 · 0.8 · 0.75 · 0.7 · 0.65; the soak at 18 residents in Stage 2 missed under 2 essential tasks a day)
+  stageFactor: [1, 0.9, 0.85, 0.8, 0.75],
   skillShare: 0.5, // (about half a task's time is the walk there, which skill doesn't shorten)
   // Stage 1 holds this many residents until Rank D (its first six places at the start; the rest open at Rank D)
   rankEPlaces: 6,
@@ -141,3 +147,23 @@ export const SAFE_CAPACITY = {
 // sits above every Standard person, so the Standard ten (and every home's first months) work exactly as before. Rare
 // ≈ 1.4×, Elite ≈ 2.2×, Legendary 2.5×; a Standard person who levels up past it starts to speed up too. Agency: 1.
 export const SKILL_SPEED = { basePoints: 5.4, k: 0.6, max: 2.5 };
+
+// Milestone 40d (let a well-run home grow): zones — each Care Worker and nurse on a shift looks after a run of
+// neighbouring rooms (src/systems/zones.js), split automatically from who is on now; their own zone's room tasks come
+// first (inZone: worth that many tiles of walking), and they only cross into a colleague's zone while their own has
+// nothing waiting. Floats and agency workers have no zone (they go where they're needed); a wing's staff split that
+// wing's rooms (painting wings is how a player sets zones by hand). band: floor rows per stretch of corridor walked.
+// holdHours: after a task someone with a zone waits near their rooms this long before walking back to their post.
+// minRoomsEach: zones start once there are at least this many residents' rooms per person (a small home is everyone's).
+export const ZONES = { on: true, roles: ['CW', 'RN'], inZone: 40, band: 8, holdHours: 3, minRoomsEach: 2 };
+
+// Milestone 40d (spread the rush): residents set off for a meal or the lounge early enough to be there on time (the walk
+// from their room at their own pace + spareHours, at most maxLeadHours), and a server takes a resident's meal only once
+// they are at the table or nearly (nearTiles), never standing at an empty seat while others wait.
+export const MEAL_SERVICE = { setOff: true, places: ['dining', 'lounge'], spareHours: 0.1, maxLeadHours: 1, whenSeated: true, nearTiles: 6 };
+
+// Milestone 40d (independence helps): the daily-living tasks (types) take less hands-on time for a resident who does more
+// for themselves — from their Independence outcome: nothing at `from` or below, up to maxPct% less at `to` and above. The
+// care is the same (the same need eased), their plan is never changed, and nothing is forced: it is good rehab, memory
+// care and independence options paying back in staff time.
+export const INDEPENDENCE = { types: ['wake', 'personal', 'settle', 'meal'], from: 45, to: 85, maxPct: 40 };
