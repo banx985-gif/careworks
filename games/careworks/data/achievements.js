@@ -118,8 +118,8 @@ export const HALL = {
   autoTiers: ['legendary', 'secret', 'divine'],
   servedDays: 5 * 336, // 5 game years
   candidatesKept: 12,
-  why: { tier: 'A legend of care: joined the team', served: 'Five years of service', left: 'Added on leaving the team' },
-  tag: { tier: 'Legend', served: 'Five years’ service', left: 'Added on leaving' }, // (the short word on the Hall of Fame page)
+  why: { tier: 'A legend of care: joined the team', served: 'Five years of service', left: 'Added on leaving the team', homeGrown: 'Home-grown: started here as a Trainee and grew into one of the best' }, // (Milestone 40e: homeGrown)
+  tag: { tier: 'Legend', served: 'Five years’ service', left: 'Added on leaving', homeGrown: 'Home-grown' }, // (the short word on the Hall of Fame page)
 };
 
 // The account store's key for all of this (src/main.js), next to the Memory Book and the secrets.

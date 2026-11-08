@@ -8,6 +8,7 @@ import { CARE_POPS } from './pops.js';
 import { RESIDENTS } from './residents.js';
 import { FOUNDERS } from './setup.js';
 import { STAFF, GODS, AARON } from './staff.js';
+import { TRAINEE_ARTS } from './trainees.js';
 import { ROLES } from './roles.js';
 import { ACTIVITIES, BIRTHDAY } from './activities.js';
 import { TROLLEYS } from './dining.js';
@@ -39,7 +40,8 @@ export const ASSETS = {
   ...Object.fromEntries(RESIDENTS.map((r) => art('residents', r.art))),
   ...Object.fromEntries(FOUNDERS.map((f) => art('staff', f.art))),
   // Milestone 3: every staff portrait on the roster data and the five role badges (staff cards).
-  ...Object.fromEntries([...STAFF, ...GODS, AARON].map((s) => art('staff', s.art))), // (Milestone 30b: and the five Works Gods; Milestone 40b: Aaron's still)
+  ...Object.fromEntries([...STAFF, ...GODS, AARON].map((s) => art('staff', s.art))),
+  ...Object.fromEntries(TRAINEE_ARTS.map((a) => art('staff', a))), // (Milestone 40e: the Trainees' card stills) // (Milestone 30b: and the five Works Gods; Milestone 40b: Aaron's still)
   ...Object.fromEntries(Object.values(ROLES).map((r) => art('badges', r.badge))),
   // Milestone 5: the five early props, the three care pops, the bar icons (bottom-bar slots, Credits / Care Tokens) and
   // the Care sheet's icons (Admissions, the call bell).

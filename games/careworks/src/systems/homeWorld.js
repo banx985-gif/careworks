@@ -147,6 +147,8 @@ import { createItems, newItemsState } from './items.js';
 import { ITEM_SOURCES, ITEM_RULES } from '../../data/items.js';
 const ITEM_RULES_SEASON = ITEM_RULES.seasonMonths;
 import { staffById, BLESSINGS, MISHAPS } from '../../data/staff.js';
+import { TRAINEE, traineePaceOf } from '../../data/trainees.js';
+const PRIMARY_OF = { CW: 'PER', RN: 'CLN', AH: 'MOB', LC: 'SOC', HN: 'NUT' }; // (Milestone 40e)
 import { rankAtLeast } from '../../data/recruitment.js';
 import { taskPct, matchesTask, familiarPct } from './traitEffects.js';
 import { compatibility, addFriendship, areFriends, topFriends, groupMembers, favouriteOf, familiarEffects, friendshipOf } from './relationships.js';
@@ -3936,7 +3938,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   function rankNow() {
     return quality.rank;
   }
-  staffing = createStaffing({ state: staffState, sys, ledger, seed, bus, today: () => clock.totalDays, year: () => clock.year, teamSize: () => crew.people.filter((q) => !q.agency && !q.leftTeam).length, trainingPlaces: () => layout.ofDef('F11').length * TRAINING.placesPerRoom, rank: () => rankNow(), hasFacility: (defId) => layout.ofDef(defId).length > 0, trainingPct: () => pp('trainingDaysPct') + blessings.trainingDaysPct(), score: (id) => quality.scores()[id] ?? null, clue: () => quality.has('eliteClue') }); // (Milestone 23; Milestone 26: the real Rank and §5 scores; Milestone 40b: Aaron's Studio Founder in trainingPct)
+  staffing = createStaffing({ state: staffState, sys, ledger, seed, bus, today: () => clock.totalDays, year: () => clock.year, teamSize: () => crew.people.filter((q) => !q.agency && !q.leftTeam).length, trainingPlaces: () => layout.ofDef('F11').length * TRAINING.placesPerRoom, rank: () => rankNow(), hasFacility: (defId) => layout.ofDef(defId).length > 0, trainingPct: () => pp('trainingDaysPct') + blessings.trainingDaysPct(), score: (id) => quality.scores()[id] ?? null, clue: () => quality.has('eliteClue'), shortHands: () => { try { const sc = safeCapacity(); return sc.here >= sc.n; } catch { return false; } } }); // (try: not ready while the world is still being built) // (Milestone 40e: a third Trainee card while short of hands) // (Milestone 23; Milestone 26: the real Rank and §5 scores; Milestone 40b: Aaron's Studio Founder in trainingPct)
   staffing.onTrained((s, c, gains, specialty) => {
     roster.setTraining(s.id, false);
     care.quality.trainedOn[s.id] = clock.totalDays; // (Milestone 26: Staff Wellbeing reads who trained lately)
@@ -3980,7 +3982,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const occupancyPct = () => (OCCUPANCY_BONUS.byStage[layout.stage] ?? 0) * Math.min(1, seated().length / Math.max(1, layout.stageDef.capacity));
   const feeMult = () => blessings.feeMult() * (1 + (RANK_FEES[rankNow()] ?? 0) / 100) * (1 + occupancyPct() / 100);
   // Milestone 40b: a skilled person's work speed (1 for the Standard row and agency workers)
-  const skillOf = (q) => (q.agency ? 1 : skillRate(staffPoints(q.model, 100)));
+  // Milestone 40e: a Trainee starts at 85% pace and reaches a Standard person's as their primary stat grows (data/trainees.js)
+  const skillOf = (q) => (q.agency ? 1 : q.model?.tier === 'trainee' && traineePaceOf(q.role, q.model.stats) < 1 ? traineePaceOf(q.role, q.model.stats) : skillRate(staffPoints(q.model, 100)));
   // Milestone 40b: how many residents the team can safely care for (src/systems/safeCapacity.js) and how many are here
   const safeCapacity = () => {
     const c = safeCapacityOf(team().map((q) => ({ role: q.role, shift: roster.shiftOf(q.id)?.id ?? null, skill: skillOf(q) })), { stage: layout.stage }); // (Part D: the stage's longer walks)
@@ -3989,6 +3992,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   };
   const roomTemplatesHere = () => new Set(roomList().map((r) => r.defId));
   const team = () => crew.people.filter((q) => !q.agency && !q.leftTeam);
+  const joinedDays = (id) => (secrets.log.joined?.[id] == null ? 0 : Math.max(0, clock.totalDays - secrets.log.joined[id]));
+  const isHomeGrownNow = (q) => joinedDays(q.id) >= TRAINEE.homeGrown.days && (q.model.stats?.[PRIMARY_OF[q.role]] ?? 0) >= TRAINEE.homeGrown.statCap;
   const teamRoles = () => new Set(team().map((q) => q.role));
   const admitCtx = () => ({ roles: teamRoles(), freeRooms: freeRooms().map((r) => r.id), freeRoomsFor: (def) => roomsFor(def).map((r) => r.id), day: clock.totalDays, placeable: roomTemplatesHere(), buildable: (id) => layout.unlock(id).ok, paused: coverage.admissionsPaused() ?? economy?.admissionsPaused() ?? null }); // (Milestone 22: deep debt)
   const monthRange = (endDay = null) => {
@@ -4150,6 +4155,8 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       p.state.stay.paused = (p.state.stay.paused ?? 0) + 1;
     }
     staffState.founder.history.daysEmployed += 1;
+    // Milestone 40e: a Trainee with 3 years' service and their primary stat at the Rare cap is Home-grown (once; a badge and an Inbox line)
+    for (const q of team()) if (q.model?.tier === 'trainee' && isHomeGrownNow(q) && staffing.noteHomeGrown(q.id)) bus?.emit('staff:homeGrown', { id: q.id, name: q.name, role: q.role });
     fadeFamiliarity(care, day - 1, seated().map((p) => p.id), team().map((q) => q.id)); // Milestone 13: regular contact matters
     reseatFriends(); // Milestone 13: friends sit together when seats allow
     updateFavourites(day);
@@ -5660,6 +5667,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     team: () => team().map(staffInfoOf),
     staffInfo: (id) => staffInfoOf(crew.byId(id)),
     daysEmployed: (id) => (secrets.log.joined?.[id] == null ? 0 : Math.max(0, clock.totalDays - secrets.log.joined[id])),
+    homeGrown: (id) => staffing.homeGrown(id), // (Milestone 40e)
     facilities: () => layout.pieces.filter((pc) => facilityById(pc.defId) && !roomById(pc.defId)).map((pc) => ({ uid: pc.uid, defId: pc.defId, name: facilityById(pc.defId).name, level: layout.levelOf(pc.uid) ?? 1 })),
     pieceOfSpot: (ref) => {
       const pc = layout.pieceOfSpot(ref);

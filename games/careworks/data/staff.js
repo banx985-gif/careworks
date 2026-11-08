@@ -13,6 +13,7 @@
 //   traits: ids in TRAITS. Legendary / Secret staff also carry their signature trait (the §12 trait column) after one
 //     (Legendary) or two (Secret) ordinary ones from their role's Elite traits, so their tier's trait slots are used.
 import { ROLES, STAT_IDS, TIERS } from './roles.js';
+import { traineeDef } from './trainees.js'; // (Milestone 40e)
 import { ROLE_LIKES } from './items.js';
 import { ROLE_MILESTONES, scoreById } from './quality.js'; // (Milestone 26: a role milestone reads its headline score)
 
@@ -174,7 +175,7 @@ export const AARON = {
 // learn faster), and every program and activity lifts this much more. PLACEHOLDERS (DECISIONS.md, Milestone 40b).
 export const STUDIO_FOUNDER = { trainingDaysPct: -17, liftPct: 5 }; // (−17% of the days = 20% faster)
 export const ALL_STAFF = [...STAFF, ...GODS, AARON];
-export const staffById = (id) => ALL_STAFF.find((s) => s.id === id) ?? null;
+export const staffById = (id) => ALL_STAFF.find((s) => s.id === id) ?? traineeDef(id); // (Milestone 40e: a Trainee is made from their id)
 // The trait the §12 table names for this person (a Legendary / Secret person's signature, else their first).
 export const namedTrait = (def) => def.traits.find((t) => TRAITS[t]?.signature) ?? def.traits[0];
 

@@ -24,6 +24,10 @@
 //   board until hired). ?debug=1: "Open every channel" also counts as the Rank;
 //   "Unlock Elite staff" (staffing.setEliteUnlock) counts as the Elite condition. staffing.eligibleNow(tiers?) → defs.
 // A card: { id, channel, personId, name, role, tier, level, stats, salary, trait, shiftPref, art }.
+// Milestone 40e: Trainees (data/trainees.js) — the board always carries 2 Trainee cards (3 while shortHands(): the home's safe
+// capacity is at or under the residents here) beside the channel's cards, in the hands-on roles, channel 'trainee'. They are
+// added after every refresh and topped up after a hire, so they never run out. Each is made from their id (st.traineeNext
+// counts up). staffing.homeGrown(id) / staffing.noteHomeGrown(id): the Home-grown badge's list.
 import { RecruitmentSystem } from '../../../../core/RecruitmentSystem.js';
 import { TrainingSystem } from '../../../../core/TrainingSystem.js';
 import { Rng } from '../../../../core/Rng.js';
@@ -32,9 +36,10 @@ import { ROLES, ROLE_IDS, STAT_IDS, TIERS } from '../../data/roles.js';
 import { CHANNELS, NEVER_TIERS, TIER_FALLBACK, RECRUIT, EMPLOYEE_CAP, RANK_NOW, rankAtLeast } from '../../data/recruitment.js';
 import { facilityById } from '../../data/facilities.js';
 import { COURSES, courseById, SPECIALTIES, SPECIALTY_LIMIT } from '../../data/training.js';
+import { TRAINEE, traineeDef, traineeId, firstSerial, traineeRoleFor } from '../../data/trainees.js';
 
 export function newStaffingState() {
-  return { recruit: null, nextFree: null, training: null, specialties: {}, departed: [], hires: [], debug: false, eliteUnlock: false, arrived: [], arrivalQueue: [] };
+  return { recruit: null, nextFree: null, training: null, specialties: {}, departed: [], hires: [], debug: false, eliteUnlock: false, arrived: [], arrivalQueue: [], traineeNext: null, homeGrown: [] }; // (Milestone 40e: traineeNext, homeGrown)
 }
 export function ensureStaffingState(saved) {
   const s = { ...newStaffingState(), ...(saved ?? {}) };
@@ -43,6 +48,7 @@ export function ensureStaffingState(saved) {
   s.hires = [...(s.hires ?? [])];
   s.arrived = [...(s.arrived ?? [])];
   s.arrivalQueue = [...(s.arrivalQueue ?? [])];
+  s.homeGrown = [...(s.homeGrown ?? [])];
   return s;
 }
 // Milestone 30: a special arrival's card stays on the board until they are hired (core keeps it `days` days).
@@ -50,9 +56,10 @@ const ARRIVAL_DAYS = 100000;
 const toCoreCourse = (c) => ({ id: c.id, name: c.name, cost: c.cost, days: c.days, requires: null, effect: c.gains ? { kind: 'stats', stats: c.gains } : { kind: 'lowest', count: c.lowest.count, min: c.lowest.min, max: c.lowest.max } });
 const cardOf = (d) => ({ personId: d.id, name: d.name, role: d.role, tier: d.tier, level: d.level, stats: { ...d.stats }, salary: d.salary, trait: namedTrait(d), traits: [...d.traits], shiftPref: d.shiftPref, art: d.art });
 
-export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = null, today = () => 0, year = () => 1, teamSize = () => sys.staff.length, trainingPlaces = () => 0, rank = () => RANK_NOW, hasFacility = () => false, score = () => null, trainingPct = () => 0, clue = () => false }) {
+export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = null, today = () => 0, year = () => 1, teamSize = () => sys.staff.length, trainingPlaces = () => 0, rank = () => RANK_NOW, hasFacility = () => false, score = () => null, trainingPct = () => 0, clue = () => false, shortHands = () => false }) {
   state.staffing = ensureStaffingState(state.staffing);
   const st = state.staffing;
+  st.traineeNext ??= firstSerial(seed);
 
   // --- recruitment ---------------------------------------------------------------------------------------------------
   const employed = () => new Set(sys.staff.map((m) => m.id));
@@ -67,6 +74,7 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
     switch (r.type) {
       case 'start':
       case 'candidate':
+      case 'trainee': // (Milestone 40e: always)
         return { ok: true, reason: null };
       case 'rank':
         return rankOk(r.rank) ? { ok: true, reason: null } : { ok: false, reason: `Needs Rank ${r.rank}` };
@@ -121,13 +129,27 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
       },
     },
   });
+  // Milestone 40e: the Trainee cards (never run out). Each new one's role by weight, from their serial (so a reload agrees).
+  const isTraineeCard = (c) => c.channel === 'trainee';
+  function addTrainee() {
+    const serial = st.traineeNext++;
+    const role = traineeRoleFor(((Math.imul(serial, 2654435761) >>> 0) % 10000) / 10000);
+    const d = traineeDef(traineeId(role, serial));
+    rs.board.push({ ...cardOf(d), id: `C${rs.nextId++}`, channel: 'trainee' });
+  }
+  function topUpTrainees() {
+    const want = shortHands() ? TRAINEE.board.short : TRAINEE.board.usual;
+    for (let n = rs.board.filter(isTraineeCard).length; n < want; n++) addTrainee();
+  }
   function refreshBoard(channelId, reason) {
     building = [];
     rs.refresh(channelId, reason);
     rs.board = rs.board.filter((c) => c.personId); // (nobody left of any tier the channel offers: fewer cards)
     building = [];
+    topUpTrainees();
   }
   if (!rs.load(st.recruit)) refreshBoard(RECRUIT.freeChannel, 'start');
+  else topUpTrainees(); // (an older save's board: its Trainees join it)
   if (st.nextFree == null) st.nextFree = today() + RECRUIT.freeRefreshDays;
   // Milestone 30: special arrivals (a staff secret found): the core board's one special card, the next one waiting in
   // st.arrivalQueue while it is taken. Each person arrives once per run (st.arrived).
@@ -298,6 +320,7 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
       st.hires.push({ id: card.personId, day: today(), channel: card.channel });
       if (st.hires.length > 40) st.hires.shift();
       if (card.channel === 'special') nextArrival();
+      topUpTrainees(); // (Milestone 40e)
       return { ok: true, reason: null, card, def: staffById(card.personId) };
     },
     // Someone left the team: on record (their Familiar Care stays in the care state), and back in the pool — never
@@ -314,6 +337,7 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
         refreshed = true;
       }
       if (refreshed) refreshBoard(RECRUIT.freeChannel, 'free');
+      else topUpTrainees(); // (Milestone 40e: a third Trainee card while the home is short of hands)
       ts.dailyTick();
       return { refreshed };
     },
@@ -340,6 +364,17 @@ export function createStaffing({ state, sys, ledger, seed = 'careworks', bus = n
     },
     trainingOf: (staffId) => ts.trainingOf(staffId),
     cancelTraining: (staffId) => ts.cancel(staffId),
+    // Milestone 40e: the Trainee cards on the board now, and the Home-grown list (badge given once, kept in the save).
+    get trainees() {
+      return rs.board.filter(isTraineeCard);
+    },
+    topUpTrainees,
+    homeGrown: (id) => st.homeGrown.includes(id),
+    noteHomeGrown(id) {
+      if (st.homeGrown.includes(id)) return false;
+      st.homeGrown.push(id);
+      return true;
+    },
     specialtiesOf,
     specialtyLimit: (staffId) => (sys.get(staffId) ? limitOf(sys.get(staffId)) : 0),
     specialtyName: (id) => SPECIALTIES[id]?.name ?? id,

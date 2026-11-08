@@ -1,0 +1,200 @@
+{
+ "game": "careworks",
+ "note": "Milestone 40e (8 Nov 2026, Claude Code): the Trainee looks. Everyday-adult series bases (no mascots, no #71 Aaron, no older-looking bases, no hats), top in the role uniform colour (Care Worker green, Nurse blue, Allied Health purple, data/roles.js), navy trousers, a natural hair colour close to the base’s own (a far-off colour leaves streaks). Nothing drawn on. Card stills: chibis/staff/careworks/_tools/trainee_still.py.",
+ "out_models": "chibis/staff/careworks",
+ "out_sheets": "games/careworks/assets/images/walkers/_source",
+ "people": [
+  {
+   "id": "trainee_cw_01",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_01_curly_yellow_jumper",
+   "hair": "2A211C",
+   "top": "6FA86A",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_cw_02",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_02_teal_hoodie",
+   "hair": "6B4226",
+   "top": "6FA86A",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_cw_03",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_05_blue_top",
+   "hair": "1E1B1A",
+   "top": "6FA86A",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_cw_04",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_06_red_shirt",
+   "hair": "1E1B1A",
+   "top": "6FA86A",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_cw_05",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_08_red_cardigan",
+   "hair": "8A3B22",
+   "top": "6FA86A",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_cw_06",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_09_pink_shorts",
+   "hair": "1E1B1A",
+   "top": "6FA86A",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_cw_07",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_13_beard_workwear",
+   "hair": "5A3A26",
+   "top": "6FA86A",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_cw_08",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_16_curly_coral_tee",
+   "hair": "1E1B1A",
+   "top": "6FA86A",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_cw_09",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_18_yellow_tee",
+   "hair": "6B4226",
+   "top": "6FA86A",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_cw_10",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_22_teal_sports_tee",
+   "hair": "3A3330",
+   "top": "6FA86A",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_rn_01",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_14_glasses_vest",
+   "hair": "1E1B1A",
+   "top": "3E7CB1",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_rn_02",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_15_denim_jacket",
+   "hair": "8A3B22",
+   "top": "3E7CB1",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_rn_03",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_17_green_hoodie",
+   "hair": "C9A35A",
+   "top": "3E7CB1",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_rn_04",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_19_sporty_red",
+   "hair": "6B4226",
+   "top": "3E7CB1",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_rn_05",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_20_athlete_blue",
+   "hair": "1E1B1A",
+   "top": "3E7CB1",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_rn_06",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_23_ponytail_purple_sports",
+   "hair": "1E1B1A",
+   "top": "3E7CB1",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_rn_07",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_27_bob_green_shirt",
+   "hair": "8C6A4A",
+   "top": "3E7CB1",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_rn_08",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_29_navy_suit",
+   "hair": "1E1B1A",
+   "top": "3E7CB1",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_ah_01",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_04_silver_green_suit",
+   "hair": "D8C08A",
+   "top": "8A6CC0",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_ah_02",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_21_platinum_sporty",
+   "hair": "D8C08A",
+   "top": "8A6CC0",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_ah_03",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_12_beach_shirt",
+   "hair": "C9A35A",
+   "top": "8A6CC0",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_ah_04",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_24_orange_tracksuit",
+   "hair": "B5582A",
+   "top": "8A6CC0",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_ah_05",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_28_plum_suit",
+   "hair": "2A211C",
+   "top": "8A6CC0",
+   "bottom": "2E3A55"
+  },
+  {
+   "id": "trainee_ah_06",
+   "flat": "games/careworks/assets/images/staff/staff_cw01.png",
+   "chibi": "chibi_30_teal_jumper",
+   "hair": "6B4226",
+   "top": "8A6CC0",
+   "bottom": "2E3A55"
+  }
+ ]
+}

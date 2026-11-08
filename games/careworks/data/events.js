@@ -87,6 +87,7 @@ export const KINDS = {
   'care:leaving': { cat: 'facility', inbox: true, make: (x) => (x.discharge ? null : { weight: 'medium', text: `${first(x.name)} heads home`, good: true }) },
   'care:movedOut': { cat: 'facility', inbox: true, make: (x) => ({ weight: 'inbox', text: `${first(x.name)}'s family has moved them to another home`, good: false }) },
   'staff:hired': { cat: 'staff', inbox: true, make: (x) => ({ weight: 'medium', text: `Welcome to the team, ${first(x.name)}`, good: true, opens: x.id ? { type: 'staff', id: x.id } : null }) },
+  'staff:homeGrown': { cat: 'staff', inbox: true, make: (x) => ({ weight: 'medium', text: `${first(x.name)} is Home-grown: started here as a Trainee and grew into one of the best`, good: true, opens: x.id ? { type: 'staff', id: x.id } : null }) }, // (Milestone 40e)
   'staff:trained': { cat: 'staff', inbox: true, make: (x) => ({ weight: 'medium', text: `${first(x.name)} finished ${x.course}${x.specialty ? ` · ${SPECIALTIES[x.specialty]?.name ?? ''}` : ''}`, good: true, opens: x.id ? { type: 'staff', id: x.id } : null }) },
   'care:birthday': { cat: 'birthday', inbox: true, make: (x) => {
     const who = (x.names ?? []).map(first).join(' and ');

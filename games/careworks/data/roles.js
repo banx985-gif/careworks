@@ -23,6 +23,8 @@ export const STAT_IDS = STATS.map((s) => s.id);
 
 // Tier caps (bible §11). signature: legendary / secret staff also bring one signature trait.
 export const TIERS = {
+  // Milestone 40e: Trainees (data/trainees.js) — below Standard, never run out; they grow through courses up to the Rare cap
+  trainee: { name: 'Trainee', statCap: 300, traitSlots: 1 },
   standard: { name: 'Standard', statCap: 220, traitSlots: 1 },
   rare: { name: 'Rare', statCap: 300, traitSlots: 1 },
   elite: { name: 'Elite', statCap: 400, traitSlots: 2 },

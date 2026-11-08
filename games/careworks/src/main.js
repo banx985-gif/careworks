@@ -109,6 +109,7 @@ import { DataValidator } from '../../../core/DataValidator.js';
 import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
 import { ROLES, STATS, TIERS } from '../data/roles.js';
 import { TRAITS, STAFF, ALL_STAFF, GODS, staffById, validateStaff, checkStaffArt } from '../data/staff.js';
+import { TRAINEE, TRAINEE_TEXT } from '../data/trainees.js'; // (Milestone 40e)
 import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL, SAFE_CAPACITY } from '../data/balance.js';
 import { SHIFT_IDS, OFF, WINGS, AGENCY } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
@@ -883,6 +884,11 @@ function openResidents() {
 }
 // Milestone 34 (UI audit): applicants who can move in now, straight under Care (two taps to their card, not three).
 // Milestone 40b: "Your team can safely care for 6" (red when the home is past it), on Care and the Admissions sheet.
+// Milestone 40e: Rosie points at the Trainees on Recruit when the team is short of care, medicine-round or night hands and has room to hire.
+function traineeHelps(sc) {
+  const w = open?.world;
+  return !!w && ['care', 'meds', 'night'].includes(sc.need) && w.team.length < w.staffing.cap && w.staffing.trainees.length > 0;
+}
 function safeCapacityLine(w) {
   const sc = w.safeCapacity();
   return { text: `${sc.line} · ${sc.here} here${sc.stretched ? ` · ${SAFE_CAPACITY.stretched}` : ''}`, color: sc.stretched ? COL.bad : COL.actionDark };
@@ -3768,7 +3774,7 @@ function openRecruit() {
     const sf = w.staffing;
     const daysToFree = Math.max(0, sf.nextFreeDay - w.clock.totalDays);
     const full = w.team.length >= sf.cap;
-    const cards = sf.board.map((c) => ({ id: `cand:${c.id}`, label: `${c.name} · ${TIERS[c.tier].name}`, sub: `${c.channel === 'special' ? 'Special arrival' : ROLES[c.role].name} · Lv ${c.level} · ${c.salary} a month · ${TRAITS[c.trait]?.name ?? ''}`, icon: c.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[c.role].badge, tag: TIER_TAG[c.tier] ?? null, accent: TIER_ACCENT[c.tier] ?? COL.progress, onTap: () => openCandidate(c.id) }));
+    const cards = sf.board.map((c) => ({ id: `cand:${c.id}`, label: `${c.name} · ${TIERS[c.tier].name}`, sub: `${c.channel === 'special' ? 'Special arrival' : ROLES[c.role].name} · Lv ${c.level} · ${c.salary} a month${TRAITS[c.trait]?.name ? ` · ${TRAITS[c.trait].name}` : ''}${c.channel === 'trainee' ? ' · grows with courses' : ''}`, icon: c.art, iconCrop: PORTRAIT_CROP, iconBadge: ROLES[c.role].badge, tag: TIER_TAG[c.tier] ?? null, accent: TIER_ACCENT[c.tier] ?? COL.progress, onTap: () => openCandidate(c.id) }));
     const chans = sf.channels().map(({ channel: c, ok, reason }) => ({ id: `chan:${c.id}`, label: c.id === 'special' ? c.name : `${c.name} · ${credits(c.cost)}`, sub: ok ? c.text : `${reason} · ${c.text}`, disabled: !ok || c.id === 'special', accent: COL.progress, onTap: () => {
       const r = sf.refresh(c.id);
       message = r.ok ? { text: `A new board from ${c.name}`, good: true } : { text: r.reason, good: false };
@@ -3784,7 +3790,7 @@ function openRecruit() {
       accent: accentNow(),
       sections: [
         { lines },
-        cards.length ? { title: 'Candidates', columns: 1, buttons: cards } : { title: 'Candidates', lines: [{ text: 'Nobody on the board: try a new board.', color: COL.textMuted }] },
+        cards.length ? { title: 'Candidates', lines: [{ text: TRAINEE_TEXT.recruitLine, color: COL.textMuted }], columns: 1, buttons: cards } : { title: 'Candidates', lines: [{ text: 'Nobody on the board: try a new board.', color: COL.textMuted }] },
         { title: 'A new board now', columns: 1, buttons: [...chans, ...[adButton('recruitRefresh'), tokenButton('recruitBoard', 'A new board of Local Applicants')].filter(Boolean)] }, // (Milestone 36: optional, convenience only)
         ...(debug.enabled ? [{ title: 'Debug', columns: 1, buttons: [
           { id: 'chan:debug', label: `Open every channel and training without a room (debug): ${sf.debug ? 'On' : 'Off'}`, sub: 'Also counts as the Rank the Rare and Elite rules ask for', accent: sf.debug ? COL.good : COL.progress, onTap: () => sf.setDebug(!sf.debug) },
@@ -3800,8 +3806,8 @@ function openRecruit() {
 }
 // Milestone 12: the tier's tag and accent on a candidate, and every trait as lines (a pending one says it comes later;
 // a signature is marked).
-const TIER_TAG = { rare: 'RARE', elite: 'ELITE', legendary: 'LEGENDARY', secret: 'PRESTIGE', divine: 'DIVINE' }; // (Milestone 30b: the Works Gods)
-const TIER_ACCENT = { rare: COL.gold, elite: COL.action, legendary: COL.gold, secret: COL.gold, divine: COL.gold };
+const TIER_TAG = { trainee: 'TRAINEE', rare: 'RARE', elite: 'ELITE', legendary: 'LEGENDARY', secret: 'PRESTIGE', divine: 'DIVINE' }; // (Milestone 30b: the Works Gods)
+const TIER_ACCENT = { trainee: COL.good, rare: COL.gold, elite: COL.action, legendary: COL.gold, secret: COL.gold, divine: COL.gold };
 // Milestone 30b: a Works God's portrait with a small gold glow behind it — a canvas made once from the loaded file, under
 // its own key (made again after a lost canvas: AssetManager drops made images). The file itself is never changed.
 function godArt(key) {
@@ -4212,6 +4218,8 @@ function staffMenu(w, p, accent) {
   // (Milestone 40d: their zone — the rooms they look after first on this shift)
   const zone = w.zoneOf?.(p.id);
   if (zone?.length) shiftLines.push(`Zone: room${zone.length === 1 ? '' : 's'} ${zone.map((r) => w.roomNumber(r)).sort((x, y) => x - y).join(', ')} first (they help elsewhere when it is quiet)`);
+  // (Milestone 40e: a Trainee's note, and the Home-grown badge)
+  if (m.tier === 'trainee') shiftLines.push(w.staffing.homeGrown(p.id) ? { text: `${TRAINEE.badge} · ${TRAINEE.badgeLine}`, color: COL.good } : { text: TRAINEE.cardNote, color: COL.textMuted });
   const status = [m.status.tired && 'Tired', m.status.stressed && 'Stressed'].filter(Boolean);
   const fam = w.topResidentsFor(p.id, 3); // (Milestone 12: the three residents here who know them best)
   const sections = [
@@ -4693,7 +4701,7 @@ function hintRules() {
     { id: 'afternoon', text: NEXT_HINTS.afternoon, when: () => onShift('afternoon') === 0, open: () => openRoster() },
     { id: 'night', text: NEXT_HINTS.night, when: () => onShift('night') === 0, open: () => openRoster() },
     { id: 'short', text: NEXT_HINTS.short, when: () => W().coverage.warnings().length > 0, open: () => openRoster() },
-    { id: 'stretched', text: () => { const sc = W().safeCapacity(); return NEXT_HINTS.stretched(sc.n, SAFE_CAPACITY.need[sc.need], SHIFTS[sc.weakest]?.name ?? sc.weakest); }, when: () => W().safeCapacity().stretched, open: () => openRoster() }, // (Milestone 40b)
+    { id: 'stretched', text: () => { const sc = W().safeCapacity(); return traineeHelps(sc) ? NEXT_HINTS.stretchedTrainees(sc.n, SAFE_CAPACITY.need[sc.need]) : NEXT_HINTS.stretched(sc.n, SAFE_CAPACITY.need[sc.need], SHIFTS[sc.weakest]?.name ?? sc.weakest); }, when: () => W().safeCapacity().stretched, open: () => (traineeHelps(W().safeCapacity()) ? openRecruit() : openRoster()) }, // (Milestone 40b; Milestone 40e: Trainees on Recruit when one would help)
     { id: 'dining', text: NEXT_HINTS.dining, when: () => !placedOf('F03'), open: () => openBuildList() },
     { id: 'kitchen', text: NEXT_HINTS.kitchen, when: () => !placedOf('F04') && !placedOf('F16'), open: () => openBuildList() },
     { id: 'plan', text: () => NEXT_HINTS.plan(first(W().residentById(stale()[0]?.resident)?.name ?? 'A resident')), when: () => stale().length > 0, open: () => openHomeSheet(stale()[0].resident) },

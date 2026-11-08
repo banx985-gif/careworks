@@ -203,6 +203,7 @@ export function createCareAchievements({ env, state, account = null, bus = null,
         induct(snapshot(q.id, cc), inHall.why);
         dirty = true; // (their growing numbers go with the next flush)
       } else if (!inHall && HALL.autoTiers.includes(q.tier)) changed = induct(snapshot(q.id, cc), 'tier') || changed;
+      else if (!inHall && env.homeGrown?.(q.id)) changed = induct(snapshot(q.id, cc), 'homeGrown') || changed; // (Milestone 40e: a Home-grown Trainee)
       else if (!inHall && env.daysEmployed(q.id) >= HALL.servedDays) changed = induct(snapshot(q.id, cc), 'served') || changed;
     }
     return changed;
