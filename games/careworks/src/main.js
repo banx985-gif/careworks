@@ -2987,7 +2987,7 @@ function openHallOfFame() {
     const cands = a.candidates();
     const frame = a.frame();
     const yearsWord = (y) => (y >= 1 ? `${y} year${y === 1 ? '' : 's'}` : 'under a year');
-    const sections = [{ lines: [{ text: `A keepsake across every home: legends join when they first arrive, anyone with five years’ service joins then, and anyone who leaves can be added here.${frame ? ` Portraits wear the ${frame}.` : ''}`, color: COL.textMuted }] }];
+    const sections = [{ lines: [{ text: `A keepsake across every home: legends join when they first arrive, anyone with five years’ service or a Home-grown Trainee joins then, and anyone who leaves can be added here.${frame ? ` Portraits wear the ${frame}.` : ''}`, color: COL.textMuted }] }];
     sections.push(hall.length
       ? { title: `In the Hall of Fame (${hall.length})`, columns: 1, buttons: hall.map((e) => ({ id: `hof:${e.id}`, label: e.name, sub: `${HALL.tag[e.why] ?? e.why} · ${yearsWord(e.years)}${e.home && e.home !== open.data.facility.name ? ` at ${e.home}` : ''} · ${e.best}`, icon: e.art, iconCrop: PORTRAIT_CROP, accent: COL.progress, onTap: () => {} })) }
       : { title: 'In the Hall of Fame', lines: [{ text: 'Nobody yet.', color: COL.textMuted }] });
@@ -3212,7 +3212,7 @@ function payButton(w) {
   const next = (w.payLevel + 1) % PAY_RISE.levels.length;
   const base = w.team.reduce((t, q) => t + q.model.salary, 0);
   const extra = Math.round((base * PAY_RISE.levels[next].pct) / 100);
-  return { id: 'business:pay', label: `Staff pay: ${lv.name}`, sub: `${PAY_RISE.line} Tap for ${PAY_RISE.levels[next].name.toLowerCase()}${extra ? ` (+${credits(extra)} a month)` : ''}`, icon: 'care_ui_02', accent: w.payLevel ? COL.good : COL.progress, onTap: () => {
+  return { id: 'business:pay', label: `Staff pay: ${lv.name}`, sub: `${PAY_RISE.line} · next: ${extra ? `+${PAY_RISE.levels[next].pct}% (+${credits(extra)} a month)` : 'Standard pay'}`, icon: 'care_ui_02', accent: w.payLevel ? COL.good : COL.progress, onTap: () => {
     w.setPayLevel(next);
     autosave.request('pay');
   } };

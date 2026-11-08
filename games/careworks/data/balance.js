@@ -179,9 +179,9 @@ export const INDEPENDENCE = { types: ['wake', 'personal', 'settle', 'meal'], fro
 // points on the Morale it drifts back to), which lifts Staff Wellbeing. A choice, never needed; it can be lowered again any time.
 export const PAY_RISE = {
   levels: [
-    { pct: 0, settle: 0, name: 'Standard pay' },
-    { pct: 10, settle: 6, name: 'A pay rise (+10%)' },
-    { pct: 20, settle: 12, name: 'A generous pay rise (+20%)' },
+    { pct: 0, settle: 0, name: 'Standard' },
+    { pct: 10, settle: 6, name: '+10% pay rise' },
+    { pct: 20, settle: 12, name: '+20% pay rise' },
   ],
-  line: 'Higher wages for the whole team: their Morale settles higher, which lifts Staff Wellbeing. Change it any time.',
+  line: 'Happier staff, better Staff Wellbeing', // (Milestone 40e Part C: short — the button's line squeezed at 9:19.5)
 };
