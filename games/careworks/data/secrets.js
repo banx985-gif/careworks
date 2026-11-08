@@ -345,7 +345,8 @@ function founderSecret() {
     triggerEvents: ['secrets:month'],
     requiresAll: [
       // (Milestone 40d Part B: three of the five, was all five — the secret-hunter soak met one Legendary in four runs)
-      { fact: 'account.legendsHired', op: 'gte', value: 3, kind: 'count', category: 'staff', label: 'Three of the other Legendary staff each hired at least once (every run)' },
+      // (Milestone 40e Part B: two of the five, was three — the hunter chain met one Legendary (Joy) in a first home and three New Game+ homes)
+      { fact: 'account.legendsHired', op: 'gte', value: 2, kind: 'count', category: 'staff', label: 'Two of the other Legendary staff each hired at least once (every run)' },
       { fact: 'account.hallVeterans', op: 'gte', value: 1, kind: 'fixed', category: 'staff', label: 'A staff member in the Hall of Fame with 5+ years served' },
       { fact: 'run.rank', op: 'gte', value: 5, kind: 'fixed', category: 'recognition', label: 'Rank S' },
     ],
@@ -353,7 +354,7 @@ function founderSecret() {
     clueGate: [RANK_A_GATE],
     clueStages: stages([
       'Word is the people who made this whole world sometimes visit a truly great home…',
-      'They say it takes a home that most of the Legendary carers have worked in, and a Hall of Fame with real long service.', // (Milestone 40d: three of the five)
+      'They say it takes a home that a couple of the Legendary carers have worked in, and a Hall of Fame with real long service.', // (Milestone 40e: two of the five)
       'Only a home right at the top of the ladder, it seems.',
       'Nearly there: someone from the studio is asking about your home.',
     ]),

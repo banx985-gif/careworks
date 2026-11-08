@@ -110,7 +110,7 @@ import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
 import { ROLES, STATS, TIERS } from '../data/roles.js';
 import { TRAITS, STAFF, ALL_STAFF, GODS, staffById, validateStaff, checkStaffArt } from '../data/staff.js';
 import { TRAINEE, TRAINEE_TEXT } from '../data/trainees.js'; // (Milestone 40e)
-import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL, SAFE_CAPACITY } from '../data/balance.js';
+import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL, SAFE_CAPACITY, PAY_RISE } from '../data/balance.js';
 import { SHIFT_IDS, OFF, WINGS, AGENCY } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
 import { STAGES, LOGICAL_CAP, HOME } from '../data/home.js';
@@ -3196,6 +3196,7 @@ function openBusiness() {
           buttons: [
             { id: 'ledger', label: 'Ledger', sub: `Balance ${credits(b)} Credits · this month and last, line by line`, icon: 'care_ui_05', accent: COL.action, onTap: () => openLedger() },
             ...(open?.world ? [partnersButton(open.world), grantsButton(open.world)] : []), // (Milestone 23)
+            ...(open?.world ? [payButton(open.world)] : []), // (Milestone 40e: a pay rise)
             ...(open?.world ? [{ id: 'business:supplies', label: 'Emergency supplies', sub: `Stock ${Math.round(open.world.incidents.supplies.stock)} / 100 · ${open.world.incidents.supplies.plan.name} · Preparedness ${open.world.incidents.prep().score}`, icon: EMERGENCY_ICON, accent: COL.action, onTap: () => openSupplies() }] : []), // (Milestone 25)
             { id: 'business:store', label: STORE_TEXT.title, sub: STORE_TEXT.subtitle, icon: TOP_ICONS.careTokens, accent: COL.progress, onTap: () => openStore() }, // (Milestone 36)
             { id: 'mainMenu', label: 'Save and Main Menu', accent: COL.progress, onTap: () => leaveHome() },
@@ -3204,6 +3205,17 @@ function openBusiness() {
       ],
     };
   });
+}
+// Milestone 40e: Staff pay — one tap moves to the next level (Standard → +10% → +20% → Standard); what it costs a month now.
+function payButton(w) {
+  const lv = PAY_RISE.levels[w.payLevel];
+  const next = (w.payLevel + 1) % PAY_RISE.levels.length;
+  const base = w.team.reduce((t, q) => t + q.model.salary, 0);
+  const extra = Math.round((base * PAY_RISE.levels[next].pct) / 100);
+  return { id: 'business:pay', label: `Staff pay: ${lv.name}`, sub: `${PAY_RISE.line} Tap for ${PAY_RISE.levels[next].name.toLowerCase()}${extra ? ` (+${credits(extra)} a month)` : ''}`, icon: 'care_ui_02', accent: w.payLevel ? COL.good : COL.progress, onTap: () => {
+    w.setPayLevel(next);
+    autosave.request('pay');
+  } };
 }
 // --- Milestone 23: community partners and grants ----------------------------------------------------------------------
 // Partners support the home; they never buy access to residents. Every obligation is a number the game counts, and only

@@ -35,7 +35,7 @@ const stepWord = (step) => (step.activity ? step.name : step.name.toLowerCase())
 // Milestone 11: trainingSpot(p) → the spot ref a trainee sits at (the Training Room, or their rest spot without one);
 // trainingLabel(id) → the course they are on.
 // (Milestone 21: energyMult() — × on the Energy used on shift, e.g. the home's Shift Planning research; 1 by default)
-export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow, bandNow, bus = null, trainingSpot = (p) => p.restSpot, trainingLabel = () => 'a course', energyMult = () => 1, restBonus = () => B.energy.restSpotBonus, holdAfterTask = () => 0 }) {
+export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow, bandNow, bus = null, trainingSpot = (p) => p.restSpot, trainingLabel = () => 'a course', energyMult = () => 1, restBonus = () => B.energy.restSpotBonus, holdAfterTask = () => 0, moraleSettle = () => 0 }) {
   const makePerson = (model, i) => {
     const p = {
       kind: 'staff',
@@ -121,7 +121,7 @@ export function createCrew({ grid, state, sys, perks, roster, spotTile, hourNow,
     else m.energy = clamp(m.energy + B.energy.restPerHour * hours * (p.mode === 'resting' ? restBonus() : 1));
     if (m.energy < B.morale.lowEnergyBelow) m.morale = clamp(m.morale + B.morale.lowEnergyPerHour * hours);
     else {
-      const gap = B.morale.settleTo - m.morale;
+      const gap = Math.min(100, B.morale.settleTo + (p.agency ? 0 : moraleSettle())) - m.morale; // (Milestone 40e: a pay rise)
       const step = Math.min(Math.abs(gap), B.morale.settlePerHour * hours);
       m.morale = clamp(m.morale + Math.sign(gap) * step);
     }

@@ -129,7 +129,9 @@ export const SAFE_CAPACITY = {
   // (Milestone 40d: the morning round opens from 08:00: 7, was 6)
   // (Part B: back to 6 in the morning with its own stage factor — the round's walk to every resident and the cart grows with
   // the home; three morning nurses missed ~2 stops a day at 17 residents in Stage 2)
-  meds: { hands: { RN: 1 }, perHand: { morning: 6, afternoon: 8 }, stageFactor: [1, 0.8, 0.72, 0.66, 0.6] },
+  // (Milestone 40e: Stage 3+ — five morning nurses missed ~4 stops of the 09:30 round a day at 20 residents in Stage 3, which
+  // 0.72 called safe for 21: 0.6 · 0.55 · 0.5, were 0.72 · 0.66 · 0.6)
+  meds: { hands: { RN: 1 }, perHand: { morning: 6, afternoon: 8 }, stageFactor: [1, 0.8, 0.6, 0.55, 0.5] },
   night: { base: 4, perHand: 12 },
   minimum: 2,
   // (Part D) a bigger home is a longer walk between rooms, the dining room and the medicine trolley: each pair of hands keeps
@@ -171,3 +173,15 @@ export const MEAL_SERVICE = { setOff: true, places: ['dining', 'lounge'], spareH
 // care is the same (the same need eased), their plan is never changed, and nothing is forced: it is good rehab, memory
 // care and independence options paying back in staff time.
 export const INDEPENDENCE = { types: ['wake', 'personal', 'settle', 'meal'], from: 45, to: 85, maxPct: 40 };
+
+// Milestone 40e (Big job 3 Part B: money piled up — 1–1.6 million spare by Year 10 in every soak): a late-game use that fits care.
+// A pay rise for the whole team (Business → Staff pay): their wages go up by pct and their Morale settles higher (settle:
+// points on the Morale it drifts back to), which lifts Staff Wellbeing. A choice, never needed; it can be lowered again any time.
+export const PAY_RISE = {
+  levels: [
+    { pct: 0, settle: 0, name: 'Standard pay' },
+    { pct: 10, settle: 6, name: 'A pay rise (+10%)' },
+    { pct: 20, settle: 12, name: 'A generous pay rise (+20%)' },
+  ],
+  line: 'Higher wages for the whole team: their Morale settles higher, which lifts Staff Wellbeing. Change it any time.',
+};

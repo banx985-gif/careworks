@@ -324,8 +324,8 @@ export function bellState(care, residentId) {
 }
 export const openBell = (care, residentId) => care.tasks.find((t) => t.resident === residentId && t.type === 'bell' && isOpen(t)) ?? null;
 // He rings when a need reaches the line (the highest one), unless a bell is already ringing or he rang a moment ago.
-export function maybeRing(care, st, now, day) {
-  if (openBell(care, st.id)) return null;
+export function maybeRing(care, st, now, day, knownQuiet = false) {
+  if (!knownQuiet && openBell(care, st.id)) return null; // (Milestone 40e: knownQuiet — the caller already knows no bell of theirs is open)
   const b = bellState(care, st.id);
   if (now < b.cooldownUntil) return null;
   let need = null;

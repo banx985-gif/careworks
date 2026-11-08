@@ -125,7 +125,7 @@ import { DAY, ROUTINE, WAKE, ALL_STEPS, TIMER_SCALE } from '../../data/routine.j
 import { createActivities, feelingOf, outcomeMult, birthdayOf } from './activities.js';
 import { activityById, TIMETABLE, OUTCOME, BIRTHDAY, SCHEDULABLE, COMMUNITY_EVENTS } from '../../data/activities.js';
 import { BELL, FAMILIARITY, BACKUP_HELP } from '../../data/tasks.js';
-import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK, USE_GROWTH, growthOf, SAFE_CAPACITY, ZONES, MEAL_SERVICE, INDEPENDENCE } from '../../data/balance.js';
+import { ECONOMY_START, STAFF_BALANCE, ON_CALL, WALK, USE_GROWTH, growthOf, SAFE_CAPACITY, ZONES, MEAL_SERVICE, INDEPENDENCE, PAY_RISE } from '../../data/balance.js';
 import { safeCapacityOf, skillRate } from './safeCapacity.js'; // (Milestone 40b: how many the team can safely care for; skilled staff work faster)
 import { splitZones } from './zones.js'; // (Milestone 40d)
 import { activeCombos, comboPctOf } from './combos.js'; // (overnight Stage 6: placement combos)
@@ -315,7 +315,9 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   const restBonusNow = () => scaleBonus(STAFF_BALANCE.energy.restSpotBonus, lvOf('F08') || 1);
   // Milestone 40d: a Rare person hired before the new wage curve is paid today's Rare wage (data/staff.js)
   for (const m of sys.staff) if (m.tier === 'rare' && staffById(m.id)?.tier === 'rare' && m.salary > staffById(m.id).salary) m.salary = staffById(m.id).salary;
-  const crew = createCrew({ restBonus: () => restBonusNow(), grid, state: staffState, sys, perks, roster, spotTile: spot, hourNow, bandNow: () => bandAt(hourNow()), bus, trainingSpot, trainingLabel: (id) => staffing?.trainingOf(id) ? staffing.training.course(staffing.trainingOf(id).courseId)?.name ?? 'a course' : 'a course', energyMult: () => 1 + rb('energyPct') / 100, holdAfterTask: (p) => (zoneOf(p) ? ZONES.holdHours : 0) }); // (Milestone 40d: they wait near their zone) // (Milestone 21: Shift Planning)
+  // Milestone 40e: the team's pay level (data/balance.js PAY_RISE), kept in the staff state
+  const payLevel = () => PAY_RISE.levels[staffState.payLevel ?? 0] ?? PAY_RISE.levels[0];
+  const crew = createCrew({ restBonus: () => restBonusNow(), grid, state: staffState, sys, perks, roster, spotTile: spot, hourNow, bandNow: () => bandAt(hourNow()), bus, trainingSpot, trainingLabel: (id) => staffing?.trainingOf(id) ? staffing.training.course(staffing.trainingOf(id).courseId)?.name ?? 'a course' : 'a course', energyMult: () => 1 + rb('energyPct') / 100, holdAfterTask: (p) => (zoneOf(p) ? ZONES.holdHours : 0), moraleSettle: () => payLevel().settle }); // (Milestone 40e: a pay rise) // (Milestone 40d: they wait near their zone) // (Milestone 21: Shift Planning)
   let staffing = null; // (Milestone 11: made with the ledger, below)
   let research = null; // (Milestone 21: made with the ledger, below)
   let economy = null; // (Milestone 22: made with the ledger, below)
@@ -627,7 +629,19 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       acts.planSession(day, slot, sessionInfo(day, slot), inSession().filter((p) => stageOf(p) !== 'final'), friendIds); // (Milestone 27: the final days are quiet ones)
     }
   }
-  const routineTask = (p, stepId, day) => care.tasks.find((t) => t.source === 'routine' && t.stepId === stepId && t.day === day && t.resident === p.id) ?? null;
+  // (Milestone 40e, speed: the same first match as a find over care.tasks, from an index made again whenever the list changes —
+  // a new array, a new length or a new task id — instead of a scan per resident per frame)
+  let rtIndex = null;
+  let rtKey = { arr: null, len: -1, next: -1 };
+  const routineTask = (p, stepId, day) => {
+    const arr = care.tasks;
+    if (!rtIndex || rtKey.arr !== arr || rtKey.len !== arr.length || rtKey.next !== care.nextId) {
+      rtIndex = new Map();
+      for (const t of arr) if (t.source === 'routine') { const k = `${t.resident}|${t.stepId}|${t.day}`; if (!rtIndex.has(k)) rtIndex.set(k, t); }
+      rtKey = { arr, len: arr.length, next: care.nextId };
+    }
+    return rtIndex.get(`${p.id}|${stepId}|${day}`) ?? null;
+  };
   // Where a resident is (or is going): their current step's place, or their room.
   const residentPlace = (p) => {
     const st = p.state;
@@ -2034,9 +2048,10 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (last) planExtraChecks(inst, at); // (Milestone 18: Increase observation)
       for (const p of part) logRefused(p, roundLead(inst, secondHelpers(p, generateBand({ care, st: p.state, band: inst.band, day: inst.day, now: at, rolesOnShift, stepOver: stepOverFor(p), steps: stepsFor(p, inst.day) }))));
     }
+    const ringing = new Set(care.tasks.filter((t) => t.type === 'bell' && isOpen(t)).map((t) => t.resident)); // (Milestone 40e, speed: maybeRing's own first check, once a frame)
     for (const p of residents) {
-      if (!inCare(p)) continue;
-      const bell = maybeRing(care, p.state, at, clock.totalDays);
+      if (!inCare(p) || ringing.has(p.id)) continue;
+      const bell = maybeRing(care, p.state, at, clock.totalDays, true);
       if (bell) {
         log(p, `Rang the call bell (${needName(bell.need)})`);
         bus?.emit('care:bell', { resident: p.id, need: bell.need, status: 'ring' });
@@ -4018,7 +4033,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     const upkeep = layout.pieces.map((pc) => ({ name: pc.name, amount: Math.round((layout.costOf(pc.defId) * UPKEEP.pctOfCost) / 100) })).filter((x) => x.amount > 0);
     return { upkeep, utilities: Math.round(tilesCache.n * UTILITIES.perTile), tiles: tilesCache.n };
   }
-  const payroll = () => team().map((q) => ({ id: q.id, name: q.name, salary: q.model.salary })); // agency is paid per shift
+  const payroll = () => team().map((q) => ({ id: q.id, name: q.name, salary: Math.round(q.model.salary * (1 + payLevel().pct / 100)) })); // agency is paid per shift (Milestone 40e: × the pay rise)
   // --- care-plan rules (Milestone 8) -------------------------------------------------------------------------------
   const facilityIds = () => new Set(placed.filter((x) => x.kind !== 'room').map((x) => x.defId)); // (Milestone 10: by facility, F01 …)
   // What an option's eligibility rule reads: the resident, the team and roster, the rooms / facilities / programs.
@@ -5207,6 +5222,16 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return roster.move(id, shiftId) ? { ok: true, reason: null } : { ok: false, reason: 'No such shift.' };
     },
     setFloat: (id, on) => ({ ok: roster.setFloat(id, on), reason: null }),
+    // Milestone 40e: the pay rise — 0 Standard, 1 +10%, 2 +20% (data/balance.js PAY_RISE)
+    get payLevel() {
+      return staffState.payLevel ?? 0;
+    },
+    setPayLevel(n) {
+      if (!PAY_RISE.levels[n]) return { ok: false, reason: 'No such pay level' };
+      staffState.payLevel = n;
+      bus?.emit('staff:pay', { level: n });
+      return { ok: true, reason: null };
+    },
     setOnCall: (on, shiftId = 'night') => roster.setOnCall(on, shiftId),
     // The task AI's second rule: their key worker, or staff on the resident's wing (not floats, not agency).
     assignedTo: (staffId, residentId) => !!byResident(residentId) && assignedTo(staffId, byResident(residentId)),
