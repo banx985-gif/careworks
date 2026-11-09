@@ -9,6 +9,7 @@ import { RESIDENTS } from './residents.js';
 import { FOUNDERS } from './setup.js';
 import { STAFF, GODS, AARON } from './staff.js';
 import { TRAINEE_ARTS } from './trainees.js';
+import { COMMUNITY_ARTS } from './communityResidents.js';
 import { ROLES } from './roles.js';
 import { ACTIVITIES, BIRTHDAY } from './activities.js';
 import { TROLLEYS } from './dining.js';
@@ -38,6 +39,7 @@ export const ASSETS = {
   ...Object.fromEntries(BUILDABLE_FACILITIES.map((f) => art('facilities', f.art))),
   ...Object.fromEntries(STAGES.filter((s) => s.art).map((s) => art('events', s.art))),
   ...Object.fromEntries(RESIDENTS.map((r) => art('residents', r.art))),
+  ...Object.fromEntries(COMMUNITY_ARTS.map((a) => art('residents', a))), // (Milestone 40f: the community residents' card stills)
   ...Object.fromEntries(FOUNDERS.map((f) => art('staff', f.art))),
   // Milestone 3: every staff portrait on the roster data and the five role badges (staff cards).
   ...Object.fromEntries([...STAFF, ...GODS, AARON].map((s) => art('staff', s.art))),

@@ -21,6 +21,7 @@ import { FACILITIES } from './facilities.js';
 import { ROOMS } from './rooms.js';
 import { ROLE_IDS } from './roles.js';
 import { ADMISSION } from './admissions.js';
+import { COMMUNITY, FIRST_SHE, FIRST_HE, LAST as COMMUNITY_LAST, JOBS, PLACES, HOBBIES, FAMILY, WHEN, LOVES, hashOf, streamOf, isCommunityId } from './communityResidents.js';
 
 export const NEEDS = [
   { id: 'personal', name: 'Personal Support' },
@@ -119,10 +120,12 @@ const ADMIT_RULES = {
   'High Care': { room: 'RM04', needs: { room: 'RM04' } },
   'Clinical Support': { room: 'RM01', needs: { role: 'RN' } },
 };
-const applicant = (n, name, age, support, personality, interest, visitors, stay, urgency, outcomes) => ({
-  id: `RES${String(n).padStart(2, '0')}`,
+const applicant = (n, ...rest) => ({ ...applicantRow(`RES${String(n).padStart(2, '0')}`, ...rest), art: `resident_res${String(n).padStart(2, '0')}` });
+// (Milestone 40f: the row itself, shared with the community residents)
+function applicantRow(id, name, age, support, personality, interest, visitors, stay, urgency, outcomes) {
+  return {
+  id,
   name, age, support, personality, interest, visitors, stay,
-  art: `resident_res${String(n).padStart(2, '0')}`,
   needs: Object.fromEntries(NEED_IDS.map((id, i) => [id, BY_SUPPORT[support].needs[i]])),
   outcomes: { comfort: outcomes[0], independence: outcomes[1], mood: outcomes[2], connection: outcomes[3], safety: outcomes[4] },
   prefs: { wake: 'accept', breakfast: 'accept', rest: 'accept', cards: 'accept', dinner: 'accept', settle: 'accept', groupActivity: 'accept', ...BY_PERSONALITY[personality] },
@@ -131,7 +134,8 @@ const applicant = (n, name, age, support, personality, interest, visitors, stay,
   room: ADMIT_RULES[support]?.room ?? 'RM01',
   ...(ADMIT_RULES[support]?.needs ? { requires: { ...ADMIT_RULES[support].needs } } : {}),
   urgency,
-});
+  };
+}
 const ADMISSION_ROWS = [
   applicant(2, 'Betty Finch', 75, 'Mobility Support', 'Chatty', 'Football', 'Occasional family', 'Long Term', 'Medium', [66, 58, 72, 64, 70]),
   applicant(3, 'Colin Webb', 82, 'Memory Support', 'Curious', 'Fishing', 'Community visitor', 'Long Term', 'High', [64, 60, 66, 58, 62]),
@@ -227,7 +231,48 @@ export const RESIDENTS = [
   story: LIFE_STORIES[r.id]?.line ?? '',
   ...(STAY_DAYS[r.id] ? { stayDays: STAY_DAYS[r.id] } : {}),
 }));
-export const residentById = (id) => RESIDENTS.find((r) => r.id === id) ?? null;
+const BY_ID = new Map(RESIDENTS.map((r) => [r.id, r]));
+// (Milestone 40f: a community resident's id gives the whole person too)
+export const residentById = (id) => BY_ID.get(id) ?? communityDef(id);
+
+// Milestone 40f (BIGJOB4 Part A): a community resident from their id alone (data/communityResidents.js) — the same row shape
+// as a named resident's, from the same care profiles; community: true, and their story in two short lines.
+const communityCache = new Map();
+export function communityDef(id) {
+  if (communityCache.has(id)) return communityCache.get(id);
+  if (!isCommunityId(id)) return null;
+  const serial = Number(COMMUNITY.idPattern.exec(id)[1]);
+  const rnd = streamOf(hashOf(`community-resident:${id}`));
+  const pick = (list) => list[Math.floor(rnd() * list.length)];
+  const look = (serial % COMMUNITY.looks) + 1;
+  const pronoun = COMMUNITY.lookPronoun(look);
+  const firsts = pronoun === 'she' ? FIRST_SHE : FIRST_HE;
+  const name = `${firsts[serial % firsts.length]} ${COMMUNITY_LAST[serial % COMMUNITY_LAST.length]}`;
+  const total = Object.values(COMMUNITY.supportWeights).reduce((a, b) => a + b, 0);
+  let roll = rnd() * total;
+  let support = 'Light Support';
+  for (const [k, wt] of Object.entries(COMMUNITY.supportWeights)) if ((roll -= wt) < 0) { support = k; break; }
+  const stay = support === 'Rehabilitation' ? 'Rehab/Short Stay' : rnd() < COMMUNITY.respiteShare ? 'Respite' : 'Long Term';
+  const personality = pick(COMMUNITY.personalities);
+  const hobby = pick(HOBBIES);
+  const second = pick(HOBBIES.filter((x) => x.tag !== hobby.tag));
+  const fam = pick(FAMILY);
+  const their = pronoun === 'she' ? 'Her' : 'His';
+  const urgency = ['Memory Support', 'High Care', 'Clinical Support'].includes(support) ? (rnd() < 0.5 ? 'High' : 'Medium') : rnd() < 0.6 ? 'Low' : 'Medium';
+  const out = () => 58 + Math.floor(rnd() * 18);
+  const row = applicantRow(id, name, COMMUNITY.age.min + Math.floor(rnd() * COMMUNITY.age.span), support, personality, hobby.tag, fam.visitors, stay, urgency, [out(), out(), out(), out(), out()]);
+  const def = {
+    ...row,
+    art: `community_res_${String(look).padStart(2, '0')}`,
+    pronoun,
+    tags: [hobby.tag, second.tag],
+    story: `${pick(JOBS)} from ${pick(PLACES)} who ${hobby.text}.`,
+    storyMore: `Loves ${pick(LOVES)}. ${their} ${fam.who} visits ${pick(WHEN)}.`,
+    community: true,
+  };
+  communityCache.set(id, def);
+  return def;
+}
 
 // Check the list (debug builds at start-up, and the Node tests). v = a core/DataValidator.
 export function validateResidents(v, list = RESIDENTS, stepIds = []) {

@@ -290,6 +290,7 @@ export const SAVE_MIGRATIONS = {
   34: (record) => ({ ...record, data: record.data?.guide ? record.data : { ...record.data, guide: OLD_HOME_GUIDE() } }), // (Milestone 34: a home saved before the first-week guide is already under way — its guide starts off; Settings can switch it on)
   35: (record) => record, // (Milestone 36: no store block = nothing bought or granted in this home, no token accents, no ad counts)
   36: (record) => record, // (Milestone 40e: no Trainee serial = the home's first, picked by its seed; nobody Home-grown yet. The next Local Applicants board adds the Trainee cards)
+  37: (record) => record, // (Milestone 40f: no community serial = the home's first, picked by its seed; community residents arrive once the named applicants thin out)
 };
 
 // Milestone 34: an older home's first-week guide — off, its welcome card never shown (src/systems/guide.js).

@@ -55,7 +55,8 @@ const GARDEN_VETO = ['SO05', 'EN06']; // (data/programs.js PRG01 veto: refusing 
 const COMMUNITY_COUNTERS = ['communityActivity', 'outing'];
 const NIGHT_BELL = { from: 22, to: 6, targetMin: 10 }; // a Night bell (22:00–06:00) answered within targetMin minutes
 const DAYS_PER_YEAR = 336;
-const hasTag = (p, list) => (p.state.tags?.length ? p.state.tags : p.def.tags ?? []).some((t) => list.includes(t)) || list.includes(p.def.interest);
+// (Milestone 40f: a community resident never carries the named residents' story secrets — no life-story tags here)
+const hasTag = (p, list) => !p.def.community && ((p.state.tags?.length ? p.state.tags : p.def.tags ?? []).some((t) => list.includes(t)) || list.includes(p.def.interest));
 const inGarden = (env, p) => !!env.care.programs?.running?.[GARDEN_PROGRAM] && !GARDEN_VETO.some((o) => p.state.optionPrefs?.[o] === 'refuse') && p.state.prefs?.groupActivity !== 'refuse';
 // A streak map: id → the first day of the unbroken run (gone when it breaks).
 function streak(map, id, ok, day) {
@@ -328,7 +329,7 @@ export function createSecretFacts({ env, log, engine, account }) {
   const L = () => log();
   const here = () => env.residentsHere();
   const longTerm = (p) => LONG_TERM.includes(stayTypeOf(p.def, p.state));
-  const tagsOf = (p) => (p.state.tags?.length ? p.state.tags : p.def.tags ?? []);
+  const tagsOf = (p) => (p.def.community ? [] : p.state.tags?.length ? p.state.tags : p.def.tags ?? []); // (Milestone 40f: none for a community resident)
   const daysEmployed = (id) => (L().joined[id] == null ? 0 : env.today() - L().joined[id]);
   const scores = () => env.quality.scores();
   const month = () => {

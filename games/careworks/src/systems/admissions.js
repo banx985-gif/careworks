@@ -25,7 +25,8 @@
 // ctx.placeable) at most ADMISSION.maxBlocked applicants the home can't take yet stand on the board at once.
 import { Rng } from '../../../../core/Rng.js';
 import { ADMISSION as A } from '../../data/admissions.js';
-import { RESIDENTS, NEEDS, OUTCOMES, ROOM_TEMPLATES, stayRule } from '../../data/residents.js';
+import { RESIDENTS, NEEDS, OUTCOMES, ROOM_TEMPLATES, stayRule, communityDef } from '../../data/residents.js';
+import { isCommunityId, communityId, firstCommunitySerial } from '../../data/communityResidents.js';
 import { ROLES } from '../../data/roles.js';
 
 const clamp = (x) => Math.max(0, Math.min(100, Math.round(x)));
@@ -83,10 +84,22 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
   s.wentHome = { ...(s.wentHome ?? {}) };
   s.homeGoings = [...(s.homeGoings ?? [])];
   s.passed = { ...(s.passed ?? {}) };
-  s.applicants = (s.applicants ?? []).filter((a) => defs.has(a.id)).map((a) => ({ ...a }));
+  s.applicants = (s.applicants ?? []).filter((a) => defs.has(a.id) || isCommunityId(a.id)).map((a) => ({ ...a }));
   s.away = { ...(s.away ?? {}) };
+  s.communityNext ??= firstCommunitySerial(seed); // (Milestone 40f: the next community resident's serial; an M40e save starts here)
 
-  const defOf = (app) => defs.get(app.id);
+  const defOf = (app) => defs.get(app.id) ?? communityDef(app.id);
+  // Milestone 40f: a community resident (data/communityResidents.js) — the next serial; one the home can't take yet is
+  // passed over while maxBlocked such applicants already stand on the board (a few tries, then anyone)
+  function nextCommunity(ctx) {
+    let def = null;
+    for (let i = 0; i < A.community.tries; i++) {
+      def = communityDef(communityId(s.communityNext++));
+      if (!ctx.roles || !blockedFull(ctx) || prereqOf(def, ctx).ok) break;
+    }
+    return def;
+  }
+  const blockedFull = (ctx) => onBoard().filter((a) => !prereqOf(defOf(a), ctx).ok).length >= A.maxBlocked;
   const get = (id) => s.applicants.find((a) => a.id === id) ?? null;
   const onBoard = () => s.applicants.filter((a) => a.status === 'board');
   const waiting = () => s.applicants.filter((a) => a.status === 'wait');
@@ -99,12 +112,16 @@ export function createAdmissions({ saved = null, seed = 'careworks', residents =
       const blocked = (r) => !prereqOf(r, ctx).ok;
       if (onBoard().filter((a) => blocked(defOf(a))).length >= A.maxBlocked) pool = pool.filter((r) => !blocked(r));
     }
-    if (!pool.length) return null;
+    // Milestone 40f: once the named people still to come thin out, a share of arrivals (all, once none are left) are
+    // community residents — the share grows as the named pool shrinks below community.thinBelow
+    const share = Math.max(0, Math.min(1, (A.community.thinBelow - pool.length) / A.community.thinBelow));
+    const community = !pool.length || (share > 0 && new Rng(`${seed}:community:${s.arrivals}`).next() < share);
     const rng = new Rng(`${seed}:arrive:${s.arrivals}`);
-    const def = pool[rng.int(0, pool.length - 1)];
+    const def = community ? nextCommunity(ctx) : pool[rng.int(0, pool.length - 1)];
+    if (!def) return null;
     const roll = s.arrivals;
     s.arrivals++;
-    const app = { id: def.id, status: 'board', arrived: day, leaveDay: day + A.boardDays, ...varied(def, seed, roll), assessed: false, assessReady: null, rolls: [roll], stayDays: stayLengthFor(def, seed, roll), returning: !!s.wentHome[def.id] };
+    const app = { id: def.id, status: 'board', arrived: day, leaveDay: day + A.boardDays, ...varied(def, seed, roll), assessed: false, assessReady: null, rolls: [roll], stayDays: stayLengthFor(def, seed, roll), returning: !!s.wentHome[def.id], ...(def.community ? { community: true } : {}) };
     s.applicants.push(app);
     return app;
   }

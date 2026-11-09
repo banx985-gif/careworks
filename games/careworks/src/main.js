@@ -110,6 +110,7 @@ import { ROUTINE, LOG_SHOWN, BANDS } from '../data/routine.js';
 import { ROLES, STATS, TIERS } from '../data/roles.js';
 import { TRAITS, STAFF, ALL_STAFF, GODS, staffById, validateStaff, checkStaffArt } from '../data/staff.js';
 import { TRAINEE, TRAINEE_TEXT } from '../data/trainees.js'; // (Milestone 40e)
+import { COMMUNITY } from '../data/communityResidents.js'; // (Milestone 40f)
 import { SHIFTS, FEES, SHORT_STAFFING, ON_CALL, SAFE_CAPACITY, PAY_RISE } from '../data/balance.js';
 import { SHIFT_IDS, OFF, WINGS, AGENCY } from '../data/shifts.js';
 import { ADMISSION } from '../data/admissions.js';
@@ -3586,7 +3587,7 @@ function openAdmissions() {
       const p = adm.prereq(app, ctx);
       const days = adm.daysLeft(app, ctx.day);
       const status = wait ? `${days} day${days === 1 ? '' : 's'} left on the list` : `${def.urgency} urgency`;
-      return { id: `app:${app.id}`, label: `${def.name}, ${def.age}${app.returning ? ' · Returning' : ''}`, sub: `${def.support} · ${stayWords(def, app.stayDays)} · ${status} · ${p.ok ? 'Ready' : p.text}`, icon: def.art, iconCrop: PORTRAIT_CROP, accent: p.ok ? COL.progress : COL.textFaint, onTap: () => openApplicant(app.id) };
+      return { id: `app:${app.id}`, label: `${def.name}, ${def.age}${app.returning ? ' · Returning' : ''}`, sub: `${def.support} · ${stayWords(def, app.stayDays)} · ${status} · ${p.ok ? 'Ready' : p.text}`, icon: def.art, iconCrop: PORTRAIT_CROP, tag: def.community ? 'COMMUNITY' : null, accent: p.ok ? COL.progress : COL.textFaint, onTap: () => openApplicant(app.id) };
     };
     const free = w.freeRooms().length;
     return {
@@ -3639,6 +3640,7 @@ function openApplicant(id) {
     lines.push(`Support Level ${level} (from their needs) · Care Support Funding ${credits(fundingOf(level, (app.needs ?? def.needs).clinical > ON_CALL.clinicalNeedAbove))} a month · required care about ${credits(requiredCost(level).total)} · fee from ${credits(ROOM_FEES[nextRoom?.defId] ?? ROOM_FEES.default)} a month`);
     lines.push(`Visitors: ${def.visitors} · ${def.personality} · enjoys ${def.interest}`);
     lines.push({ text: def.story, color: COL.textMuted });
+    if (def.community) lines.push({ text: `${def.storyMore} ${COMMUNITY.cardLine}.`, color: COL.textMuted }); // (Milestone 40f)
     lines.push({ text: `Life story: ${def.tags.join(' · ')}`, color: COL.textMuted });
     lines.push({ text: wait ? `On the waiting list: ${days} day${days === 1 ? '' : 's'} left before they look elsewhere` : `Applying: ${days} day${days === 1 ? '' : 's'} before they look elsewhere if nobody answers`, color: COL.textMuted });
     if (app.assessReady != null && ctx.day < app.assessReady) lines.push({ text: 'Assessment update under way: back tomorrow.', color: COL.actionDark });
@@ -3963,7 +3965,7 @@ function residentSections(w, it) {
   const room = st.room ? `Room ${w.roomNumber(st.room)}` : 'No room (test home)';
   return [
     { lines: [{ text: step ? `${step}: ${w.stateOf(it)}` : w.stateOf(it), color: COL.actionDark }, ...(bell ? [{ text: `Call bell ringing (${needName(bell.need)})`, color: COL.bad }] : []), `${room} · Support Level ${w.levelOf(it.id) ?? supportLevel(it.def)} · funding ${credits(fundingOf(w.levelOf(it.id) ?? 1))}, required care ${credits(requiredCost(w.levelOf(it.id) ?? 1).total)} a month`, `${WAKE.windows[wakeWindowOf(it.def)].name} · gets up at ${clockText(st.wakeAt ?? 7)}`, { text: stayLine(w, it), color: st.stay ? COL.actionDark : COL.textMuted }] },
-    { title: 'Life story', lines: [it.def.story, { text: (st.tags?.length ? st.tags : it.def.tags).join(' · '), color: COL.actionDark }, ...(st.returning ? [{ text: 'Returning: stayed here before', color: COL.good }] : [])] },
+    { title: 'Life story', lines: [it.def.story, ...(it.def.community ? [{ text: `${it.def.storyMore} ${COMMUNITY.cardLine}.`, color: COL.textMuted }] : []), { text: (st.tags?.length ? st.tags : it.def.tags).join(' · '), color: COL.actionDark }, ...(st.returning ? [{ text: 'Returning: stayed here before', color: COL.good }] : [])] },
     ...(stageSection(w, it) ?? []), // (Milestone 27)
     planSection(w, it),
     ...healthSections(w, it),
@@ -4700,6 +4702,19 @@ function guideAgainSection() {
   return open ? { columns: 1, buttons: [{ ...guideButton(), id: 'set_guide_again' }] } : null;
 }
 
+// Milestone 40f: the special room the board and waiting list need most — applicants wanting a Memory Support (RM05) or
+// High-Care Room (RM04) with none of that kind free — and how the home gets one (build one now, or what opens it).
+// → { n, room, how } | null
+function specialRoomNeed(w) {
+  const apps = [...w.admissions.board, ...w.admissions.waiting].map((a) => w.admissions.defOf(a)).filter(Boolean);
+  for (const room of ['RM05', 'RM04']) {
+    const n = apps.filter((d) => d.room === room).length;
+    if (!n || w.rooms.some((r) => r.defId === room && !r.residentId)) continue;
+    const u = w.layout.unlock(room);
+    return { n, room, how: u.ok ? 'build one in its wing' : u.reason };
+  }
+  return null;
+}
 // The next-step hint line (data/menu.js NEXT_HINTS): the first that holds is shown; tapping it opens the right sheet.
 function hintRules() {
   const W = () => open.world;
@@ -4714,6 +4729,7 @@ function hintRules() {
     { id: 'night', text: NEXT_HINTS.night, when: () => onShift('night') === 0, open: () => openRoster() },
     { id: 'short', text: NEXT_HINTS.short, when: () => W().coverage.warnings().length > 0, open: () => openRoster() },
     { id: 'stretched', text: () => { const sc = W().safeCapacity(); return traineeHelps(sc) ? NEXT_HINTS.stretchedTrainees(sc.n, SAFE_CAPACITY.need[sc.need]) : NEXT_HINTS.stretched(sc.n, SAFE_CAPACITY.need[sc.need], SHIFTS[sc.weakest]?.name ?? sc.weakest); }, when: () => W().safeCapacity().stretched, open: () => (traineeHelps(W().safeCapacity()) ? openRecruit() : openRoster()) }, // (Milestone 40b; Milestone 40e: Trainees on Recruit when one would help)
+    { id: 'specialRoom', text: () => { const x = specialRoomNeed(W()); return NEXT_HINTS.specialRoom(x.n, ROOM_TEMPLATES[x.room].name, x.how); }, when: () => !!specialRoomNeed(W()), open: () => openBuildList() }, // (Milestone 40f)
     { id: 'dining', text: NEXT_HINTS.dining, when: () => !placedOf('F03'), open: () => openBuildList() },
     { id: 'kitchen', text: NEXT_HINTS.kitchen, when: () => !placedOf('F04') && !placedOf('F16'), open: () => openBuildList() },
     { id: 'plan', text: () => NEXT_HINTS.plan(first(W().residentById(stale()[0]?.resident)?.name ?? 'A resident')), when: () => stale().length > 0, open: () => openHomeSheet(stale()[0].resident) },

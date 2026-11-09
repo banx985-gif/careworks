@@ -70,4 +70,6 @@ export const NEXT_HINTS = {
   item: (n) => `${n} piece${n === 1 ? '' : 's'} of care equipment in the store: tap to give one`,
   partner: 'A community partner has made an offer: tap to see it',
   upgrade: 'A facility can be upgraded: tap it, then Upgrade',
+  // (Milestone 40f) applicants who need a Memory Support or High-Care Room and none is free
+  specialRoom: (n, room, how) => `${n} applicant${n === 1 ? ' needs' : 's need'} a ${room} and none is free: ${how}. Tap for Build Mode`,
 };

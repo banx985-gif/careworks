@@ -23,4 +23,8 @@ export const ADMISSION = {
   maxBlocked: 1,
   returnAfterDays: 28,
   homeGoingsKept: 40, // the last few who went home (the ledger's partial months, a later quality score)
+  // Milestone 40f (BIGJOB4 Part A): community residents (data/communityResidents.js). While fewer than thinBelow named
+  // residents can still apply, that share of arrivals is a community resident ((thinBelow − named left) / thinBelow: none
+  // at 16 left, half at 8, all once none are left). tries: community serials looked at for one the home can take now.
+  community: { thinBelow: 16, tries: 6 },
 };
