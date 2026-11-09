@@ -371,8 +371,8 @@ function godSecrets() {
   return [
     god(1, 'The Tinker in the Shed', 'AH11', 'Bolt, God of Tinkering', [
       RANK_A,
-      { fact: 'run.facilitiesLevel3', op: 'gte', value: 8, kind: 'count', category: 'facility', label: 'Facilities at Level III at once' }, // (Milestone 40d Part B: 8, was 12)
-      months([{ field: 'scores.environment', op: 'gte', value: 90 }], 6, 'Environment & Compliance 90+'),
+      { fact: 'run.facilitiesLevel3', op: 'gte', value: 6, kind: 'count', category: 'facility', label: 'Facilities at Level III at once' }, // (Milestone 40d Part B: 8, was 12; Milestone 40f Part C: 6 — no soak got past stage 2)
+      months([{ field: 'scores.environment', op: 'gte', value: 85 }], 6, 'Environment & Compliance 85+'), // (Milestone 40f Part C: 85, was 90 — the soaks' homes sat in the 60s)
     ], [
       'A cheerful whistling from the workshop.',
       'Someone keeps tightening every loose screw.',
@@ -381,7 +381,7 @@ function godSecrets() {
     ], [{ fact: 'run.falls6m', op: 'gt', value: 0, kind: 'fixed', category: 'residents', label: 'A fall in the last six months' }]),
     god(2, 'The Lucky Cat', 'LC11', 'Jinx, Goddess of Luck', [
       RANK_A,
-      { fact: 'run.goodSurprises', op: 'gte', value: 12, kind: 'count', category: 'residents', label: 'Good surprises in this home (thank-you gifts, well-wishers, family birthday parties)' },
+      { fact: 'run.goodSurprises', op: 'gte', value: 8, kind: 'count', category: 'residents', label: 'Good surprises in this home (thank-you gifts, well-wishers, family birthday parties)' }, // (Milestone 40f Part C: 8, was 12 — a home had 2 by Year 8)
       { fact: 'account.storySecretsFound', op: 'gte', value: 6, kind: 'count', category: 'residents', label: 'Resident-story secrets found (every run)' },
       { fact: 'run.wishesHonoured', op: 'gte', value: 10, kind: 'count', category: 'comfort', label: 'Residents whose last wishes were honoured' },
     ], [
@@ -399,7 +399,10 @@ function godSecrets() {
       'Call bells are barely ringing before they stop.',
       'Little sparks on the corridor carpet at night.',
       'Someone very fast wants to work night shift.',
-    ], [{ fact: 'run.essentialMissed12m', op: 'gt', value: 0, kind: 'fixed', category: 'care', label: 'Essential care missed in the last twelve months' }]),
+    // (Milestone 40f Part C: the forbid was "essential care missed in the last twelve months" — every soak's home misses a
+    // few essential tasks a day (~100 a month at 30 residents), so no home could ever meet him; now an unsafe shift or a
+    // clinical alert left waiting rules him out. Harm stays in the forbids.)
+    ], [{ fact: 'run.unsafeShifts12m', op: 'gt', value: 0, kind: 'fixed', category: 'staff', label: 'An unsafe shift in the last twelve months' }, { fact: 'run.openMedAlerts', op: 'gt', value: 0, kind: 'fixed', category: 'clinical', label: 'A clinical alert left unresolved' }]),
     god(4, 'The Jolly Benefactor', 'HN11', 'Kaching, God of Fortune', [
       RANK_A,
       months([{ field: 'profit', op: 'eq', value: true }], 12, 'A profit every month', 'economy'),
@@ -716,7 +719,7 @@ function staffSecrets() {
   return [
     legend('SEC-STAFF-L1', 'The Golden Stethoscope', 'RN09', 'Dr. Celia Grace', [
       RANK_A,
-      months([{ field: 'scores.clinicalSafety', op: 'gte', value: 92 }], 12, 'Clinical Safety 92+'),
+      months([{ field: 'scores.clinicalSafety', op: 'gte', value: 90 }], 6, 'Clinical Safety 90+'), // (Milestone 40f Part C: 90+ for 6 months, was 92+ for 12 — no soak passed stage 2)
       { fact: 'run.trainedStaff', op: 'countOf', where: [{ field: 'role', op: 'eq', value: 'RN' }], value: 5, kind: 'count', category: 'staff', label: 'Registered Nurses who finished a course' },
     ], [
       'A famous nurse is said to visit only the very best homes.',
@@ -737,7 +740,7 @@ function staffSecrets() {
     ]),
     legend('SEC-STAFF-L3', 'The Joy Bringer', 'LC09', 'Cass Melody', [
       RANK_A,
-      { fact: 'run.programsCompleted', op: 'gte', value: 8, kind: 'count', category: 'programs', label: 'Different programs run for a full month' },
+      { fact: 'run.programsCompleted', op: 'gte', value: 6, kind: 'count', category: 'programs', label: 'Different programs run for a full month' }, // (Milestone 40f Part C: 6, was 8)
       residents([{ field: 'mood', op: 'gte', value: 95 }], 5, 'Residents with Mood 95+'),
       { fact: 'run.community', op: 'gte', value: 85, kind: 'threshold', category: 'residents', label: 'Community (average Social Connection) 85+' },
     ], [
@@ -750,7 +753,7 @@ function staffSecrets() {
       RANK_A,
       { fact: 'run.rehabDischarges', op: 'gte', value: 10, kind: 'count', category: 'residents', label: 'Successful rehab discharges' },
       program('PRG04', YEAR, 'The Falls Prevention Program running for 12 months'),
-      { fact: 'run.mobilityOutcome', op: 'gte', value: 90, kind: 'threshold', category: 'residents', label: 'Mobility outcome (average Independence) 90+' },
+      { fact: 'run.mobilityOutcome', op: 'gte', value: 80, kind: 'threshold', category: 'residents', label: 'Mobility outcome (average Independence) 80+' }, // (Milestone 40f Part C: 80, was 90 — homes sat near 70)
     ], [
       'A renowned therapist follows the homes that send people home stronger.',
       'Many residents have gone home on their own feet.',
