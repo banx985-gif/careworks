@@ -53,6 +53,22 @@ export const UPKEEP = { pctOfCost: 0.5 };
 export const UTILITIES = { perTile: 0.08 };
 export const STUB_COSTS = { transport: { name: 'Transport and outings', milestone: 'M23' } };
 
+// --- Milestone 40f (Big job 4 Part B: money piled up to 0.5–3.7 million by Year 16) -----------------------------------------
+// Everything costs a little more each year: from Year 2, wages, upkeep, utilities, supplies, equipment wear and food grow
+// costPct a year (compounded); accommodation fees grow a little less (feePct), so good management still matters. Care
+// Support, respite and rehab funding grow with the care costs they pay for (fundingPct = costPct), so the care a level needs
+// is always paid for: no year ever makes cutting care the way to survive. Year n's months are × (1 + pct/100)^(n − 1).
+export const GROWTH = { costPct: 3, feePct: 2, fundingPct: 3, daysPerYear: 336 };
+export const yearGrowth = (pct, day) => (1 + pct / 100) ** Math.max(0, Math.floor((day ?? 0) / GROWTH.daysPerYear));
+// Experienced staff earn more. A CAREWORKS person's Lv is the level they were hired at (they grow through courses and items,
+// not XP), so experience is what they have gained here: each full year on the team (daysPerLevel) and every pointsPerLevel
+// stat points grown above their hiring stats count as a level, each adding perLevelPct to their wage, at most maxPct (a
+// carer five years in: +20%; a Trainee grown to the Rare cap over five years, ~250 points: +60%).
+export const WAGE_LEVEL = { daysPerLevel: 336, pointsPerLevel: 25, perLevelPct: 4, maxPct: 80 };
+// Upkeep for facility levels: a Level II / III piece's monthly upkeep is × mult of its Level I upkeep (UPKEEP above), and a
+// prestige space (a secret facility) costs prestigePerMonth on top.
+export const LEVEL_UPKEEP = { mult: [1, 3, 6], prestigePerMonth: 1500 };
+
 // --- debt recovery (§27) ------------------------------------------------------------------------------------------------
 //   below warnBelow: a plain warning (the balance shows red)
 //   below floor: admissions pause (plain reason), and an Emergency Credit offer — a loan of loan.amount, repaid in

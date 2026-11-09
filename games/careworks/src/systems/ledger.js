@@ -12,7 +12,7 @@
 import { EconomySystem } from '../../../../core/EconomySystem.js';
 import { FEES, LEDGER } from '../../data/balance.js';
 import { REHAB_FUNDING } from '../../data/mobility.js';
-import { ROOM_FEES, RESPITE_FUNDING, LEVELS, FEE_MOOD, NURSING_SUPPLEMENT } from '../../data/economy.js';
+import { ROOM_FEES, RESPITE_FUNDING, LEVELS, FEE_MOOD, NURSING_SUPPLEMENT, GROWTH, yearGrowth } from '../../data/economy.js';
 
 const CAT = LEDGER.categories;
 
@@ -26,29 +26,34 @@ export const daysHere = (r, fromDay, toDay) => Math.max(0, Math.min(toDay, r.lef
 // respite stay (r.respite), their level's supplies (a day here) and equipment wear (a month); home: { upkeep: [{ name,
 // amount }], utilities } — the rooms and facilities upkeep and the utilities, once a month (none: left out).
 // (Milestone 30b) feeMult: Kaching on the team brings 10% more from accommodation fees (nothing else changes).
+// (Milestone 40f) the year's growth (data/economy.js GROWTH), by the month's first day: fees × feePct, funding × fundingPct,
+// supplies and equipment × costPct (wages and the home's costs come grown from the home world). Year 1 is × 1.
 export function monthLinesFor({ fromDay, toDay, residents, staff, home = null, len = toDay - fromDay, feeMult = 1 }) {
   const out = [];
+  const feeGrow = yearGrowth(GROWTH.feePct, fromDay);
+  const fundGrow = yearGrowth(GROWTH.fundingPct, fromDay);
+  const costGrow = yearGrowth(GROWTH.costPct, fromDay);
   for (const r of residents) {
     const d = daysHere(r, fromDay, toDay);
     if (!d) continue;
     const fee = r.room ? ROOM_FEES[r.room] ?? ROOM_FEES.default : FEES.accommodationPerMonth;
     // (Milestone 22: the family negotiates the fee down when their average Mood this month was low — r.moodAvg)
     const cut = r.moodAvg != null && r.moodAvg < FEE_MOOD.line ? Math.min(FEE_MOOD.capPct, Math.round((FEE_MOOD.line - r.moodAvg) * FEE_MOOD.perPoint)) : 0;
-    out.push({ category: 'fees', amount: Math.round((fee * d * (1 - cut / 100) * feeMult) / len), reason: `${CAT.fees}: ${r.name}${d < len ? ` (${d} days)` : ''}${cut ? ` (−${cut}%: the family is unhappy — Mood ${Math.round(r.moodAvg)} this month)` : ''}` });
+    out.push({ category: 'fees', amount: Math.round((fee * d * (1 - cut / 100) * feeMult * feeGrow) / len), reason: `${CAT.fees}: ${r.name}${d < len ? ` (${d} days)` : ''}${cut ? ` (−${cut}%: the family is unhappy — Mood ${Math.round(r.moodAvg)} this month)` : ''}` });
     // Milestone 16: a rehab resident ready to go home brings the "ready" rate of funding for those days, and rehab
     // funding (§27) only for the days they were working on their goals
     const ready = r.readyDay != null ? daysHere({ admittedDay: Math.max(r.admittedDay ?? fromDay, r.readyDay), leftDay: r.leftDay }, fromDay, toDay) : 0;
     const working = d - ready;
     // (Milestone 22: + the nursing supplement when they need a nurse on every shift — r.nursing)
     const fund = FEES.careSupportFundingByLevel[r.level] + (r.nursing ? NURSING_SUPPLEMENT.perMonth : 0);
-    out.push({ category: 'funding', amount: Math.round((fund * (working + ready * REHAB_FUNDING.readyFundingPct)) / len), reason: `${CAT.funding}: ${r.name} (level ${r.level}${r.nursing ? ', nursing supplement' : ''})${ready ? ` (${ready} days ready to go home)` : ''}` });
-    if (r.rehab && working > 0) out.push({ category: 'rehabFunding', amount: Math.round((REHAB_FUNDING.perMonth * working) / len), reason: `${CAT.rehabFunding}: ${r.name}` });
-    if (r.respite) out.push({ category: 'respiteFunding', amount: Math.round((RESPITE_FUNDING.perMonth * d) / len), reason: `${CAT.respiteFunding}: ${r.name}` });
+    out.push({ category: 'funding', amount: Math.round((fund * fundGrow * (working + ready * REHAB_FUNDING.readyFundingPct)) / len), reason: `${CAT.funding}: ${r.name} (level ${r.level}${r.nursing ? ', nursing supplement' : ''})${ready ? ` (${ready} days ready to go home)` : ''}` });
+    if (r.rehab && working > 0) out.push({ category: 'rehabFunding', amount: Math.round((REHAB_FUNDING.perMonth * fundGrow * working) / len), reason: `${CAT.rehabFunding}: ${r.name}` });
+    if (r.respite) out.push({ category: 'respiteFunding', amount: Math.round((RESPITE_FUNDING.perMonth * fundGrow * d) / len), reason: `${CAT.respiteFunding}: ${r.name}` });
     // (Milestone 22: what their level's care uses — only when the caller gives the full picture, i.e. the home world)
     const L = r.level && home ? LEVELS[r.level] : null;
     if (L) {
-      out.push({ category: 'supplies', amount: -L.suppliesPerDay * d, reason: `${CAT.supplies}: ${r.name} (level ${r.level})` });
-      out.push({ category: 'equipment', amount: -Math.round((L.equipmentPerMonth * d) / len), reason: `${CAT.equipment}: ${r.name} (level ${r.level})` });
+      out.push({ category: 'supplies', amount: -Math.round(L.suppliesPerDay * costGrow * d), reason: `${CAT.supplies}: ${r.name} (level ${r.level})` });
+      out.push({ category: 'equipment', amount: -Math.round((L.equipmentPerMonth * costGrow * d) / len), reason: `${CAT.equipment}: ${r.name} (level ${r.level})` });
     }
   }
   for (const s of staff) out.push({ category: 'wages', amount: -s.salary, reason: `${CAT.wages}: ${s.name}` });

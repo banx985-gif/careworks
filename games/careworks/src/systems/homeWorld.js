@@ -147,7 +147,7 @@ import { createItems, newItemsState } from './items.js';
 import { ITEM_SOURCES, ITEM_RULES } from '../../data/items.js';
 const ITEM_RULES_SEASON = ITEM_RULES.seasonMonths;
 import { staffById, BLESSINGS, MISHAPS } from '../../data/staff.js';
-import { TRAINEE, traineePaceOf } from '../../data/trainees.js';
+import { TRAINEE, traineePaceOf, traineeDef } from '../../data/trainees.js';
 const PRIMARY_OF = { CW: 'PER', RN: 'CLN', AH: 'MOB', LC: 'SOC', HN: 'NUT' }; // (Milestone 40e)
 import { rankAtLeast } from '../../data/recruitment.js';
 import { taskPct, matchesTask, familiarPct } from './traitEffects.js';
@@ -175,7 +175,7 @@ import { activityPct } from './traitEffects.js';
 import { createBlessings } from './blessings.js'; // (Milestone 30b: the Works Gods)
 import { createResearch } from './research.js';
 import { createEconomy, levelOfNeeds } from './economy.js';
-import { UPKEEP, UTILITIES, MOVE_OUT, RANK_FEES, OCCUPANCY_BONUS } from '../../data/economy.js';
+import { UPKEEP, UTILITIES, MOVE_OUT, RANK_FEES, OCCUPANCY_BONUS, GROWTH, yearGrowth, WAGE_LEVEL, LEVEL_UPKEEP } from '../../data/economy.js';
 import { RP_INCOME } from '../../data/research.js';
 import { joinChance, choiceBand } from './activities.js';
 import { dayOfWeek } from '../../data/activities.js';
@@ -4024,16 +4024,28 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
   ];
   // Milestone 22: the home's own monthly costs — every placed room and facility's upkeep, utilities by open floor
   let tilesCache = { v: null, n: 0 };
-  function homeCosts() {
+  // (Milestone 40f: × the year's cost growth from the month's first day; a Level II / III piece × its level's upkeep; each
+  // prestige space a flat monthly upkeep on top — data/economy.js)
+  function homeCosts(fromDay = monthRange().fromDay) {
+    const grow = yearGrowth(GROWTH.costPct, fromDay);
     if (tilesCache.v !== layout.version) {
       let n = 0;
       for (let r = 0; r < MAX_FLOOR.rows; r++) for (let c = 0; c < MAX_FLOOR.cols; c++) if (layout.isOpen(c, r)) n++;
       tilesCache = { v: layout.version, n };
     }
-    const upkeep = layout.pieces.map((pc) => ({ name: pc.name, amount: Math.round((layout.costOf(pc.defId) * UPKEEP.pctOfCost) / 100) })).filter((x) => x.amount > 0);
-    return { upkeep, utilities: Math.round(tilesCache.n * UTILITIES.perTile), tiles: tilesCache.n };
+    const upkeep = layout.pieces.map((pc) => ({ name: pc.name, amount: Math.round(((layout.costOf(pc.defId) * UPKEEP.pctOfCost) / 100) * (LEVEL_UPKEEP.mult[(layout.levelOf(pc.uid) || 1) - 1] ?? 1) * grow + (facilityById(pc.defId)?.secret ? LEVEL_UPKEEP.prestigePerMonth * grow : 0)) })).filter((x) => x.amount > 0);
+    return { upkeep, utilities: Math.round(tilesCache.n * UTILITIES.perTile * grow), tiles: tilesCache.n };
   }
-  const payroll = () => team().map((q) => ({ id: q.id, name: q.name, salary: Math.round(q.model.salary * (1 + payLevel().pct / 100)) })); // agency is paid per shift (Milestone 40e: × the pay rise)
+  // (Milestone 40f) experienced staff earn more: + WAGE_LEVEL.perLevelPct for each level of experience gained here (each full
+  // year on the team, and every pointsPerLevel stat points grown above their hiring stats), and every wage × the year's cost growth
+  const levelsGained = (q) => {
+    if (q.agency) return 0;
+    const base = (staffById(q.id) ?? traineeDef(q.id))?.stats;
+    const grown = base ? Object.entries(q.model.stats ?? {}).reduce((t, [k, v]) => t + Math.max(0, v - (base[k] ?? v)), 0) : 0;
+    return Math.floor(joinedDays(q.id) / WAGE_LEVEL.daysPerLevel) + Math.floor(grown / WAGE_LEVEL.pointsPerLevel);
+  };
+  const wageOf = (q, fromDay = monthRange().fromDay) => Math.round(q.model.salary * (1 + payLevel().pct / 100) * (1 + Math.min(WAGE_LEVEL.maxPct, WAGE_LEVEL.perLevelPct * levelsGained(q)) / 100) * yearGrowth(GROWTH.costPct, fromDay));
+  const payroll = (fromDay = monthRange().fromDay) => team().map((q) => ({ id: q.id, name: q.name, salary: wageOf(q, fromDay) })); // agency is paid per shift (Milestone 40e: × the pay rise)
   // --- care-plan rules (Milestone 8) -------------------------------------------------------------------------------
   const facilityIds = () => new Set(placed.filter((x) => x.kind !== 'room').map((x) => x.defId)); // (Milestone 10: by facility, F01 …)
   // What an option's eligibility rule reads: the resident, the team and roster, the rooms / facilities / programs.
@@ -4209,7 +4221,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     for (const p of seated()) if (joined(p)) { const m = (p.state.moodMonth ??= { sum: 0, n: 0 }); m.sum += p.state.outcomes.mood; m.n += 1; } // (Milestone 22: the month's Mood)
     // Milestone 15: yesterday's food (a simple cost per meal served), today's diet tags
     const meals = dining.served(day - 1);
-    if (meals) ledger.economy.add('credits', -meals * FOOD_COST.perMeal, `Food: ${meals} meal${meals === 1 ? '' : 's'} served`, 'food');
+    if (meals) ledger.economy.add('credits', -Math.round(meals * FOOD_COST.perMeal * yearGrowth(GROWTH.costPct, clock.totalDays)), `Food: ${meals} meal${meals === 1 ? '' : 's'} served`, 'food');
     if (meals) partners.noteSaving('foodPct', meals * FOOD_COST.perMeal); // (Milestone 23: Hearth Nutrition's saving, posted at the month's close)
     partners.noteRoomChecks(day - 1, ...roomChecksOn(day - 1)); // (Milestone 23: the Environment score's cleanliness)
     partners.daily(day); // (Milestone 23: deals end, new offers, grants met or past their deadline)
@@ -4234,7 +4246,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       if (missedThisMonth === 0 && seated().length > 0) items.rollSource('calmMonth');
       if (items.chance(Math.min(1, ITEM_SOURCES.wellWisher.monthlyChance * blessings.surpriseMult())) && items.grant('wellWisher')) bus?.emit('care:surprise', { kind: 'wellWisher' }); // (Milestone 30b: Jinx's blessing; a good surprise)
       const d = clock.dateOf(day - 1);
-      const closed = ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll(), home: homeCosts(), feeMult: feeMult() }); // (Milestone 30b: Kaching; Milestone 40b: the Rank uplift)
+      const closed = ledger.closeMonth({ month: `Month ${d.month}, Year ${d.year}`, ...monthRange(day), residents: payers(), staff: payroll(monthRange(day).fromDay), home: homeCosts(monthRange(day).fromDay), feeMult: feeMult() }); // (Milestone 30b: Kaching; Milestone 40b: the Rank uplift)
       // (Milestone 23: the partners' savings on this close — GoldenStep on equipment, BOTWORKS on upkeep and utilities —
       // their month checks, and a new grant board)
       const closeSum = (cats) => (closed ?? []).filter((l) => cats.includes(l.category)).reduce((t, l) => t + l.amount, 0);
@@ -4882,7 +4894,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
       return economy;
     },
     levelOf: (residentId) => (byResident(residentId) ? levelOf(byResident(residentId)) : null),
-    homeCosts: () => homeCosts(),
+    homeCosts: (fromDay) => homeCosts(fromDay), // (Milestone 40f: for a month starting on fromDay)
     // --- Milestone 24: stages 3–5 and specialist wings -----------------------------------------------------------------
     // world.wings: each specialist wing as the sheets show it → [{ def, unlocked, tiles, hub, active, rooms, residents,
     // staff }]; ofResident(id) / ofStaff(id) → wing id; setStaff(staffId, wingId) → { ok, reason }
@@ -5273,6 +5285,7 @@ export function createHomeWorld({ founderId = 'RN01', clock = null, resident = n
     monthRange: () => monthRange(),
     payers,
     payroll,
+    wageOf: (id) => { const q = team().find((x) => x.id === id); return q ? wageOf(q) : null; }, // (Milestone 40f: a person's pay this month)
     // Admit an applicant: the first free room, a state from their (varied) assessment, the walk in from the entrance.
     // They join the routine and the task planning from the next band.
     admit(residentId) {

@@ -4237,7 +4237,7 @@ function staffMenu(w, p, accent) {
   const status = [m.status.tired && 'Tired', m.status.stressed && 'Stressed'].filter(Boolean);
   const fam = w.topResidentsFor(p.id, 3); // (Milestone 12: the three residents here who know them best)
   const sections = [
-    { lines: [{ text: w.stateOf(p), color: COL.actionDark }, ...shiftLines, agency ? `Tasks helped with: ${m.counters.tasks ?? 0} · Fee ${SHORT_STAFFING.agencyFeePerShift} Credits a shift` : `Tasks helped with: ${m.counters.tasks ?? 0} · Salary ${m.salary} Credits a month`] },
+    { lines: [{ text: w.stateOf(p), color: COL.actionDark }, ...shiftLines, agency ? `Tasks helped with: ${m.counters.tasks ?? 0} · Fee ${SHORT_STAFFING.agencyFeePerShift} Credits a shift` : `Tasks helped with: ${m.counters.tasks ?? 0} · Pay ${w.wageOf(p.id) ?? m.salary} Credits a month${(w.wageOf(p.id) ?? m.salary) > m.salary ? ` (hired at ${m.salary})` : ''}`] },
     { title: 'Stats', bars: STATS.map((s) => ({ label: s.name, value: m.stats[s.id], max: cap, color: s.id === ROLES[m.role].primaryStat ? COL.action : COL.progress })) },
     { title: status.length ? `Energy and Morale · ${status.join(', ')}` : 'Energy and Morale', bars: [{ label: 'Energy', value: m.energy, color: m.energy < 25 ? COL.bad : COL.good }, { label: 'Morale', value: m.morale, color: m.morale < 25 ? COL.bad : COL.gold }] },
     { title: m.traits.length > 1 ? 'Traits' : 'Trait', lines: m.traits.length ? traitLines(m.traits) : ['None'] },
